@@ -1,2 +1,2 @@
 # MediPass-
-a single, connected healthcare platform that takes a patient all the way from booking a doctor's appointment to picking up the exact medicine that doctor prescribed. It is built around one continuous journey rather than a set of disconnected tools
+MediPass+ is a web platform that keeps a patient’s medical history in one place and keeps it private. A patient books a doctor, approves access on their own phone with a QR code during the visit, and the doctor sees the history only for that visit. The patient can always see who viewed their record and end access at any moment.
