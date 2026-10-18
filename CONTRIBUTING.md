@@ -48,7 +48,7 @@ Commit often, keep each commit small, and never commit secrets.
 - One pull request per Jira ticket. Keep it small.
 - Fill in the pull request template.
 - The build must pass and at least one teammate must approve before merging.
-- The reviewer is the person assigned to review that module (see the planning document, section 3.2).
+- The team leader approves every pull request. The reviewer assigned to the module (planning document, section 3.2) also reads it and leaves comments.
 - Merge with **Squash and merge**. The branch is deleted after the merge.
 - If `main` moved on, update your branch before merging:
 
