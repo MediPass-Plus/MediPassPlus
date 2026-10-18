@@ -55,3 +55,35 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Angular / Node
+node_modules/
+dist/
+.angular/
+npm-debug.log*
+
+# IDE
+.vs/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Secrets and local configuration (never commit these)
+appsettings.*.local.json
+secrets.json
+*.pfx
+*.pem
+*.key
+.env.*
+
+# Uploaded files and local data (never commit patient or test files)
+uploads/
+App_Data/
+*.mdf
+*.ldf
+*.sqlite
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
