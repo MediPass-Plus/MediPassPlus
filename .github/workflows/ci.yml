@@ -67,7 +67,7 @@ jobs:
       - name: Test
         if: hashFiles('frontend/package.json') != ''
         working-directory: frontend
-        run: npm test --if-present -- --watch=false --browsers=ChromeHeadless
+        run: npm test --if-present -- --watch=false
 
       - name: Nothing to build yet
         if: hashFiles('frontend/package.json') == ''
