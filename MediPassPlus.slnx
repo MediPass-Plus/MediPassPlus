@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MediPassPlus.Api/MediPassPlus.Api.csproj" />
+    <Project Path="src/MediPassPlus.Application/MediPassPlus.Application.csproj" />
+    <Project Path="src/MediPassPlus.Domain/MediPassPlus.Domain.csproj" />
+    <Project Path="src/MediPassPlus.Infrastructure/MediPassPlus.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MediPassPlus.Application.Tests/MediPassPlus.Application.Tests.csproj" />
+    <Project Path="tests/MediPassPlus.Domain.Tests/MediPassPlus.Domain.Tests.csproj" />
+  </Folder>
+</Solution>
