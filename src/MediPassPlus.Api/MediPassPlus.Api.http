@@ -1,0 +1,6 @@
+@MediPassPlus.Api_HostAddress = http://localhost:5114
+
+GET {{MediPassPlus.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
