@@ -62,7 +62,7 @@ dotnet user-secrets init --project src/MediPassPlus.Api
 dotnet user-secrets set "ConnectionStrings:Default" "<your connection string>" --project src/MediPassPlus.Api
 dotnet user-secrets set "Jwt:Key" "<a long random key>" --project src/MediPassPlus.Api
 
-dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api
+dotnet ef database update --project src/MediPassPlus.infrastructure --startup-project src/MediPassPlus.Api
 dotnet run --project src/MediPassPlus.Api
 ```
 
