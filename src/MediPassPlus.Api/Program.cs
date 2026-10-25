@@ -1,5 +1,10 @@
+using Microsoft.EntityFrameworkCore;
+using MediPassPlus.Infrastructure.Persistence;
+
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddDbContext<MediPassDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("Default")));
 // Add services to the container.
 
 builder.Services.AddControllers();

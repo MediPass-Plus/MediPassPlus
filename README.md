@@ -68,6 +68,34 @@ dotnet run --project src/MediPassPlus.Api
 
 Swagger is available at `https://localhost:<port>/swagger` (TODO: fill in when the API exists).
 
+### Database migrations
+
+- One migration per pull request.
+- Rebase on `main` before merging.
+- Never edit a migration that is already merged.
+
+Create a migration:
+
+```
+dotnet ef migrations add <MigrationName> --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api --output-dir Persistence/Migrations
+```
+
+Apply migrations to the database:
+
+```
+dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api
+```
+
+### Seed data
+
+To add demo data for your module:
+
+1. Create a class that implements `ISeeder` in `src/MediPassPlus.Infrastructure/Persistence/Seeding`.
+2. Register it in `Program.cs`, for example: `builder.Services.AddScoped<ISeeder, ClinicsSeeder>();`
+3. Keep it safe to run twice: check if the data already exists before adding it.
+
+Seeders run automatically when the API starts in the Development environment.
+
 ### Run the frontend
 
 ```bash
