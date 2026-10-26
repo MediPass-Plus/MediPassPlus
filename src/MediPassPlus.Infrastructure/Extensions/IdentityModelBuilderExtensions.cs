@@ -5,7 +5,7 @@ using MediPassPlus.Domain.Identity;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
-namespace MediPassPlus.Infrastructure.Persistence.Extensions;
+namespace MediPassPlus.Infrastructure.Extensions;
 
 public static class IdentityModelBuilderExtensions
 {     // this is the schema name for the Identity tables in the database

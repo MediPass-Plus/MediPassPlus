@@ -1,5 +1,5 @@
 using MediPassPlus.Domain.Identity;
-using MediPassPlus.Infrastructure.Persistence.Extensions;
+using MediPassPlus.Infrastructure.Extensions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
