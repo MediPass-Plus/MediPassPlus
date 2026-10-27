@@ -65,6 +65,7 @@ npm-debug.log*
 # IDE
 .vs/
 .idea/
+*.user
 .vscode/*
 !.vscode/extensions.json
 
@@ -87,3 +88,10 @@ App_Data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local-only files (kept out of GitHub on purpose)
+AGENTS.md
+MediPass_Requirements_Gathering.md
+MediPass+_Project_Planning_and_Management.md
+scripts/create-solution.ps1
+session-state/
