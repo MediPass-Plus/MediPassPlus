@@ -57,16 +57,23 @@ MediPassPlus/
 git clone https://github.com/MediPass-Plus/MediPassPlus.git
 cd MediPassPlus
 
-# store secrets locally, never in the repository
-dotnet user-secrets init --project src/MediPassPlus.Api
+# store secrets locally, never in the repository (the project already declares a UserSecretsId)
 dotnet user-secrets set "ConnectionStrings:Default" "<your connection string>" --project src/MediPassPlus.Api
 dotnet user-secrets set "Jwt:Key" "<a long random key>" --project src/MediPassPlus.Api
 
 dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api
-dotnet run --project src/MediPassPlus.Api
+dotnet run --project src/MediPassPlus.Api --launch-profile http
 ```
 
-Swagger is available at `https://localhost:<port>/swagger` (TODO: fill in when the API exists).
+The `http` profile comes from `src/MediPassPlus.Api/Properties/launchSettings.json`, sets
+`ASPNETCORE_ENVIRONMENT=Development` and listens on `http://localhost:5114`.
+
+- Swagger UI: `http://localhost:5114/swagger`
+- OpenAPI JSON: `http://localhost:5114/openapi/v1.json`
+
+Swagger UI and the OpenAPI document are mapped in Development only. Outside Development both return 404 unless
+`OpenApi:ExposeOutsideDevelopment` is set to `true` (it defaults to `false` in `appsettings.json`). The `https`
+launch profile (`https://localhost:7041`) has not been verified yet.
 
 ### Database migrations
 
