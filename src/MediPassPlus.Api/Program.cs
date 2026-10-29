@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using MediPassPlus.Api.OpenApi;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 
@@ -13,8 +14,12 @@ builder.Services.AddDbContext<MediPassDbContext>(options =>
 builder.Services.AddScoped<DatabaseSeeder>();
 
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// OpenAPI document (XML documentation is folded in by the .NET 10 source generator) plus JWT bearer metadata.
+builder.Services.AddOpenApi("v1", options =>
+{
+    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
+    options.AddOperationTransformer<BearerSecuritySchemeTransformer>();
+});
 
 var app = builder.Build();
 
@@ -26,9 +31,19 @@ if (app.Environment.IsDevelopment())
 }
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+// The OpenAPI document and Swagger UI are development tools. They are served in Development only, unless a
+// deployment explicitly opts in with OpenApi:ExposeOutsideDevelopment (ADR-0008).
+var exposeApiReference = app.Environment.IsDevelopment()
+    || app.Configuration.GetValue<bool>("OpenApi:ExposeOutsideDevelopment");
+
+if (exposeApiReference)
 {
     app.MapOpenApi();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/openapi/v1.json", "MediPass+ API v1");
+        options.DocumentTitle = "MediPass+ API";
+    });
 }
 
 app.UseHttpsRedirection();
