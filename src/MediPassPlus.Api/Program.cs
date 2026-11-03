@@ -1,5 +1,9 @@
+using FluentValidation;
 using Microsoft.EntityFrameworkCore;
+using MediPassPlus.Api.Errors;
 using MediPassPlus.Api.OpenApi;
+using MediPassPlus.Api.Validation;
+using MediPassPlus.Application.Validation;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 
@@ -13,7 +17,20 @@ builder.Services.AddDbContext<MediPassDbContext>(options =>
 // builder.Services.AddScoped<ISeeder, ClinicsSeeder>();
 builder.Services.AddScoped<DatabaseSeeder>();
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Runs any registered IValidator<T> before the action and returns 400 ValidationProblemDetails on failure
+    // (ADR-0010, NFR-SEC-06).
+    options.Filters.Add<ValidationFilter>();
+});
+
+// One error envelope for every failure, with no stack traces in the response (ADR-0010, NFR-REL-04).
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+
+// Validators are discovered from the Application assembly. Every module adds its own assembly here.
+builder.Services.AddValidatorsFromAssemblyContaining<SampleRequestValidator>();
+
 // OpenAPI document (XML documentation is folded in by the .NET 10 source generator) plus JWT bearer metadata.
 builder.Services.AddOpenApi("v1", options =>
 {
@@ -22,6 +39,9 @@ builder.Services.AddOpenApi("v1", options =>
 });
 
 var app = builder.Build();
+
+// Must run first so every downstream failure goes through ApiExceptionHandler (ADR-0010).
+app.UseExceptionHandler();
 
 // Run the seeders in development only.
 if (app.Environment.IsDevelopment())
