@@ -15,4 +15,5 @@ public class JwtSettings
     public string SecretKey { get; set; } = string.Empty;  //32-character secret key for HMACSHA256(16-164)
     public int AccessTokenMinutes { get; set; } = 15;    // Access token expiration time in minutes
     public int RefreshTokenDays { get; set; } = 7;  // Refresh token expiration time in days( (7 days) )
+    public char[] Key { get; internal set; }
 }

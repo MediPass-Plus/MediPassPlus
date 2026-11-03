@@ -32,7 +32,7 @@ internal static class JwtExtensions
                     ValidateAudience = true,
                     ValidAudience = jwt.Audience,
                     ValidateIssuerSigningKey = true,
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SecretKey)),
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SecretKey!)),
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.Zero
                 };

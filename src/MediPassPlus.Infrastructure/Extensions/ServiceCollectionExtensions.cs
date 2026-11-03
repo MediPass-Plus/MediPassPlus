@@ -17,9 +17,8 @@ public static class ServiceCollectionExtensions
         services.AddIdentityServices();             
           // Authentication & JWT
      services.AddJwtAuthentication(configuration);
-
+        services.AddScoped<JwtTokenService>();
         // Add other infrastructure services here as needed
-
 
 
 

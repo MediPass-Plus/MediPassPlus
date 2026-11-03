@@ -21,7 +21,8 @@ internal static class IdentityServiceExtensions
             options.Password.RequireNonAlphanumeric = true;
         })
             .AddRoles<IdentityRole<Guid>>()
-            .AddEntityFrameworkStores<MediPassDbContext>();
+            .AddEntityFrameworkStores<MediPassDbContext>()
+            .AddDefaultTokenProviders();
 
         return services;
     }

@@ -18,9 +18,15 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+// DbContext + Identity + Roles + JWT (all registered in Infrastructure/Extensions)
 builder.Services.AddInfrastructure(builder.Configuration);
+//  Swagger Services
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
 var app = builder.Build();
 
+await app.SeedDefaultRolesAsync();
 // Run the seeders in development only.
 if (app.Environment.IsDevelopment())
 {
@@ -31,6 +37,8 @@ if (app.Environment.IsDevelopment())
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
+    app.UseSwagger();
+    app.UseSwaggerUI();
     app.MapOpenApi();
 }
 
