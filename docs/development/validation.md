@@ -31,6 +31,9 @@ builder.Services.AddValidatorsFromAssemblyContaining<SampleRequestValidator>();
 
 3. Done. The global `ValidationFilter` picks up every `IValidator<T>` automatically; no controller code is needed.
 
+> A **missing or `null` body** never reaches the action when a validator is registered for its declared type: the
+> filter returns **400** with `"{ \"request\": [\"'request' must not be empty.\"] }"`.
+
 ## What the client receives
 
 A failing rule returns **400** with `ValidationProblemDetails`:

@@ -27,9 +27,10 @@ return stack traces, and document how to use it.
 2. **Validators live next to the contract they validate** (typically `MediPassPlus.Application`), and are registered
    with `AddValidatorsFromAssembly`. Each module registers its own assembly in `Program.cs`.
 3. **One global MVC filter** (`MediPassPlus.Api/Validation/ValidationFilter.cs`) runs before every action. For each
-   action argument it resolves `IValidator<T>`; if a validator exists and fails, the request short-circuits with
-   **400** and a `ValidationProblemDetails` body. Arguments without a validator are untouched, so the filter is a no-op
-   for endpoints that do not opt in.
+   declared action parameter it resolves `IValidator<T>`; if a validator exists and fails, the request short-circuits
+   with **400** and a `ValidationProblemDetails` body. Arguments without a validator are untouched, so the filter is a
+   no-op for endpoints that do not opt in. A **missing or null** argument is rejected the same way (`'{name}' must not
+   be empty.`) instead of silently reaching the action.
 4. **One exception handler** (`MediPassPlus.Api/Errors/ApiExceptionHandler.cs`, `IExceptionHandler`) turns any
    unhandled exception into **500** with a generic `ProblemDetails`. The response contains no exception type, message
    or stack trace; the exception is logged server-side with a trace identifier only.

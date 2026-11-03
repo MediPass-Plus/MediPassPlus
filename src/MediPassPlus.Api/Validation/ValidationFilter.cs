@@ -22,17 +22,23 @@ public sealed class ValidationFilter : IAsyncActionFilter
     {
         var errors = new Dictionary<string, List<string>>(StringComparer.Ordinal);
 
-        foreach (var argument in context.ActionArguments.Values)
+        // Walk the declared parameters, not the bound values: a missing or null body would otherwise vanish from
+        // ActionArguments and slip past its validator into the action.
+        foreach (var parameter in context.ActionDescriptor.Parameters)
         {
-            if (argument is null)
+            var validatorType = typeof(IValidator<>).MakeGenericType(parameter.ParameterType);
+
+            if (context.HttpContext.RequestServices.GetService(validatorType) is not IValidator validator)
             {
                 continue;
             }
 
-            var validatorType = typeof(IValidator<>).MakeGenericType(argument.GetType());
+            var name = parameter.Name ?? string.Empty;
 
-            if (context.HttpContext.RequestServices.GetService(validatorType) is not IValidator validator)
+            if (!context.ActionArguments.TryGetValue(name, out var argument) || argument is null)
             {
+                // A missing or null request must not bypass a registered validator (PR #12 review, NFR-SEC-06).
+                AddError(errors, name, $"'{name}' must not be empty.");
                 continue;
             }
 
@@ -42,13 +48,7 @@ public sealed class ValidationFilter : IAsyncActionFilter
 
             foreach (var failure in validationResult.Errors)
             {
-                if (!errors.TryGetValue(failure.PropertyName, out var messages))
-                {
-                    messages = [];
-                    errors[failure.PropertyName] = messages;
-                }
-
-                messages.Add(failure.ErrorMessage);
+                AddError(errors, failure.PropertyName, failure.ErrorMessage);
             }
         }
 
@@ -69,5 +69,16 @@ public sealed class ValidationFilter : IAsyncActionFilter
         }
 
         await next();
+    }
+
+    private static void AddError(Dictionary<string, List<string>> errors, string key, string message)
+    {
+        if (!errors.TryGetValue(key, out var messages))
+        {
+            messages = [];
+            errors[key] = messages;
+        }
+
+        messages.Add(message);
     }
 }
