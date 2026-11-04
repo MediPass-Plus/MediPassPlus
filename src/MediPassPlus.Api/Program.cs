@@ -1,3 +1,4 @@
+using MediPassPlus.Api.Extensions;
 using MediPassPlus.Application.Validator;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
@@ -17,14 +18,12 @@ builder.Services.AddScoped<DatabaseSeeder>();
 
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+  
 
 // DbContext + Identity + Roles + JWT (all registered in Infrastructure/Extensions)
 builder.Services.AddInfrastructure(builder.Configuration);
 //  Swagger Services
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
+builder.Services.AddSwaggerDocumentation();
 var app = builder.Build();
 
 await app.SeedDefaultRolesAsync();
@@ -40,7 +39,7 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    app.MapOpenApi();
+  
 }
 
 app.UseHttpsRedirection();

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Infrastructure.Extensions;
@@ -321,5 +322,6 @@ public class AuthController : ControllerBase
     }
 
 
+    
 
 }
