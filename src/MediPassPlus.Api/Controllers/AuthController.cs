@@ -1,6 +1,7 @@
 using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Infrastructure.Extensions;
+using MediPassPlus.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -13,20 +14,34 @@ namespace MediPassPlus.Api.Controllers;
 [ApiController]
 public class AuthController : ControllerBase
 {
+    private readonly MediPassDbContext _context;
     private readonly UserManager<ApplicationUser> _userManager;
      private readonly JwtTokenService _jwt;
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
     private readonly IWebHostEnvironment _env;
-    public AuthController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole<Guid>> roleManager, JwtTokenService jwt, IWebHostEnvironment env   )
+    public AuthController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole<Guid>> roleManager, JwtTokenService jwt, IWebHostEnvironment env, MediPassDbContext context)
     {
         _userManager = userManager;
         _roleManager = roleManager;
         _jwt = jwt;
         _env = env;
+        _context = context;
     }
+
     [HttpPost("register")]
     public async Task<IActionResult> Register(RegisterDto request)
     {
+        // Validate registration data
+        if (!ModelState.IsValid)
+            return BadRequest("Invalid registration data.");
+
+        // Check if the requested role exists
+        if (!await _roleManager.RoleExistsAsync(request.Role))
+            return BadRequest(new
+            {
+                message = $"Role '{request.Role}' does not exist"
+            });
+
         var user = new ApplicationUser
         {
             UserName = request.Email,
@@ -34,31 +49,75 @@ public class AuthController : ControllerBase
             FullName = request.FullName,
             Role = request.Role
         };
-        if (!ModelState.IsValid)
-            return BadRequest("Invalid registration data.");
- 
 
-        if (!await _roleManager.RoleExistsAsync(request.Role))
+        // Restrict the user from self-assigning the Admin role
+        switch (request.Role)
+        {
+            case "Admin":
+                return BadRequest(new
+                {
+                    message = "This role cannot be self-assigned"
+                });
 
-            return BadRequest(new { message = $"Role '{request.Role}' does not exist" });
+            case "Doctor":
+            case "Staff":
+                user.IsActive = false;
+                break;
 
-        //Iwant to restrict the user from self-assigning the Admin role.
-        //#region
-        //if (request.Role == "Admin")
-        //    return BadRequest(new { message = "This role cannot be self-assigned" });
-        //#endregion
+            default:
+                user.IsActive = true;
+                break;
+        }
 
+        // Start a database transaction
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync();
 
+        try
+        {
+            // Step 1: Create the user in the Users table
+            var result = await _userManager.CreateAsync(
+                user, request.Password);
 
-        // Create the user and assign the role
-        var result = await _userManager.CreateAsync(user, request.Password);
-        if (!result.Succeeded)
-            return BadRequest(result.Errors.Select(e => e.Description));
+            if (!result.Succeeded)
+            {
+                await transaction.RollbackAsync();
 
-        await _userManager.AddToRoleAsync(user, request.Role);
+                return BadRequest(
+                    result.Errors.Select(e => e.Description));
+            }
 
-        return Ok(new { message = "Registered successfully" });
+            // Step 2: Assign the role in the UserRoles table
+            var roleResult = await _userManager.AddToRoleAsync(
+                user, request.Role);
+
+            if (!roleResult.Succeeded)
+            {
+                await transaction.RollbackAsync();
+
+                return BadRequest(new
+                {
+                    message = "Failed to assign role. Registration was cancelled.",
+                    errors = roleResult.Errors.Select(e => e.Description)
+                });
+            }
+
+            // Both operations succeeded, commit the transaction
+            await transaction.CommitAsync();
+
+            return Ok(new
+            {
+                message = "Registered successfully"
+            });
+        }
+        catch
+        {
+            // Rollback if any unexpected exception occurs
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
+
     [HttpPost("login")]
     public async Task<IActionResult> Login(LoginDto request)
     {
@@ -105,27 +164,162 @@ public class AuthController : ControllerBase
     }
 
     // Endpoint to create an admin user, accessible only by existing admins
+
     [Authorize(Roles = "Admin")]
     [HttpPost("create-admin")]
     public async Task<IActionResult> CreateAdmin(CreateAdminDto request)
     {
+        // Validate request data
+        if (!ModelState.IsValid)
+            return BadRequest("Invalid registration data.");
+
+        // Check if Admin role exists
+        if (!await _roleManager.RoleExistsAsync("Admin"))
+            return BadRequest(new
+            {
+                message = "Admin role does not exist"
+            });
+
         var user = new ApplicationUser
         {
-            
+            UserName = request.Email,
             Email = request.Email,
             FullName = request.FullName,
-            Role = "Admin"
-            
+            Role = "Admin",
+            EmailConfirmed = true
+           
         };
 
-        var result = await _userManager.CreateAsync(user, request.Password);
-        if (!result.Succeeded)
-            return BadRequest(result.Errors.Select(e => e.Description));
+        // Start a database transaction
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync();
 
-        await _userManager.AddToRoleAsync(user, "Admin");
+        try
+        {
+            // Step 1 Create the Admin user in the Users table
+            var result = await _userManager.CreateAsync(
+                user, request.Password);
 
-        return Ok(new { message = "Admin created successfully" });
+            if (!result.Succeeded)
+            {
+                await transaction.RollbackAsync();
+
+                return BadRequest(
+                    result.Errors.Select(e => e.Description));
+            }
+
+            // Step 2 Assign the Admin role in the UserRoles table
+            var roleResult = await _userManager.AddToRoleAsync(
+                user, "Admin");
+
+            if (!roleResult.Succeeded)
+            {
+                await transaction.RollbackAsync();
+
+                return BadRequest(new
+                {
+                    message = "Failed to assign Admin role. Admin creation was cancelled.",
+                    errors = roleResult.Errors.Select(e => e.Description)
+                });
+            }
+
+            // Both operations succeeded, commit the transaction
+            await transaction.CommitAsync();
+
+            return Ok(new
+            {
+                message = "Admin created successfully"
+            });
+        }
+        catch
+        {
+            // Rollback if any unexpected exception occurs
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
+
+
+    [HttpPost("register-Development Version")]
+    public async Task<IActionResult> RegisterDevelopment(RegisterDto request)
+    {
+        // Validate registration data
+        if (!ModelState.IsValid)
+            return BadRequest("Invalid registration data.");
+
+        // Check if the requested role exists
+        if (!await _roleManager.RoleExistsAsync(request.Role))
+            return BadRequest(new
+            {
+                message = $"Role '{request.Role}' does not exist"
+            });
+
+        // Create the user
+        var user = new ApplicationUser
+        {
+            UserName = request.Email,
+            Email = request.Email,
+            FullName = request.FullName,
+            Role = request.Role,
+
+            // Enable all accounts during development
+            IsActive = true,
+
+            EmailConfirmed = true
+        };
+
+        // Start a database transaction
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync();
+
+        try
+        {
+            // Step 1 Create the user in the Users table
+            var result = await _userManager.CreateAsync(
+                user, request.Password);
+
+            if (!result.Succeeded)
+            {
+                await transaction.RollbackAsync();
+
+                return BadRequest(
+                    result.Errors.Select(e => e.Description));
+            }
+
+            // Step 2 Assign the requested role in the UserRoles table
+            var roleResult = await _userManager.AddToRoleAsync(
+                user, request.Role);
+
+            if (!roleResult.Succeeded)
+            {
+                await transaction.RollbackAsync();
+
+                return BadRequest(new
+                {
+                    message = "Failed to assign role. Registration was cancelled.",
+                    errors = roleResult.Errors.Select(e => e.Description)
+                });
+            }
+
+            // Both operations succeeded, commit the transaction
+            await transaction.CommitAsync();
+
+            return Ok(new
+            {
+                message = "Registered successfully",
+                userId = user.Id,
+                role = request.Role,
+                isActive = user.IsActive
+            });
+        }
+        catch
+        {
+            // Rollback if any unexpected exception occurs
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
+
 
 
 }

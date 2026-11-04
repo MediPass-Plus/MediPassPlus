@@ -1,6 +1,7 @@
-using Microsoft.EntityFrameworkCore;
+using MediPassPlus.Application.Validator;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
