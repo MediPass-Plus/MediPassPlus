@@ -1,3 +1,5 @@
+using MediPassPlus.Api.Extensions;
+using MediPassPlus.Application.Validator;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using MediPassPlus.Infrastructure.Extensions;
@@ -20,6 +22,9 @@ var builder = WebApplication.CreateBuilder(args);
 // builder.Services.AddScoped<ISeeder, ClinicsSeeder>();
 builder.Services.AddScoped<DatabaseSeeder>();
 
+builder.Services.AddControllers();
+// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+  
 builder.Services.AddControllers(options =>
 {
     // Runs any registered IValidator<T> before the action and returns 400 ValidationProblemDetails on failure
@@ -68,6 +73,7 @@ if (exposeApiReference)
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+  
     app.MapOpenApi();
     app.UseSwaggerUI(options =>
     {
