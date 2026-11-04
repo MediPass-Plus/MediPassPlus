@@ -73,13 +73,6 @@ if (exposeApiReference)
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-  
-    app.MapOpenApi();
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint("/openapi/v1.json", "MediPass+ API v1");
-        options.DocumentTitle = "MediPass+ API";
-    });
 }
 
 app.UseHttpsRedirection();
