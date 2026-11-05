@@ -1,4 +1,5 @@
-using MediPassPlus.Domain.Clinical;
+﻿using MediPassPlus.Domain.Clinical;
+using MediPassPlus.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -9,6 +10,8 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
     public void Configure(EntityTypeBuilder<Appointment> builder)
     {
         builder.ToTable("Appointments", "clinical");
+
+        // Store the status as text (for example "Booked") so it is readable in the database
         builder.Property(a => a.Status).HasConversion<string>().HasMaxLength(20);
 
         builder.HasOne(a => a.Doctor)
@@ -19,6 +22,12 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
         builder.HasOne(a => a.DoctorSlot)
             .WithMany()
             .HasForeignKey(a => a.DoctorSlotId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // The patient is linked to a user account
+        builder.HasOne<ApplicationUser>()
+            .WithMany()
+            .HasForeignKey(a => a.PatientId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }

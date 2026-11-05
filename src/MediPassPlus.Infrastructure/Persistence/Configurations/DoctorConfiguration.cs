@@ -1,4 +1,5 @@
-using MediPassPlus.Domain.Clinical;
+﻿using MediPassPlus.Domain.Clinical;
+using MediPassPlus.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -18,6 +19,12 @@ public class DoctorConfiguration : IEntityTypeConfiguration<Doctor>
         builder.HasOne(d => d.Clinic)
             .WithMany(c => c.Doctors)
             .HasForeignKey(d => d.ClinicId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // The doctor is linked to a user account
+        builder.HasOne<ApplicationUser>()
+            .WithMany()
+            .HasForeignKey(d => d.UserId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 }
