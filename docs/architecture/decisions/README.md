@@ -18,6 +18,7 @@ be resolved by the team, not silently.
 | [0007](0007-rate-limiting-and-data-protection.md) | Rate limiting and Data Protection keys | **Accepted** (values under security review) | Platform, Visit Access, Record |
 | [0008](0008-openapi-and-xml-documentation.md) | OpenAPI, Swagger UI and XML documentation | **Accepted** | Every endpoint PR |
 | [0009](0009-database-baseline-strategy.md) | Coordinated database baseline, then serialized migrations | Proposed — owner not named | All schema work |
+| [0011](0011-access-grant-lifecycle.md) | Access grant lifecycle and status derivation | **Accepted** (2026-11-05; amended 2026-11-05 for composite scope enforcement) | Visit Access checker, grant endpoints |
 
 ## How to use these records
 

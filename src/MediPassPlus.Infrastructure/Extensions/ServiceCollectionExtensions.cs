@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using MediPassPlus.Application.VisitAccess;
+using MediPassPlus.Infrastructure.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -18,6 +20,12 @@ public static class ServiceCollectionExtensions
           // Authentication & JWT
      services.AddJwtAuthentication(configuration);
         services.AddScoped<JwtTokenService>();
+
+        // Visit-access scope checks: resolve the appointment/doctor from the database, never from caller-supplied ids
+        // (FR-ACS-06, ADR-0011 decision 8).
+        services.AddScoped<IVisitAccessScopeStore, VisitAccessScopeStore>();
+        services.AddScoped<IVisitAccessScopeService, VisitAccessScopeService>();
+
         // Add other infrastructure services here as needed
 
 
