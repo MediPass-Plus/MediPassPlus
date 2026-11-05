@@ -51,9 +51,9 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     b.HasIndex("DoctorId");
 
-                    b.HasIndex("DoctorSlotId");
-
                     b.HasIndex("PatientId");
+
+                    b.HasIndex("DoctorSlotId", "DoctorId");
 
                     b.ToTable("Appointments", "clinical");
                 });
@@ -360,15 +360,16 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("MediPassPlus.Domain.Clinical.DoctorSlot", "DoctorSlot")
-                        .WithMany()
-                        .HasForeignKey("DoctorSlotId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("MediPassPlus.Domain.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Clinical.DoctorSlot", "DoctorSlot")
+                        .WithMany()
+                        .HasForeignKey("DoctorSlotId", "DoctorId")
+                        .HasPrincipalKey("Id", "DoctorId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
