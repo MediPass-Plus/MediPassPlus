@@ -9,6 +9,9 @@ public sealed class VisitAccessCredential
     /// <summary>Wrong code entries allowed before the credential is locked (FR-ACS-05).</summary>
     public const int MaxFailedAttempts = 5;
 
+    private static readonly TimeSpan QrTokenLifetime = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan NumericCodeLifetime = TimeSpan.FromMinutes(5);
+
     private VisitAccessCredential()
     {
     }
@@ -59,17 +62,18 @@ public sealed class VisitAccessCredential
     /// <summary>When the credential was locked after too many wrong code entries (FR-ACS-05).</summary>
     public DateTime? LockedAtUtc { get; private set; }
 
-    /// <summary>Creates a credential that expires at the supplied instant.</summary>
+    /// <summary>
+    /// Creates a credential with the lifetime fixed by its type: two minutes for a QR token and five minutes for a
+    /// numeric code (FR-ACS-02, FR-ACS-05, ADR-0001).
+    /// </summary>
     /// <param name="accessRequestId">The request this credential proves.</param>
     /// <param name="type">The credential type, which fixes its hash algorithm and lifetime policy.</param>
     /// <param name="secretHash">The hash of the secret; the plaintext must never be passed here.</param>
-    /// <param name="expiresAtUtc">The expiry instant, in UTC.</param>
     /// <param name="utcNow">The current UTC time.</param>
     public static VisitAccessCredential Create(
         Guid accessRequestId,
         VisitCredentialType type,
         string secretHash,
-        DateTime expiresAtUtc,
         DateTime utcNow)
     {
         if (accessRequestId == Guid.Empty)
@@ -87,10 +91,12 @@ public sealed class VisitAccessCredential
             throw new ArgumentException("The secret hash is required.", nameof(secretHash));
         }
 
-        if (expiresAtUtc <= utcNow)
+        var lifetime = type switch
         {
-            throw new ArgumentOutOfRangeException(nameof(expiresAtUtc), "The credential must expire in the future.");
-        }
+            VisitCredentialType.QrToken => QrTokenLifetime,
+            VisitCredentialType.NumericCode => NumericCodeLifetime,
+            _ => throw new ArgumentOutOfRangeException(nameof(type))
+        };
 
         return new VisitAccessCredential(
             Guid.CreateVersion7(),
@@ -98,7 +104,7 @@ public sealed class VisitAccessCredential
             type,
             secretHash,
             utcNow,
-            expiresAtUtc);
+            utcNow.Add(lifetime));
     }
 
     /// <summary>True when the credential is unused, not revoked or locked, and not expired.</summary>
