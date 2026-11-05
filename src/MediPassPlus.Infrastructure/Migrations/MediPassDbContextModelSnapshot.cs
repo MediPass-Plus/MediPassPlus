@@ -257,12 +257,12 @@ namespace MediPassPlus.Infrastructure.Migrations
                     b.HasIndex("AccessRequestId")
                         .IsUnique();
 
-                    b.HasIndex("AppointmentId")
-                        .IsUnique();
-
                     b.HasIndex("DoctorId");
 
                     b.HasIndex("PatientId");
+
+                    b.HasIndex("AppointmentId", "DoctorId", "PatientId")
+                        .IsUnique();
 
                     b.ToTable("AccessGrants", "access");
                 });
@@ -292,11 +292,11 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("AppointmentId");
-
                     b.HasIndex("DoctorId");
 
                     b.HasIndex("PatientId");
+
+                    b.HasIndex("AppointmentId", "DoctorId", "PatientId");
 
                     b.ToTable("AccessRequests", "access");
                 });
@@ -544,12 +544,6 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("MediPassPlus.Domain.Clinical.Appointment", null)
-                        .WithOne()
-                        .HasForeignKey("MediPassPlus.Domain.VisitAccess.AccessGrant", "AppointmentId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("MediPassPlus.Domain.Clinical.Doctor", null)
                         .WithMany()
                         .HasForeignKey("DoctorId")
@@ -559,18 +553,19 @@ namespace MediPassPlus.Infrastructure.Migrations
                     b.HasOne("MediPassPlus.Domain.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Clinical.Appointment", null)
+                        .WithOne()
+                        .HasForeignKey("MediPassPlus.Domain.VisitAccess.AccessGrant", "AppointmentId", "DoctorId", "PatientId")
+                        .HasPrincipalKey("MediPassPlus.Domain.Clinical.Appointment", "Id", "DoctorId", "PatientId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("MediPassPlus.Domain.VisitAccess.AccessRequest", b =>
                 {
-                    b.HasOne("MediPassPlus.Domain.Clinical.Appointment", null)
-                        .WithMany()
-                        .HasForeignKey("AppointmentId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("MediPassPlus.Domain.Clinical.Doctor", null)
                         .WithMany()
                         .HasForeignKey("DoctorId")
@@ -580,6 +575,13 @@ namespace MediPassPlus.Infrastructure.Migrations
                     b.HasOne("MediPassPlus.Domain.Identity.ApplicationUser", null)
                         .WithMany()
                         .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Clinical.Appointment", null)
+                        .WithMany()
+                        .HasForeignKey("AppointmentId", "DoctorId", "PatientId")
+                        .HasPrincipalKey("Id", "DoctorId", "PatientId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

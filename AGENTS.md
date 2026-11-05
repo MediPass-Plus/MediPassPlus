@@ -29,11 +29,12 @@ the projects.
 
 This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
 register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
-`DoctorSlot` and `Appointment` (CLB-01); MP-1301 adds `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
-Five migrations live in `src/MediPassPlus.Infrastructure/Migrations/`, including `AddVisitAccessSchema`. There is still
-no visit-access endpoint, no medical-record module and no audit writer, and the frontend is the untouched Angular
-welcome page. Everything the README, planning document or an ADR describes as planned is a target, not a fact. Trust
-the code, the `.csproj` files, `package.json` and the ADRs over prose.
+`DoctorSlot` and `Appointment` (CLB-01); MP-1301 added `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
+A read-only visit-access scope service now verifies that the acting doctor or patient matches the appointment.
+Six migrations live in `src/MediPassPlus.Infrastructure/Migrations/`, including `AddVisitAccessSchema` and
+`EnforceVisitAccessScopeMatch`. There is still no visit-access endpoint, no medical-record module and no audit writer,
+and the frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
+as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline
 (ADR-0010); Swagger UI is installed (ADR-0008). Serilog is not installed.

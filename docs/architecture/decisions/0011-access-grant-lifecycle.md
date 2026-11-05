@@ -1,8 +1,9 @@
 # ADR-0011: Access grant lifecycle and status derivation
 
-- **Status:** Proposed (awaiting module review; MP-1301 step 4)
-- **Date:** 2026-11-05
-- **Affects:** Visit Access module, `access.AccessGrants` schema, the future access checker, class diagram (D4)
+- **Status:** Accepted (2026-11-05, module review completed by Ahmed; amended 2026-11-05 for composite scope enforcement)
+- **Date:** 2026-11-05 (amended 2026-11-05)
+- **Affects:** Visit Access module, `access.AccessRequests`/`access.AccessGrants`/`clinical.Appointments` schema,
+  the future access checker, class diagram (D4)
 
 ## Context
 
@@ -33,17 +34,31 @@ status list in MP-1301 undefined.
    post-completion grace window; that overrides the scheduled end.
 5. **Terminal states.** `Ended` and `Expired` are final. No transition leaves them, and an ended or expired grant is
    never reused. A new visit requires a new request, a new approval and a new grant (FR-ACS-11).
-6. **Uniqueness.** At most one grant exists per access request and per appointment; both foreign keys are unique.
+6. **Uniqueness.** At most one grant exists per access request and per appointment. The request foreign key is unique,
+   and the appointment scope `(AppointmentId, DoctorId, PatientId)` is a unique foreign key.
 7. **Request lifecycle.** `AccessRequest.Status` is `Pending`, `Approved` or `Rejected`, and only the patient moves it
    out of `Pending`. Requests do not expire: the credentials do, and US-22 replaces a code under the same pending
    request by revoking the previous credential (ADR-0001).
-8. **Scope consistency.** The request and grant store `AppointmentId`, `DoctorId` and `PatientId`. The database cannot
-   enforce that the doctor and patient match the appointment without a composite key on `Appointment`, so the visit
-   access service must verify it before creating a request or grant and must audit both events (ADR-0004).
+8. **Scope consistency.** The request and grant store `AppointmentId`, `DoctorId` and `PatientId`. The database
+   enforces that the stored triple matches the appointment through an alternate key on
+   `Appointment (Id, DoctorId, PatientId)` and composite foreign keys from `AccessRequest` and `AccessGrant`. The
+   visit access service still verifies the authenticated actor before creating a request or grant and must audit both
+   events (ADR-0004); the database cannot know which user is acting and must not be the first line that rejects a
+   request.
+
+### Amendment 2026-11-05 — database scope key
+
+The original decision 8 said the database could not enforce this rule without a composite key. The MP-1301
+follow-up adds that key and the composite foreign keys in migration `EnforceVisitAccessScopeMatch`, so a row whose
+stored doctor or patient does not match the appointment is rejected by the database. The service check remains mandatory: it resolves `Doctor.UserId` and the
+authenticated patient and returns the `403`/`404` decision, so a constraint violation is a last-resort integrity
+check rather than the caller-facing authorization response. Both the key and the service are required.
 
 ## Consequences
 
 - No status column and no scheduled job: every checker computes the same answer from the same timestamps.
+- The composite scope key makes a mismatched request or grant fail at `SaveChanges` as well as at the service; a bug
+  cannot silently create access for another doctor or patient.
 - `EndReason` is what separates `Ended` from `Expired`; a completion capped at the 2-hour limit is still `Ended`
   because a deliberate reason exists.
 - Completing a visit never extends access past `GrantedAtUtc + 2 hours`.

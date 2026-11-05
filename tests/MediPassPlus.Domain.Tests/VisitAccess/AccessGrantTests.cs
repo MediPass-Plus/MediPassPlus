@@ -1,3 +1,4 @@
+using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.VisitAccess;
 
 namespace MediPassPlus.Domain.Tests.VisitAccess;
@@ -9,9 +10,9 @@ public class AccessGrantTests
     [Fact]
     public void Create_ForApprovedRequest_IsActiveUntilTheTwoHourCap()
     {
-        var request = CreateApprovedRequest();
+        var request = CreateApprovedRequest(out var appointment);
 
-        var grant = AccessGrant.Create(request, GrantedAt);
+        var grant = AccessGrant.Create(request, appointment, GrantedAt);
 
         Assert.Equal(request.Id, grant.AccessRequestId);
         Assert.Equal(request.AppointmentId, grant.AppointmentId);
@@ -28,9 +29,56 @@ public class AccessGrantTests
     [Fact]
     public void Create_ForPendingRequest_Throws()
     {
-        var request = AccessRequest.Create(42, 7, Guid.NewGuid(), GrantedAt);
+        var appointment = CreateAppointment();
+        var request = AccessRequest.Create(appointment, CreateDoctor(), GrantedAt);
 
-        Assert.Throws<InvalidOperationException>(() => AccessGrant.Create(request, GrantedAt));
+        Assert.Throws<InvalidOperationException>(() => AccessGrant.Create(request, appointment, GrantedAt));
+    }
+
+    [Fact]
+    public void Create_WhenRequestIsForAnotherAppointment_Throws()
+    {
+        var request = CreateApprovedRequest(out _);
+        var otherAppointment = CreateAppointment(id: 43);
+
+        Assert.Throws<InvalidOperationException>(
+            () => AccessGrant.Create(request, otherAppointment, GrantedAt));
+    }
+
+    [Fact]
+    public void Create_WhenAppointmentDoctorChanged_Throws()
+    {
+        var request = CreateApprovedRequest(out var appointment);
+        appointment.DoctorId = 8;
+
+        Assert.Throws<InvalidOperationException>(
+            () => AccessGrant.Create(request, appointment, GrantedAt));
+    }
+
+    [Fact]
+    public void Create_WhenAppointmentPatientChanged_Throws()
+    {
+        var request = CreateApprovedRequest(out var appointment);
+        appointment.PatientId = Guid.NewGuid();
+
+        Assert.Throws<InvalidOperationException>(
+            () => AccessGrant.Create(request, appointment, GrantedAt));
+    }
+
+    [Fact]
+    public void Create_NullRequest_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(
+            () => AccessGrant.Create(null!, CreateAppointment(), GrantedAt));
+    }
+
+    [Fact]
+    public void Create_NullAppointment_Throws()
+    {
+        var request = CreateApprovedRequest(out _);
+
+        Assert.Throws<ArgumentNullException>(
+            () => AccessGrant.Create(request, null!, GrantedAt));
     }
 
     [Fact]
@@ -129,18 +177,32 @@ public class AccessGrantTests
         Assert.Null(grant.EndReason);
     }
 
-    [Fact]
-    public void Create_NullRequest_Throws()
+    private static AccessRequest CreateApprovedRequest(out Appointment appointment)
     {
-        Assert.Throws<ArgumentNullException>(() => AccessGrant.Create(null!, GrantedAt));
-    }
-
-    private static AccessRequest CreateApprovedRequest()
-    {
-        var request = AccessRequest.Create(42, 7, Guid.NewGuid(), GrantedAt);
+        appointment = CreateAppointment();
+        var request = AccessRequest.Create(appointment, CreateDoctor(), GrantedAt);
         request.Approve();
         return request;
     }
 
-    private static AccessGrant CreateGrant() => AccessGrant.Create(CreateApprovedRequest(), GrantedAt);
+    private static AccessGrant CreateGrant()
+    {
+        var request = CreateApprovedRequest(out var appointment);
+        return AccessGrant.Create(request, appointment, GrantedAt);
+    }
+
+    private static Appointment CreateAppointment(int id = 42) =>
+        new()
+        {
+            Id = id,
+            DoctorId = 7,
+            PatientId = Guid.NewGuid()
+        };
+
+    private static Doctor CreateDoctor() =>
+        new()
+        {
+            Id = 7,
+            UserId = Guid.NewGuid()
+        };
 }

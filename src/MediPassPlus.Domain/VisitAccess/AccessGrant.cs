@@ -1,3 +1,5 @@
+using MediPassPlus.Domain.Clinical;
+
 namespace MediPassPlus.Domain.VisitAccess;
 
 /// <summary>
@@ -54,16 +56,32 @@ public sealed class AccessGrant
     /// <summary>Why the grant ended. Null while the two-hour limit is the only end.</summary>
     public GrantEndReason? EndReason { get; private set; }
 
-    /// <summary>Creates the grant for an approved request (FR-ACS-04).</summary>
+    /// <summary>
+    /// Creates the grant for an approved request (FR-ACS-04). The request must still describe the same appointment,
+    /// doctor and patient; a grant can never move or widen the scope (FR-ACS-06, ADR-0011 decision 8).
+    /// </summary>
     /// <param name="request">The approved access request.</param>
+    /// <param name="appointment">The appointment the request was created for.</param>
     /// <param name="utcNow">The current UTC time.</param>
-    public static AccessGrant Create(AccessRequest request, DateTime utcNow)
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The request is not approved, or its appointment, doctor or patient does not match the appointment.
+    /// </exception>
+    public static AccessGrant Create(AccessRequest request, Appointment appointment, DateTime utcNow)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(appointment);
 
         if (request.Status != AccessRequestStatus.Approved)
         {
             throw new InvalidOperationException("An access grant can only be created for an approved request.");
+        }
+
+        if (request.AppointmentId != appointment.Id
+            || request.DoctorId != appointment.DoctorId
+            || request.PatientId != appointment.PatientId)
+        {
+            throw new InvalidOperationException("The access request does not match the appointment.");
         }
 
         return new AccessGrant(Guid.CreateVersion7(), request, utcNow);

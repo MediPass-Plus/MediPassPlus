@@ -25,9 +25,13 @@ public class AccessGrantConfiguration : IEntityTypeConfiguration<AccessGrant>
             .HasForeignKey<AccessGrant>(g => g.AccessRequestId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Composite foreign key: the database rejects a grant whose doctor or patient does not match the
+        // appointment. The one-to-one relationship still keeps one grant per appointment (FR-ACS-06, FR-ACS-11,
+        // ADR-0011 decision 8).
         builder.HasOne<Appointment>()
             .WithOne()
-            .HasForeignKey<AccessGrant>(g => g.AppointmentId)
+            .HasForeignKey<AccessGrant>(g => new { g.AppointmentId, g.DoctorId, g.PatientId })
+            .HasPrincipalKey<Appointment>(a => new { a.Id, a.DoctorId, a.PatientId })
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne<Doctor>()
