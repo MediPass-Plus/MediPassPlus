@@ -117,11 +117,12 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   that holds real data.
 - The `Bearer` scheme and the per-operation security requirement come from `OpenApi/BearerSecuritySchemeTransformer`.
   It marks operations that carry `[Authorize]` automatically, so do not hand-write security requirements.
-- **Scaffold state:** Swagger UI works today, but the repository has no authentication and no authorized business
-  endpoint, so the login → Bearer round-trip cannot be exercised yet. The login endpoint and the first `[Authorize]`
-  endpoints must be implemented before the padlocks and the token flow mean anything.
-- **Once login exists:** call the login endpoint, copy the `accessToken` value, click **Authorize**, paste the raw token
-  (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
+- **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
+  `reset-password`) exist. The only `[Authorize]` operation is `POST api/Auth/create-admin`, which requires an existing
+  admin account; no admin is seeded yet. There is still no authorized business (medical) endpoint; the first
+  visit-access endpoints will exercise the grant checks.
+- **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
+  **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for
   `401` (missing, invalid or expired token) and `403` (wrong role, no active grant, expired or ended grant), along with
   every other status it can return. The transformer supplies the security requirement; you still own the response
@@ -150,7 +151,7 @@ npm 11.19.0. That is a record of one run, not a guarantee for every machine — 
 Backend, from the repo root — this is also the CI sequence:
 
 ```powershell
-dotnet build --configuration Release        # builds MediPassPlus.slnx, 0 warnings
+dotnet build --configuration Release        # 0 errors; 1 pre-existing warning (JwtSettings.Key)
 dotnet test --no-build --configuration Release
 dotnet test tests/MediPassPlus.Domain.Tests --filter FullyQualifiedName~MyTest   # single test
 dotnet run --project src/MediPassPlus.Api --launch-profile http   # http://localhost:5114
@@ -176,7 +177,8 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
 - The solution is `.slnx`, not `.sln`. Keep the real casing `MediPassPlus.Infrastructure` (Linux CI is
   case-sensitive).
 - `dotnet-ef` 10.0.11 is installed as a global tool. Migrations live in `src/MediPassPlus.Infrastructure/Migrations/`;
-  do not pass `--output-dir`, or EF creates a second snapshot.
+  do not pass `--output-dir`, or EF creates a second snapshot. The tools print a version-mismatch warning against the
+  10.0.14 runtime; it is not a build failure.
 - `ng test` accepts only Angular builder flags. Vitest flags fail (`--pool` → "Unknown argument"); `--watch=false` and
   a spec path are the supported ones. A cold run can also die with `Failed to start forks worker` before any test
   executes. Do not treat a passing rerun as the fix: record the original failure, check that no stale Node/Vitest worker
