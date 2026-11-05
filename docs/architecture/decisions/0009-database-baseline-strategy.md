@@ -1,49 +1,67 @@
 # ADR-0009: One coordinated database baseline, then serialized migrations
 
-- **Status:** Proposed (blocked: no database migration owner has been named yet)
-- **Date:** 2026-10-29
+- **Status:** Accepted (2026-11-05, amended). The initial baseline has already landed; decisions 1-8 are binding.
+- **Date:** 2026-10-29 (amended 2026-11-05)
 - **Affects:** all modules, CONTRIBUTING/README migration rules, CI
 
 ## Context
 
-There are **no migrations** today (verified 2026-10-29). CONTRIBUTING.md and README both say "one migration per pull
-request, never edit a merged migration". Six modules are developed in parallel, and every EF migration embeds a full
-model snapshot, so six modules generating their first migration at the same time guarantees snapshot merge conflicts.
-The planning document already assigns the database context and seed script to one owner (Nagham, §3.3) and calls for
-"database schema agreed" in Sprint 1.
+This ADR was written on 2026-10-29, when the repository had **no migrations**. It proposed an entity-only freeze
+followed by one coordinated `InitialSchema` migration, so six parallel modules would not generate six competing
+"first" migrations and snapshots.
+
+That window has closed. At amendment time the repository has five merged migrations:
+
+`InitialCreate`, `AddRoleInApplicationUser`, `AddClinicalSchema`, `EnforceAppointmentDoctorSlotMatch`, and
+`AddVisitAccessSchema`.
+
+Retrofitting the original single-baseline plan would require squashing or replaying already merged migrations and
+would break every developer database. The durable part of the decision is the rule that keeps parallel modules from
+fighting over the shared snapshot after a baseline exists.
 
 ## Decision
 
-1. **Contract-first entity freeze.** Each module merges its entities + `IEntityTypeConfiguration` classes **without a
-   migration** (entity-only PRs, reviewable in isolation).
-2. **One coordinated `InitialSchema` migration** is created once, after the Must entities exist (Identity/users,
-   clinic/doctor/slot/appointment, access request/credential/grant, medical record/diagnosis/prescription/report,
-   audit), by the named migration owner (Nagham), with all module owners reviewing the generated SQL. It lands in its
-   own PR, contains only the migration + snapshot, and is the team's shared baseline.
-3. **After the baseline: serialize.** One migration per PR, announced in the weekly technical sync, never two open
-   migration PRs from different modules; rebase on `main` before regenerating.
-4. **Schema layout** follows the documented separation: `identity`, `clinical`, `access`, `records`, `audit`
-   (configured per entity with `ToTable(name, schema)`), so table names stay scoped and cross-module queries stay explicit.
-5. **Drift guard:** CI (or a pre-PR local step) runs `dotnet ef migrations has-pending-model-changes`
-   (EF Core 10 command, verified) so a merged entity change cannot slip past the snapshot.
-6. **Seed data** is added by seeders (existing `ISeeder` contract), after the baseline, and stays idempotent.
-7. `Program.cs` does not call `Migrate()`: developers and CI apply migrations explicitly
-   (`dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api`).
+1. **The baseline is closed.** The merged chain above is the shared baseline. Do not create a second `InitialSchema`,
+   do not squash or replay merged migrations, and do not use `EnsureCreated()`.
+2. **One migration per PR.** Every PR that changes the model includes exactly one migration and the updated
+   `MediPassDbContextModelSnapshot.cs`. Entity and `IEntityTypeConfiguration` changes stay in the same PR as their
+   migration. Never edit a migration that is already merged; a mistake is corrected with a new migration.
+3. **Serialize migrations.** Announce a migration PR in the weekly technical sync. Do not keep two open migration PRs
+   from different modules. Rebase on `main` before regenerating. If the snapshot conflicts, regenerate it from the
+   model after the rebase; never hand-merge the snapshot. The team leader coordinates this serialization; a separate
+   baseline owner is no longer needed.
+4. **Schema layout.** Use the documented separations: `identity`, `clinical`, `access`, `records`, `audit`, configured
+   per entity with `ToTable(name, schema)`. Table names stay scoped and cross-module queries stay explicit.
+5. **Drift guard.** Run `dotnet ef migrations has-pending-model-changes` before opening a PR and add it to CI when the
+   pipeline supports it, so a merged entity change cannot slip past the snapshot.
+6. **Seed data.** Seeders implement the existing `ISeeder` contract, run after the schema exists, and stay idempotent.
+   Never seed real patient data, secrets or production identifiers.
+7. **No automatic migration.** `Program.cs` does not call `Migrate()` or `EnsureCreated()`. Developers and CI apply
+   migrations explicitly:
+   `dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api`.
+8. **Safety review.** Read the generated SQL before applying it. Test the migration on an empty database and on a copy
+   of an existing database. Prefer additive changes. A destructive change - drop, rename, type narrowing or data
+   rewrite - needs a backup and explicit approval for that specific migration.
 
 ## Consequences
 
-- One large baseline PR, but a single snapshot that no module has to merge.
-- Modules can implement endpoints before the baseline only if they do not need a real database; otherwise the baseline
-  is a hard dependency for end-to-end runs — plan it before the first feature demo.
-- The "one migration per PR" rule in CONTRIBUTING stays true for everything after the baseline; the baseline PR
-  documents itself as the exception.
+- The baseline is a fact, not a future step; new modules add migrations to the existing chain.
+- The team still shares one snapshot, so migration PRs must be short-lived and serialized.
+- The "one migration per PR" rule in CONTRIBUTING is now unconditional and applies to every module.
+- A bad merged migration is fixed forward with a new migration, never by editing history.
+- The first migration after a model change is cheap to review; a long migration PR is a warning sign.
 
 ## Alternatives considered
 
-- *Per-module first migrations* — rejected: parallel snapshot conflicts, six "first" migrations, unmanageable review.
-- *`EnsureCreated` in development, migrations later* — rejected: drifts from production schema and breaks NFR-REL-03
-  checks (unique constraints, filtered indexes).
+- **Retrofit the original single-baseline plan.** Rejected: it would require rewriting five merged migrations and
+  invalidating every developer database.
+- **`EnsureCreated` in development, migrations later.** Rejected: it drifts from the production schema and breaks
+  NFR-REL-03 checks (unique constraints, filtered indexes).
+- **Let each module generate migrations independently without serialization.** Rejected: the shared snapshot produces
+  merge conflicts and broken migration chains.
 
 ## Conflict check
 
-No conflict. It operationalizes the existing "one migration per PR" rule and the Sprint-1 "schema agreed" milestone.
+No conflict with a requirement. The amendment records the baseline that actually landed and keeps the original
+serialization intent. It does not change ADR-0003 (Identity), ADR-0006 (integration tests) or ADR-0011 (grant
+lifecycle).

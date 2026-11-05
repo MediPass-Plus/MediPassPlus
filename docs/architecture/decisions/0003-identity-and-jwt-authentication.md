@@ -1,7 +1,7 @@
 # ADR-0003: ASP.NET Core Identity with JWT authorization
 
-- **Status:** Proposed (blocked: the Identity user-model shape — TPH subclasses vs profile tables — and the
-  refresh-token storage/rotation design are not confirmed)
+- **Status:** Proposed (blocked: user-model shape and refresh-token design; see the 2026-11-05 implementation review
+  below)
 - **Date:** 2026-10-29
 - **Affects:** Accounts module, every authorized endpoint, class diagram (D4), database baseline
 
@@ -29,6 +29,33 @@ what the documents require, and it would duplicate Identity.
 5. Deactivated accounts (FR-STF-07) block login (Identity lockout) **and** carry an `IsActive` flag; because JWT bearer
    validation does not hit the database, deactivation takes effect at latest when the 15-minute access token expires.
 6. JWT signing key comes from `Jwt:Key` (user-secrets/env); it is never the Data Protection key (ADR-0007).
+
+## Implementation review (2026-11-05)
+
+The merged Accounts code follows the Identity/JWT direction but does not yet satisfy this ADR. Do not mark the ADR
+Accepted until the gaps are closed or the decision is amended by the team.
+
+Aligned:
+
+- `ApplicationUser : IdentityUser<Guid>`; Identity owns the password hash and user record.
+- JWT access tokens carry the user id and role claims, with a 15-minute lifetime.
+- `IsActive` is checked at login, so a deactivated account cannot obtain a token.
+
+Gaps:
+
+- **Password policy:** the code requires an uppercase letter and a non-alphanumeric character; this ADR and FR-ACC-02
+  say `false`. Decide whether to relax the code or amend the ADR/requirement.
+- **Lockout:** login uses `CheckPasswordAsync`, not `CheckPasswordSignInAsync(..., lockoutOnFailure: true)`, and
+  `MaxFailedAccessAttempts` / `DefaultLockoutTimeSpan` are not configured. FR-ACC-05 is not implemented.
+- **Refresh tokens:** there is no refresh-token table, rotation, revocation or endpoint; `RefreshTokenDays` is unused.
+  FR-ACC-06 is not implemented.
+- **User model:** the code uses one `ApplicationUser` plus a `Doctor` profile table and a duplicate `Role` string. The
+  TPH-vs-profile sub-decision and the single source of truth for roles remain unresolved.
+- **Role assignment:** registration accepts a role from the request body and allows `Doctor`/`Staff` self-assignment.
+  AGENTS.md §4 forbids trusting a role from a request body; administration must assign privileged roles.
+- **Role names:** the seeder creates `Staff`; this ADR and the requirements use `ClinicStaff`.
+- **JWT key name:** the code binds `Jwt:SecretKey`; this ADR names `Jwt:Key`. Standardize one name and keep the value
+  outside the repository.
 
 ## Open sub-decisions (block the Accounts PR, not the ADR)
 

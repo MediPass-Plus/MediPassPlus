@@ -1,7 +1,6 @@
 # ADR-0010: Input validation with FluentValidation and one ProblemDetails error format
 
-- **Status:** Proposed (2026-11-02) — chosen by the module owner (Arwa) for MP-1306; awaiting team-leader acceptance
-  before merge.
+- **Status:** Accepted (2026-11-05). Merged in MP-1306 (#12); the open questions below are follow-ups, not blockers.
 - **Date:** 2026-11-02
 - **Affects:** every endpoint PR, `MediPassPlus.Api`, `MediPassPlus.Application`, the API error contract
 
