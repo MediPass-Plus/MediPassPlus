@@ -39,8 +39,8 @@ public class ClinicsController : ControllerBase
 
         var items = await clinics
             .OrderBy(c => c.Name).ThenBy(c => c.Id)
-            .Skip(query.Skip)
-            .Take(query.EffectivePageSize)
+            .Skip(query.GetSkip())
+            .Take(query.GetPageSize())
             .Select(c => new ClinicDto
             {
                 Id = c.Id,
@@ -55,7 +55,8 @@ public class ClinicsController : ControllerBase
             Items = items,
             TotalCount = total,
             Page = query.Page,
-            PageSize = query.EffectivePageSize
+            PageSize = query.GetPageSize()
         });
     }
 }
+

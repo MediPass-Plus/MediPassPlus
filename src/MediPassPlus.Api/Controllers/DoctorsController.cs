@@ -57,8 +57,8 @@ public class DoctorsController : ControllerBase
 
         var items = await doctors
             .OrderBy(d => d.FullName).ThenBy(d => d.Id)
-            .Skip(query.Skip)
-            .Take(query.EffectivePageSize)
+            .Skip(query.GetSkip())
+            .Take(query.GetPageSize())
             .ToListAsync(ct);
 
         return Ok(new PagedResult<DoctorDto>
@@ -66,7 +66,8 @@ public class DoctorsController : ControllerBase
             Items = items,
             TotalCount = total,
             Page = query.Page,
-            PageSize = query.EffectivePageSize
+            PageSize = query.GetPageSize()
         });
     }
 }
+

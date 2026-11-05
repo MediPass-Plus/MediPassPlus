@@ -10,8 +10,8 @@ public class PageRequest
     public int PageSize { get; set; } = DefaultPageSize;
 
     // A page size above the maximum is cut down to the maximum.
-    public int EffectivePageSize => Math.Min(PageSize, MaxPageSize);
+    public int GetPageSize() => Math.Min(PageSize, MaxPageSize);
 
     // How many rows to skip to reach this page.
-    public int Skip => (Page - 1) * EffectivePageSize;
+    public int GetSkip() => (int)Math.Min((long)(Page - 1) * GetPageSize(), int.MaxValue);
 }
