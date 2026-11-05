@@ -10,6 +10,7 @@ public class DoctorSlotConfiguration : IEntityTypeConfiguration<DoctorSlot>
     {
         builder.ToTable("DoctorSlots", "clinical");
 
+        builder.HasAlternateKey(s => new { s.Id, s.DoctorId });
         builder.HasOne(s => s.Doctor)
             .WithMany(d => d.Slots)
             .HasForeignKey(s => s.DoctorId)
