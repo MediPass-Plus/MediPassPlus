@@ -1,12 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\MediPassPlus.Domain\MediPassPlus.Domain.csproj" />
+    <PackageReference Include="FluentValidation" Version="12.2.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Request validators live next to the contract they validate (ADR-0010). -->
-    <PackageReference Include="FluentValidation" Version="12.2.0" />
+    <ProjectReference Include="..\MediPassPlus.Domain\MediPassPlus.Domain.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

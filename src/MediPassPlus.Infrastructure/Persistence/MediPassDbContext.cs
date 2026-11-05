@@ -1,8 +1,12 @@
+using MediPassPlus.Domain.Identity;
+using MediPassPlus.Infrastructure.Extensions;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using MediPassPlus.Domain.Clinical;
 namespace MediPassPlus.Infrastructure.Persistence;
 
-public class MediPassDbContext : DbContext
+public class MediPassDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>
 {
     public DbSet<Clinic> Clinics => Set<Clinic>();
     public DbSet<Doctor> Doctors => Set<Doctor>();
@@ -16,6 +20,8 @@ public class MediPassDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        // call the extension method to configure the Identity schema
+        modelBuilder.ConfigureIdentitySchema();
 
         // Every module adds its own IEntityTypeConfiguration class.
         // They are picked up here automatically.
