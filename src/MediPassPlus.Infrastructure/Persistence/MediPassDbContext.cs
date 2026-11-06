@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.VisitAccess;
+using MediPassPlus.Domain.StaffAdmin;
 namespace MediPassPlus.Infrastructure.Persistence;
 
 public class MediPassDbContext : IdentityDbContext<ApplicationUser, IdentityRole<Guid>, Guid>
@@ -15,6 +16,8 @@ public class MediPassDbContext : IdentityDbContext<ApplicationUser, IdentityRole
     public DbSet<Appointment> Appointments => Set<Appointment>();
     public DbSet<AccessRequest> AccessRequests => Set<AccessRequest>();
     public DbSet<AccessGrant> AccessGrants => Set<AccessGrant>();
+        public DbSet<ClinicStaff> ClinicStaff => Set<ClinicStaff>();
+    public DbSet<Admin> Admins => Set<Admin>();
     public DbSet<VisitAccessCredential> VisitAccessCredentials => Set<VisitAccessCredential>();
     public MediPassDbContext(DbContextOptions<MediPassDbContext> options)
         : base(options)
