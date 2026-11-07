@@ -9,5 +9,6 @@
     <Project Path="tests/MediPassPlus.Api.UnitTests/MediPassPlus.Api.UnitTests.csproj" />
     <Project Path="tests/MediPassPlus.Application.Tests/MediPassPlus.Application.Tests.csproj" />
     <Project Path="tests/MediPassPlus.Domain.Tests/MediPassPlus.Domain.Tests.csproj" />
+    <Project Path="tests/MediPassPlus.Infrastructure.Tests/MediPassPlus.Infrastructure.Tests.csproj" />
   </Folder>
 </Solution>

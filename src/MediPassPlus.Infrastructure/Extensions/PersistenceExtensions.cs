@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using MediPassPlus.Infrastructure.Persistence;
+using MediPassPlus.Infrastructure.Persistence.Audit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,7 +15,8 @@ internal static class PersistenceExtensions
         this IServiceCollection services, IConfiguration configuration)
     {
         services.AddDbContext<MediPassDbContext>(options =>
-            options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+            options.UseSqlServer(configuration.GetConnectionString("DefaultConnection"))
+                .AddInterceptors(new AuditLogImmutabilityInterceptor()));
 
         return services;
     }

@@ -22,6 +22,55 @@ namespace MediPassPlus.Infrastructure.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("MediPassPlus.Domain.Audit.AuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("AccessGrantId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("EntityId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("IpAddress")
+                        .IsRequired()
+                        .HasMaxLength(45)
+                        .HasColumnType("nvarchar(45)");
+
+                    b.Property<DateTimeOffset>("OccurredAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AccessGrantId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("PatientId", "OccurredAtUtc");
+
+                    b.ToTable("AuditLogs", "audit");
+                });
+
             modelBuilder.Entity("MediPassPlus.Domain.Clinical.Appointment", b =>
                 {
                     b.Property<int>("Id")
@@ -523,6 +572,26 @@ namespace MediPassPlus.Infrastructure.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("UserTokens", "identity");
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Audit.AuditLog", b =>
+                {
+                    b.HasOne("MediPassPlus.Domain.VisitAccess.AccessGrant", null)
+                        .WithMany()
+                        .HasForeignKey("AccessGrantId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("MediPassPlus.Domain.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MediPassPlus.Domain.Clinical.Appointment", b =>
