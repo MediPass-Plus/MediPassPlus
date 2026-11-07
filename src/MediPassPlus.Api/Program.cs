@@ -20,6 +20,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Seeding: each module adds one line here, for example:
 // builder.Services.AddScoped<ISeeder, ClinicsSeeder>();
+// Demo data (MP-96): the password comes from user-secrets and is never committed (NFR-SEC-08).
+builder.Services.Configure<DemoSeedOptions>(builder.Configuration.GetSection(DemoSeedOptions.SectionName));
+builder.Services.AddScoped<ISeeder, DemoDataSeeder>();
 builder.Services.AddScoped<DatabaseSeeder>();
 
 builder.Services.AddControllers();
