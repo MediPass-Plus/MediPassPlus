@@ -1,3 +1,4 @@
+using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Infrastructure.Extensions;
 using Microsoft.AspNetCore.Identity;
@@ -19,6 +20,7 @@ public class MediPassDbContext : IdentityDbContext<ApplicationUser, IdentityRole
         public DbSet<ClinicStaff> ClinicStaff => Set<ClinicStaff>();
     public DbSet<Admin> Admins => Set<Admin>();
     public DbSet<VisitAccessCredential> VisitAccessCredentials => Set<VisitAccessCredential>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public MediPassDbContext(DbContextOptions<MediPassDbContext> options)
         : base(options)
     {
