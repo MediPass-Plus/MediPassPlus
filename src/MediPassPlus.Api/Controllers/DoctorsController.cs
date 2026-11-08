@@ -47,9 +47,9 @@ public class DoctorsController : ControllerBase
             doctors = doctors.Where(d => d.Specialty.ToLower() == specialty);
         }
 
-        if (!string.IsNullOrWhiteSpace(query.Name))
+        if (!string.IsNullOrWhiteSpace(query.Search))
         {
-            var name = query.Name.Trim().ToLower();
+            var name = query.Search.Trim().ToLower();
             doctors = doctors.Where(d => d.FullName.ToLower().Contains(name));
         }
 
@@ -70,4 +70,5 @@ public class DoctorsController : ControllerBase
         });
     }
 }
+
 

@@ -29,9 +29,9 @@ public class ClinicsController : ControllerBase
     {
         var clinics = _db.Clinics.AsNoTracking();
 
-        if (!string.IsNullOrWhiteSpace(query.Name))
+        if (!string.IsNullOrWhiteSpace(query.Search))
         {
-            var name = query.Name.Trim().ToLower();
+            var name = query.Search.Trim().ToLower();
             clinics = clinics.Where(c => c.Name.ToLower().Contains(name));
         }
 
@@ -59,4 +59,5 @@ public class ClinicsController : ControllerBase
         });
     }
 }
+
 

@@ -8,7 +8,8 @@ public sealed class DoctorSearchQueryValidator : AbstractValidator<DoctorSearchQ
     {
         RuleFor(q => q.Page).GreaterThanOrEqualTo(1);
         RuleFor(q => q.PageSize).GreaterThanOrEqualTo(1);
-        RuleFor(q => q.Name).MaximumLength(100);
+        RuleFor(q => q.Search).MaximumLength(100);
         RuleFor(q => q.Specialty).MaximumLength(100);
     }
 }
+

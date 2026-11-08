@@ -8,6 +8,7 @@ public sealed class ClinicSearchQueryValidator : AbstractValidator<ClinicSearchQ
     {
         RuleFor(q => q.Page).GreaterThanOrEqualTo(1);
         RuleFor(q => q.PageSize).GreaterThanOrEqualTo(1);
-        RuleFor(q => q.Name).MaximumLength(100);
+        RuleFor(q => q.Search).MaximumLength(100);
     }
 }
+
