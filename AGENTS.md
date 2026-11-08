@@ -27,13 +27,23 @@ the projects.
 
 ## 2. Repository status
 
-This is a scaffold, not a product. There are no domain entities, no migrations (`Persistence/Migrations/` does not
-exist), no authentication and no module code. The only endpoint is the `WeatherForecast` sample controller, and the
-frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes as
-planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
+This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
+register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
+`DoctorSlot` and `Appointment` (CLB-01); MP-1301 added `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
+A read-only visit-access scope service now verifies that the acting doctor or patient matches the appointment, and
+`POST api/appointments/{appointmentId}/start-visit` lets a doctor start a today, checked-in appointment, reuse its
+pending request or create a new one, and receive a fresh two-minute QR credential whose SHA-256 hash is the only
+stored form. A filtered unique index allows at most one pending request per appointment, so a concurrent start
+returns `409`. A newly created request is audited with `AccessRequestCreated` in the same unit of work (ADR-0004,
+ADR-0011 decision 8). Nine migrations live in `src/MediPassPlus.Infrastructure/Migrations/`, including
+`AddClinicStaffAndAdmin`, `AddAuditLog` and `EnforceSinglePendingAccessRequest`. The audit store (`AuditLog`,
+`IAuditWriter` and an append-only EF interceptor) now exists. There is
+still no approval, record-read or visit-completion endpoint, no medical-record module and no audit endpoint, and the
+frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
+as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
-Installed dependencies are leaner than the technology table in the README claims: no Identity, JWT, FluentValidation
-or Serilog yet. Swagger UI **is** installed (ADR-0008).
+Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline
+(ADR-0010); Swagger UI is installed (ADR-0008). Serilog is not installed.
 
 This section is a snapshot, not a permanent fact: update it in the same PR that changes the status. Once a capability
 exists, the sentence that says it does not is a bug, and an agent that trusts it will make wrong assumptions.
@@ -54,12 +64,11 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 
 ## 4. Architecture boundaries
 
-- Project references define the layering. Checked against the `.csproj` files (verified 2026-10-30):
+- Project references define the layering. Checked against the `.csproj` files (verified 2026-11-05):
   - `Domain` — no project references.
   - `Application` → `Domain`.
-  - `Infrastructure` → `Application` only. It has **no direct `Domain` reference** today, so `Domain` types reach it
-    transitively. If an Infrastructure type needs one directly, that is a project-file change: ask first and update this
-    list in the same PR.
+  - `Infrastructure` → `Application` + `Domain` (direct). If a project reference must change, ask first and update
+    this list in the same PR.
   - `Api` → `Application` + `Infrastructure`.
   - No reference may point upward: `Domain` must never reference `Application`, `Infrastructure` or `Api`. Never put
     EF Core types in `Domain`.
@@ -114,11 +123,13 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   that holds real data.
 - The `Bearer` scheme and the per-operation security requirement come from `OpenApi/BearerSecuritySchemeTransformer`.
   It marks operations that carry `[Authorize]` automatically, so do not hand-write security requirements.
-- **Scaffold state:** Swagger UI works today, but the repository has no authentication and no authorized business
-  endpoint, so the login → Bearer round-trip cannot be exercised yet. The login endpoint and the first `[Authorize]`
-  endpoints must be implemented before the padlocks and the token flow mean anything.
-- **Once login exists:** call the login endpoint, copy the `accessToken` value, click **Authorize**, paste the raw token
-  (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
+- **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
+  `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
+  existing admin account) and `POST api/appointments/{appointmentId}/start-visit` (Doctor). The start-visit endpoint
+  exercises the scope check and issues a one-time QR credential; no endpoint consumes it yet, and there is still no
+  medical-record endpoint.
+- **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
+  **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for
   `401` (missing, invalid or expired token) and `403` (wrong role, no active grant, expired or ended grant), along with
   every other status it can return. The transformer supplies the security requirement; you still own the response
@@ -147,7 +158,7 @@ npm 11.19.0. That is a record of one run, not a guarantee for every machine — 
 Backend, from the repo root — this is also the CI sequence:
 
 ```powershell
-dotnet build --configuration Release        # builds MediPassPlus.slnx, 0 warnings
+dotnet build --configuration Release        # 0 errors; 1 pre-existing warning (JwtSettings.Key)
 dotnet test --no-build --configuration Release
 dotnet test tests/MediPassPlus.Domain.Tests --filter FullyQualifiedName~MyTest   # single test
 dotnet run --project src/MediPassPlus.Api --launch-profile http   # http://localhost:5114
@@ -166,13 +177,15 @@ npm test -- --watch=false src/app/app.spec.ts
 Migrations — **only with approval** (ADR-0009):
 
 ```powershell
-dotnet ef migrations add <Name> --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api --output-dir Persistence/Migrations
+dotnet ef migrations add <Name> --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api
 dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api
 ```
 
 - The solution is `.slnx`, not `.sln`. Keep the real casing `MediPassPlus.Infrastructure` (Linux CI is
   case-sensitive).
-- `dotnet-ef` 10.0.11 is installed as a global tool. No migration exists yet.
+- `dotnet-ef` 10.0.11 is installed as a global tool. Migrations live in `src/MediPassPlus.Infrastructure/Migrations/`;
+  do not pass `--output-dir`, or EF creates a second snapshot. The tools print a version-mismatch warning against the
+  10.0.14 runtime; it is not a build failure.
 - `ng test` accepts only Angular builder flags. Vitest flags fail (`--pool` → "Unknown argument"); `--watch=false` and
   a spec path are the supported ones. A cold run can also die with `Failed to start forks worker` before any test
   executes. Do not treat a passing rerun as the fix: record the original failure, check that no stale Node/Vitest worker

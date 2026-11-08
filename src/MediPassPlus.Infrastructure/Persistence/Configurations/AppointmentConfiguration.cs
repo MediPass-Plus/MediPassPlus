@@ -11,6 +11,10 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
     {
         builder.ToTable("Appointments", "clinical");
 
+        // Principal key for the visit-access composite foreign keys: a request or grant can prove in the database
+        // that its doctor and patient are the appointment's doctor and patient (FR-ACS-06, ADR-0011 decision 8).
+        builder.HasAlternateKey(a => new { a.Id, a.DoctorId, a.PatientId });
+
         // Store the status as text (for example "Booked") so it is readable in the database
         builder.Property(a => a.Status).HasConversion<string>().HasMaxLength(20);
         

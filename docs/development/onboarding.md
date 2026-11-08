@@ -131,6 +131,34 @@ again. Operations that carry `[Authorize]` are marked with a padlock, because an
 endpoint metadata — you never edit the document by hand. Today no endpoint is authorized, so the padlock is absent and
 the button sends nothing; that changes as soon as the first `[Authorize]` endpoint lands.
 
+### Demo data and demo accounts (Development only)
+
+A clean Development database is filled on startup by `DemoDataSeeder` (MP-96): one clinic, two doctors, future slots
+and three test accounts. Every value is synthetic — names start with "Demo" and every email uses the `.test`
+top-level domain, which RFC 2606 reserves for testing, so no real person or inbox is involved (NFR-SEC-08).
+
+| Email | Role | Use |
+|---|---|---|
+| `admin@demo.medipass.test` | Admin | administration screens |
+| `staff@demo.medipass.test` | Staff | clinic schedule and check-in |
+| `patient@demo.medipass.test` | Patient | booking and own medical record |
+| `doctor1@demo.medipass.test` | Doctor | Cardiology, two doctors in `Demo Clinic` |
+| `doctor2@demo.medipass.test` | Doctor | Dermatology |
+
+**The password is not in the repository.** Set your own once, in the local secret store:
+
+```powershell
+dotnet user-secrets set "Seed:DemoPassword" "<a-password-you-choose>" --project src/MediPassPlus.Api
+```
+
+It must satisfy the Identity policy: at least 8 characters with an uppercase letter, a digit and a non-alphanumeric
+character. When the key is missing or empty, the seeder writes a warning and creates **no** accounts — there is no
+default password and no fallback.
+
+Seeding runs only in Development and only through `Program.cs`. Restarting the API is safe: the seeder checks what
+already exists, so a second run adds no duplicate rows. The demo clinic is `Demo Clinic`, with slots from tomorrow
+onwards; delete the database and run the API again to get a fresh copy.
+
 ## 8. Two prompts, two jobs
 
 **A. Verify the checkout (once, or after a big pull).** Use this when you just want to know that your machine is

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,7 +15,8 @@ namespace MediPassPlus.Infrastructure.Extensions;
         using var scope = app.ApplicationServices.CreateScope();
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole < Guid >>> ();
 
-        string[] roles = { "Admin", "Patient", "Doctor", "Staff" };
+        // One shared list, so role names cannot drift between the role seeder and the demo seeder.
+        var roles = DefaultRoles.All;
 
         foreach (var role in roles)
         {

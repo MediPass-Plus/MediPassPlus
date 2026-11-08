@@ -14,10 +14,10 @@ time, IP address). NFR-PRI-05 requires 100% of reads and writes to appear in "Wh
 
 1. **Audit targets:** every medical read and write, **including the patient viewing their own record** (FR-PRV-02
    wins over the narrower UC-20 narrative). Also audit access-control events that create or destroy access:
-   grant created, request rejected, access ended.
+   request created, grant created, request rejected, access ended.
 2. **Controlled values** (enums persisted as strings, no free text):
    - `AuditAction`: `RecordRead`, `RecordWritten`, `DiagnosisCreated`, `PrescriptionCreated`, `ReportUploaded`,
-     `ReportDownloaded`, `AccessGrantCreated`, `AccessRequestRejected`, `AccessEnded`.
+     `ReportDownloaded`, `AccessGrantCreated`, `AccessRequestRejected`, `AccessEnded`, `AccessRequestCreated`.
    - `AuditEntityType`: `MedicalRecord`, `Diagnosis`, `Prescription`, `Report`, `AccessRequest`, `AccessGrant`.
 3. **Never audited/logged:** medical content, passwords, token or code hashes, plaintext codes, file bytes.
    Auth events (login failures, lockout) go to application logs, not the patient-visible audit.
@@ -44,3 +44,10 @@ time, IP address). NFR-PRI-05 requires 100% of reads and writes to appear in "Wh
 No conflict with requirements. It **resolves** the open ambiguity about auditing patient self-reads in favour of
 FR-PRV-02 / NFR-PRI-05. It adds audit values for access-control events, which UC-12 (A2 rejection) and UC-19 (end
 access) already require.
+
+## Amendment 2026-11-08 — request creation
+
+ADR-0011 decision 8 requires the visit-access service to audit the creation of an `AccessRequest`. The original
+action list above had no value for that event, so it is extended with `AccessRequestCreated`; the entity type is
+`AuditEntityType.AccessRequest`. The row is staged in the same unit of work as the new request, so the request and its
+audit row commit together under decision 7. Actions are stored as strings, so no schema migration is required.
