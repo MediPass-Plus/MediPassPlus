@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using MediPassPlus.Application.Audit;
+using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
@@ -35,6 +36,10 @@ public static class ServiceCollectionExtensions
         // Start-visit: reuse the pending request and replace its live QR credential (FR-ACS-01, FR-ACS-02).
         services.AddScoped<IVisitStartStore, StartVisitStore>();
         services.AddScoped<IStartVisitService, StartVisitService>();
+
+        // The grant gate every medical endpoint must pass: database-backed on each request (FR-PRV-01, FR-ACS-06).
+        services.AddScoped<IAccessGrantStore, AccessGrantStore>();
+        services.AddScoped<IAccessGrantChecker, AccessGrantChecker>();
 
         // Add other infrastructure services here as needed
 
