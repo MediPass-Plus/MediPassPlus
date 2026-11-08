@@ -26,6 +26,8 @@ public class AppointmentConfiguration : IEntityTypeConfiguration<Appointment>
 
         builder.HasOne(a => a.DoctorSlot)
             .WithMany()
+            .HasForeignKey(a => new { a.DoctorSlotId, a.DoctorId })
+            .HasPrincipalKey(s => new { s.Id, s.DoctorId })
             .OnDelete(DeleteBehavior.Restrict);
 
         // The patient is linked to a user account
