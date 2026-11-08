@@ -1,4 +1,5 @@
 using MediPassPlus.Application.Clinical;
+using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -47,7 +48,10 @@ public class DoctorSlotsController : ControllerBase
             from = now;
 
         var slots = _db.DoctorSlots.AsNoTracking()
-            .Where(s => s.DoctorId == doctorId && s.IsAvailable && s.StartTimeUtc >= from);
+            .Where(s => s.DoctorId == doctorId
+                && s.IsAvailable
+                && s.StartTimeUtc >= from
+                && !_db.Appointments.Any(a => a.DoctorSlotId == s.Id && a.Status != AppointmentStatus.Cancelled));
 
         if (query.To is not null)
         {

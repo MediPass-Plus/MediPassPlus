@@ -1,4 +1,5 @@
 using MediPassPlus.Application.Clinical;
+using MediPassPlus.Application.Common;
 
 namespace MediPassPlus.Application.Tests;
 
@@ -39,11 +40,12 @@ public class ClinicalQueryValidatorsTests
     }
 
     [Fact]
-    public void Doctor_query_accepts_a_huge_page_size_because_it_is_cut_down_later()
+    public void Doctor_query_rejects_a_page_size_above_the_maximum()
     {
         var result = _doctors.Validate(new DoctorSearchQuery { PageSize = 5000 });
 
-        Assert.True(result.IsValid);
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, failure => failure.PropertyName == nameof(DoctorSearchQuery.PageSize));
     }
 
     [Fact]
@@ -79,6 +81,15 @@ public class ClinicalQueryValidatorsTests
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, failure => failure.PropertyName == nameof(ClinicSearchQuery.Page));
+    }
+
+    [Fact]
+    public void Clinic_query_rejects_a_page_size_above_the_maximum()
+    {
+        var result = _clinics.Validate(new ClinicSearchQuery { PageSize = PageRequest.MaxPageSize + 1 });
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, failure => failure.PropertyName == nameof(ClinicSearchQuery.PageSize));
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-﻿using MediPassPlus.Application.Clinical;
+using MediPassPlus.Application.Clinical;
 using MediPassPlus.Application.Common;
 using MediPassPlus.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Http;
@@ -18,7 +18,7 @@ public class ClinicsController : ControllerBase
         _db = db;
     }
 
-    /// <summary>Lists clinics, one page at a time. Optional name search (case does not matter).</summary>
+    /// <summary>Lists clinics, one page at a time. Optional search by clinic name (case does not matter).</summary>
     /// <response code="200">A page of clinics.</response>
     /// <response code="400">The page or page size is not valid.</response>
     [HttpGet]
