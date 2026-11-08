@@ -15,6 +15,8 @@ internal sealed class FakeVisitStartStore : IVisitStartStore
 
     public bool WasLoaded { get; private set; }
 
+    public bool ThrowPendingRequestConflictOnSave { get; set; }
+
     public Task<StartVisitContext?> LoadAsync(
         int appointmentId,
         int doctorId,
@@ -32,6 +34,12 @@ internal sealed class FakeVisitStartStore : IVisitStartStore
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SaveCount++;
+
+        if (ThrowPendingRequestConflictOnSave)
+        {
+            throw new PendingRequestConflictException();
+        }
+
         return Task.CompletedTask;
     }
 }

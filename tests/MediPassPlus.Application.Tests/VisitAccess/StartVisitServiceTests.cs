@@ -147,38 +147,86 @@ public class StartVisitServiceTests
     }
 
     [Fact]
-    public async Task StartAsync_WhenTheRequestWasAlreadyApproved_ReturnsRequestAlreadyDecided()
+    public async Task StartAsync_WhenTheLastRequestWasApproved_CreatesANewPendingRequest()
     {
         var appointment = CreateAppointment();
         var doctor = CreateDoctor(appointment.DoctorId);
         var approved = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-5));
         approved.Approve();
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [approved]) };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, auditWriter) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
-        Assert.False(result.IsSuccess);
-        Assert.Equal(StartVisitFailure.RequestAlreadyDecided, result.Failure);
-        Assert.Empty(store.AddedRequests);
-        Assert.Empty(store.AddedCredentials);
-        Assert.Equal(0, store.SaveCount);
+        Assert.True(result.IsSuccess);
+        var request = Assert.Single(store.AddedRequests);
+        Assert.Equal(AccessRequestStatus.Pending, request.Status);
+        Assert.NotEqual(approved.Id, request.Id);
+        Assert.Equal(request.Id, result.Response!.AccessRequestId);
+        var audit = Assert.Single(auditWriter.AddedEntries);
+        Assert.Equal(request.Id.ToString(), audit.EntityId);
     }
 
     [Fact]
-    public async Task StartAsync_WhenTheRequestWasAlreadyRejected_ReturnsRequestAlreadyDecided()
+    public async Task StartAsync_WhenTheLastRequestWasRejected_CreatesANewPendingRequest()
     {
         var appointment = CreateAppointment();
         var doctor = CreateDoctor(appointment.DoctorId);
         var rejected = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-5));
         rejected.Reject();
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [rejected]) };
+        var (service, auditWriter) = CreateService(appointment, doctor, store);
+
+        var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        var request = Assert.Single(store.AddedRequests);
+        Assert.Equal(AccessRequestStatus.Pending, request.Status);
+        Assert.NotEqual(rejected.Id, request.Id);
+        Assert.Equal(request.Id, result.Response!.AccessRequestId);
+        var audit = Assert.Single(auditWriter.AddedEntries);
+        Assert.Equal(request.Id.ToString(), audit.EntityId);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenAConcurrentCallCreatedThePendingRequest_ReturnsRequestConflict()
+    {
+        var appointment = CreateAppointment();
+        var doctor = CreateDoctor(appointment.DoctorId);
+        var store = new FakeVisitStartStore
+        {
+            Context = CreateContext(appointment, doctor),
+            ThrowPendingRequestConflictOnSave = true
+        };
         var (service, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
         Assert.False(result.IsSuccess);
-        Assert.Equal(StartVisitFailure.RequestAlreadyDecided, result.Failure);
+        Assert.Equal(StartVisitFailure.RequestConflict, result.Failure);
+        Assert.Single(store.AddedRequests);
+        Assert.Equal(1, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task StartAsync_IssuedCredential_CannotBeConsumedTwice()
+    {
+        var appointment = CreateAppointment();
+        var doctor = CreateDoctor(appointment.DoctorId);
+        var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor) };
+        var (service, _) = CreateService(appointment, doctor, store);
+
+        var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+
+        // Proves the credential the endpoint hands out enforces single use (FR-ACS-02, ADR-0001). The QR-redeeming
+        // endpoint that loads and consumes it is a later ticket, so the test exercises the same domain operation.
+        var credential = Assert.Single(store.AddedCredentials);
+        credential.Consume(Now.UtcDateTime.AddSeconds(30));
+
+        Assert.Throws<InvalidOperationException>(
+            () => credential.Consume(Now.UtcDateTime.AddSeconds(31)));
     }
 
     [Fact]

@@ -32,10 +32,12 @@ register, login and password-reset endpoints backed by JWT (ACC-01); the Booking
 `DoctorSlot` and `Appointment` (CLB-01); MP-1301 added `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
 A read-only visit-access scope service now verifies that the acting doctor or patient matches the appointment, and
 `POST api/appointments/{appointmentId}/start-visit` lets a doctor start a today, checked-in appointment, reuse its
-pending request and receive a fresh two-minute QR credential whose SHA-256 hash is the only stored form. A newly
-created request is audited with `AccessRequestCreated` in the same unit of work (ADR-0004, ADR-0011 decision 8).
-Eight migrations live in `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin` and
-`AddAuditLog`. The audit store (`AuditLog`, `IAuditWriter` and an append-only EF interceptor) now exists. There is
+pending request or create a new one, and receive a fresh two-minute QR credential whose SHA-256 hash is the only
+stored form. A filtered unique index allows at most one pending request per appointment, so a concurrent start
+returns `409`. A newly created request is audited with `AccessRequestCreated` in the same unit of work (ADR-0004,
+ADR-0011 decision 8). Nine migrations live in `src/MediPassPlus.Infrastructure/Migrations/`, including
+`AddClinicStaffAndAdmin`, `AddAuditLog` and `EnforceSinglePendingAccessRequest`. The audit store (`AuditLog`,
+`IAuditWriter` and an append-only EF interceptor) now exists. There is
 still no approval, record-read or visit-completion endpoint, no medical-record module and no audit endpoint, and the
 frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.

@@ -87,6 +87,34 @@ public sealed class StartVisitStore : IVisitStartStore
     }
 
     /// <inheritdoc />
-    public Task SaveChangesAsync(CancellationToken cancellationToken = default) =>
-        _context.SaveChangesAsync(cancellationToken);
+    public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception) when (IsPendingRequestConflict(exception))
+        {
+            throw new PendingRequestConflictException(
+                "Another pending access request already exists for this appointment.",
+                exception);
+        }
+    }
+
+    private static bool IsPendingRequestConflict(DbUpdateException exception)
+    {
+        // SQL Server reports the filtered index by name; SQLite reports the column pair. Checking both keeps the
+        // mapping provider-independent without referencing a provider-specific exception type.
+        var message = exception.GetBaseException().Message;
+        var isPendingIndexViolation =
+            message.Contains("IX_AccessRequests_AppointmentId_Pending", StringComparison.Ordinal)
+            || message.Contains(
+                "UNIQUE constraint failed: AccessRequests.AppointmentId",
+                StringComparison.Ordinal);
+
+        return isPendingIndexViolation
+            && exception.Entries.Any(entry =>
+                entry.Entity is AccessRequest request
+                && request.Status == AccessRequestStatus.Pending);
+    }
 }

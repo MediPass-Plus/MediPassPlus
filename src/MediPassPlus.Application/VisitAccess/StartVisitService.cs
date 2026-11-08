@@ -7,8 +7,9 @@ namespace MediPassPlus.Application.VisitAccess;
 
 /// <summary>
 /// Starts a visit: verifies the doctor's scope, checks the appointment is today and checked in, reuses the pending
-/// request when one exists, and replaces the live QR credential with a new two-minute one (FR-ACS-01, FR-ACS-02).
-/// A newly created request is audited in the same unit of work (ADR-0011 decision 8, ADR-0004).
+/// request or creates a new one, and replaces the live QR credential with a new two-minute one (FR-ACS-01,
+/// FR-ACS-02). A newly created request is audited in the same unit of work (ADR-0011 decision 8, ADR-0004). The
+/// filtered unique index rejects a concurrent second pending request, which is surfaced as a conflict.
 /// </summary>
 public sealed class StartVisitService : IStartVisitService
 {
@@ -86,11 +87,6 @@ public sealed class StartVisitService : IStartVisitService
             return StartVisitResult.Denied(StartVisitFailure.AppointmentNotToday);
         }
 
-        if (context.Requests.Any(request => request.Status != AccessRequestStatus.Pending))
-        {
-            return StartVisitResult.Denied(StartVisitFailure.RequestAlreadyDecided);
-        }
-
         var pending = context.Requests
             .Where(request => request.Status == AccessRequestStatus.Pending)
             .OrderByDescending(request => request.CreatedAtUtc)
@@ -137,7 +133,17 @@ public sealed class StartVisitService : IStartVisitService
             now);
 
         _store.AddCredential(credential);
-        await _store.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            await _store.SaveChangesAsync(cancellationToken);
+        }
+        catch (PendingRequestConflictException)
+        {
+            // A concurrent call created its pending request first; the filtered unique index rejected this one.
+            // 409 lets the caller retry, and the retry reuses the request that won the race.
+            return StartVisitResult.Denied(StartVisitFailure.RequestConflict);
+        }
 
         return StartVisitResult.Success(new StartVisitResponse(
             context.Appointment.Id,

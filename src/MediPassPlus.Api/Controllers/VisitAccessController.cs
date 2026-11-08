@@ -18,6 +18,7 @@ public class VisitAccessController : ControllerBase
     private const string UnauthorizedType = "https://tools.ietf.org/html/rfc9110#section-15.5.2";
     private const string ForbiddenType = "https://tools.ietf.org/html/rfc9110#section-15.5.4";
     private const string NotFoundType = "https://tools.ietf.org/html/rfc9110#section-15.5.5";
+    private const string ConflictType = "https://tools.ietf.org/html/rfc9110#section-15.5.10";
 
     private readonly IStartVisitService _startVisitService;
 
@@ -31,18 +32,20 @@ public class VisitAccessController : ControllerBase
 
     /// <summary>
     /// Starts a doctor's own appointment when it is today and checked in, and returns a fresh one-time QR token.
-    /// Creating a new pending request also stages an <c>AccessRequestCreated</c> audit row (ADR-0011 decision 8).
+    /// The newest pending request is reused; when none is pending, a new request is created. Creating a request also
+    /// stages an <c>AccessRequestCreated</c> audit row (ADR-0011 decision 8).
     /// </summary>
     /// <param name="appointmentId">The appointment to start.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The one-time QR token and its expiry.</returns>
     /// <response code="200">The visit was started and the QR token was issued.</response>
-    /// <response code="400">
-    /// The appointment is not today, is not checked in, or already has an approved or rejected request.
-    /// </response>
+    /// <response code="400">The appointment is not today or is not checked in.</response>
     /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
     /// <response code="403">The caller is not a doctor, has no doctor profile, or does not own the appointment.</response>
     /// <response code="404">No appointment has the requested identifier.</response>
+    /// <response code="409">
+    /// A concurrent call created the appointment's pending request first. Retrying reuses that request.
+    /// </response>
     [Authorize(Roles = "Doctor")]
     [HttpPost("{appointmentId:int}/start-visit")]
     [Produces("application/json")]
@@ -51,6 +54,7 @@ public class VisitAccessController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> StartVisit(
         int appointmentId,
         CancellationToken cancellationToken)
@@ -100,11 +104,11 @@ public class VisitAccessController : ControllerBase
                 BadRequestType,
                 "The visit cannot be started.",
                 "The appointment must be checked in."),
-            StartVisitFailure.RequestAlreadyDecided => CreateProblem(
-                StatusCodes.Status400BadRequest,
-                BadRequestType,
-                "The visit cannot be restarted.",
-                "This appointment already has an approved or rejected access request."),
+            StartVisitFailure.RequestConflict => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The visit start conflicted with another request.",
+                "Another request for this visit created its pending request first. Retry to reuse it."),
             _ => throw new InvalidOperationException($"Unexpected start-visit failure: {result.Failure}.")
         };
     }

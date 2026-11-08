@@ -31,7 +31,13 @@ public interface IVisitStartStore
     /// <param name="credential">The credential to add.</param>
     void AddCredential(VisitAccessCredential credential);
 
-    /// <summary>Commits the staged changes.</summary>
+    /// <summary>
+    /// Commits the staged changes.
+    /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <exception cref="PendingRequestConflictException">
+    /// A concurrent call created the pending request first, so the filtered unique index rejected this one. The
+    /// caller should surface a conflict instead of a server error; a retry reuses the request that won.
+    /// </exception>
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }

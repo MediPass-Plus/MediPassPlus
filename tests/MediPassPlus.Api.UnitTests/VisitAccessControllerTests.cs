@@ -81,6 +81,22 @@ public class VisitAccessControllerTests
     }
 
     [Fact]
+    public async Task StartVisit_WhenAConcurrentCallWonTheRequestRace_Returns409()
+    {
+        var service = new FakeStartVisitService
+        {
+            Result = StartVisitResult.Denied(StartVisitFailure.RequestConflict)
+        };
+        var controller = CreateController(service);
+
+        var result = await controller.StartVisit(42, CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status409Conflict, objectResult.StatusCode);
+        Assert.IsType<ProblemDetails>(objectResult.Value);
+    }
+
+    [Fact]
     public async Task StartVisit_WhenTheVisitStarts_Returns200WithTheTokenButNotItsHash()
     {
         const string token = "a-test-qr-token";
@@ -137,6 +153,7 @@ public class VisitAccessControllerTests
         Assert.Contains(StatusCodes.Status401Unauthorized, codes);
         Assert.Contains(StatusCodes.Status403Forbidden, codes);
         Assert.Contains(StatusCodes.Status404NotFound, codes);
+        Assert.Contains(StatusCodes.Status409Conflict, codes);
     }
 
     private static VisitAccessController CreateController(

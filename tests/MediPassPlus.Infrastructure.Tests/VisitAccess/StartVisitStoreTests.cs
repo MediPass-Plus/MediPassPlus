@@ -1,3 +1,4 @@
+using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Domain.VisitAccess;
@@ -78,6 +79,35 @@ public class StartVisitStoreTests
         var context = await store.LoadAsync(42, doctorId: 8, patientId);
 
         Assert.Null(context);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_WhenASecondPendingRequestIsStaged_ThrowsPendingRequestConflict()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var db = new MediPassDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var patientId = Guid.NewGuid();
+        SeedVisit(db, Guid.NewGuid(), patientId);
+        await db.SaveChangesAsync();
+
+        var appointment = await db.Appointments.SingleAsync();
+        var doctor = await db.Doctors.SingleAsync();
+        db.AccessRequests.Add(AccessRequest.Create(appointment, doctor, Start.AddMinutes(-1)));
+
+        var store = new StartVisitStore(db);
+
+        var exception = await Assert.ThrowsAsync<PendingRequestConflictException>(
+            () => store.SaveChangesAsync());
+
+        Assert.NotNull(exception.InnerException);
     }
 
     private static AccessRequest SeedVisit(

@@ -2,7 +2,8 @@ namespace MediPassPlus.Application.VisitAccess;
 
 /// <summary>
 /// Why a start-visit request was refused. The API maps <see cref="AppointmentNotFound"/> to <c>404</c>, the doctor
-/// failures to <c>403</c>, and the appointment-state failures to <c>400</c>.
+/// failures to <c>403</c>, the appointment-state failures to <c>400</c>, and <see cref="RequestConflict"/> to
+/// <c>409</c>.
 /// </summary>
 public enum StartVisitFailure
 {
@@ -24,6 +25,8 @@ public enum StartVisitFailure
     /// <summary>The appointment is not in the <c>CheckedIn</c> state.</summary>
     AppointmentNotCheckedIn,
 
-    /// <summary>The appointment already has an approved or rejected access request.</summary>
-    RequestAlreadyDecided
+    /// <summary>
+    /// A concurrent call created the appointment's pending request first; retrying reuses that request.
+    /// </summary>
+    RequestConflict
 }
