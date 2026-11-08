@@ -30,11 +30,14 @@ the projects.
 This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
 register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
 `DoctorSlot` and `Appointment` (CLB-01); MP-1301 added `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
-A read-only visit-access scope service now verifies that the acting doctor or patient matches the appointment.
+A read-only visit-access scope service now verifies that the acting doctor or patient matches the appointment, and
+`POST api/appointments/{appointmentId}/start-visit` lets a doctor start a today, checked-in appointment, reuse its
+pending request and receive a fresh two-minute QR credential whose SHA-256 hash is the only stored form. A newly
+created request is audited with `AccessRequestCreated` in the same unit of work (ADR-0004, ADR-0011 decision 8).
 Eight migrations live in `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin` and
 `AddAuditLog`. The audit store (`AuditLog`, `IAuditWriter` and an append-only EF interceptor) now exists. There is
-still no visit-access endpoint, no medical-record module and no audit endpoint, and the frontend is the untouched
-Angular welcome page. Everything the README, planning document or an ADR describes
+still no approval, record-read or visit-completion endpoint, no medical-record module and no audit endpoint, and the
+frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline
@@ -119,9 +122,10 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - The `Bearer` scheme and the per-operation security requirement come from `OpenApi/BearerSecuritySchemeTransformer`.
   It marks operations that carry `[Authorize]` automatically, so do not hand-write security requirements.
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
-  `reset-password`) exist. The only `[Authorize]` operation is `POST api/Auth/create-admin`, which requires an existing
-  admin account; no admin is seeded yet. There is still no authorized business (medical) endpoint; the first
-  visit-access endpoints will exercise the grant checks.
+  `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
+  existing admin account) and `POST api/appointments/{appointmentId}/start-visit` (Doctor). The start-visit endpoint
+  exercises the scope check and issues a one-time QR credential; no endpoint consumes it yet, and there is still no
+  medical-record endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for

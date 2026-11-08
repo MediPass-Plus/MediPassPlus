@@ -13,5 +13,6 @@ public enum AuditAction
     ReportDownloaded,
     AccessGrantCreated,
     AccessRequestRejected,
-    AccessEnded
+    AccessEnded,
+    AccessRequestCreated
 }

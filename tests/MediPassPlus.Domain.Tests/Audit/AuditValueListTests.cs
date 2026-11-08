@@ -17,7 +17,8 @@ public class AuditValueListTests
             "ReportDownloaded",
             "AccessGrantCreated",
             "AccessRequestRejected",
-            "AccessEnded"
+            "AccessEnded",
+            "AccessRequestCreated"
         };
 
         Assert.Equal(expected.OrderBy(name => name), Enum.GetNames<AuditAction>().OrderBy(name => name));
