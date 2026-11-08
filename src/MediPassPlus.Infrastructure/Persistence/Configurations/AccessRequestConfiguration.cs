@@ -15,6 +15,12 @@ public class AccessRequestConfiguration : IEntityTypeConfiguration<AccessRequest
         builder.Property(r => r.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
         builder.Property(r => r.CreatedAtUtc).IsRequired();
 
+        // At most one pending request per appointment. The filtered unique index is the authoritative guard against
+        // two concurrent start-visit calls creating two pending requests; the API maps the violation to 409.
+        builder.HasIndex(r => r.AppointmentId, "IX_AccessRequests_AppointmentId_Pending")
+            .IsUnique()
+            .HasFilter("[Status] = 'Pending'");
+
         // Composite foreign key: the database rejects a request whose doctor or patient does not match the
         // appointment. The service still verifies the authenticated actor (FR-ACS-06, ADR-0011 decision 8).
         builder.HasOne<Appointment>()

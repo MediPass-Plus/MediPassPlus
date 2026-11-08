@@ -390,6 +390,10 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     b.HasIndex("AppointmentId", "DoctorId", "PatientId");
 
+                    b.HasIndex(new[] { "AppointmentId" }, "IX_AccessRequests_AppointmentId_Pending")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'Pending'");
+
                     b.ToTable("AccessRequests", "access");
                 });
 

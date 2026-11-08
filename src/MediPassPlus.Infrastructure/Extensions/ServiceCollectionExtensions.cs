@@ -32,6 +32,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IVisitAccessScopeStore, VisitAccessScopeStore>();
         services.AddScoped<IVisitAccessScopeService, VisitAccessScopeService>();
 
+        // Start-visit: reuse the pending request and replace its live QR credential (FR-ACS-01, FR-ACS-02).
+        services.AddScoped<IVisitStartStore, StartVisitStore>();
+        services.AddScoped<IStartVisitService, StartVisitService>();
+
         // Add other infrastructure services here as needed
 
 
