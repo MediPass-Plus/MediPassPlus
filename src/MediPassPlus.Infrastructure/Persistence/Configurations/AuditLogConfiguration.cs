@@ -6,8 +6,16 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace MediPassPlus.Infrastructure.Persistence.Configurations;
 
+/// <summary>
+/// Maps <see cref="AuditLog"/> to the <c>audit.AuditLogs</c> table: controlled values as strings, the patient timeline
+/// index and restrict foreign keys that keep audit history append-only (ADR-0004 decisions 2 and 6).
+/// </summary>
 public class AuditLogConfiguration : IEntityTypeConfiguration<AuditLog>
 {
+    /// <summary>
+    /// Configures the table name, controlled-value columns, patient timeline index and restrict foreign keys.
+    /// </summary>
+    /// <param name="builder">The entity type builder for <see cref="AuditLog"/>.</param>
     public void Configure(EntityTypeBuilder<AuditLog> builder)
     {
         builder.ToTable("AuditLogs", "audit");
