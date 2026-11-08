@@ -82,7 +82,7 @@ public class StartVisitStoreTests
     }
 
     [Fact]
-    public async Task SaveChangesAsync_WhenASecondPendingRequestIsStaged_ThrowsPendingRequestConflict()
+    public async Task SaveChangesAsync_WhenASecondPendingRequestIsStaged_ThrowsVisitStartConflict()
     {
         await using var connection = new SqliteConnection("DataSource=:memory:");
         await connection.OpenAsync();
@@ -104,7 +104,42 @@ public class StartVisitStoreTests
 
         var store = new StartVisitStore(db);
 
-        var exception = await Assert.ThrowsAsync<PendingRequestConflictException>(
+        var exception = await Assert.ThrowsAsync<VisitStartConflictException>(
+            () => store.SaveChangesAsync());
+
+        Assert.NotNull(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_WhenASecondLiveQrCredentialIsStaged_ThrowsVisitStartConflict()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var db = new MediPassDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        var pending = SeedVisit(db, Guid.NewGuid(), Guid.NewGuid());
+        db.VisitAccessCredentials.Add(VisitAccessCredential.Create(
+            pending.Id,
+            VisitCredentialType.QrToken,
+            "first-live-hash",
+            Start));
+        await db.SaveChangesAsync();
+
+        db.VisitAccessCredentials.Add(VisitAccessCredential.Create(
+            pending.Id,
+            VisitCredentialType.QrToken,
+            "second-live-hash",
+            Start.AddSeconds(1)));
+
+        var store = new StartVisitStore(db);
+
+        var exception = await Assert.ThrowsAsync<VisitStartConflictException>(
             () => store.SaveChangesAsync());
 
         Assert.NotNull(exception.InnerException);

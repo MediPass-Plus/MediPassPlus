@@ -196,7 +196,7 @@ public class StartVisitServiceTests
         var store = new FakeVisitStartStore
         {
             Context = CreateContext(appointment, doctor),
-            ThrowPendingRequestConflictOnSave = true
+            ConflictOnSaveNumber = 1
         };
         var (service, _) = CreateService(appointment, doctor, store);
 
@@ -206,6 +206,33 @@ public class StartVisitServiceTests
         Assert.Equal(StartVisitFailure.RequestConflict, result.Failure);
         Assert.Single(store.AddedRequests);
         Assert.Equal(1, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenAConcurrentCallReplacedTheQrCredential_ReturnsRequestConflict()
+    {
+        var appointment = CreateAppointment();
+        var doctor = CreateDoctor(appointment.DoctorId);
+        var pending = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-5));
+        var live = VisitAccessCredential.Create(
+            pending.Id,
+            VisitCredentialType.QrToken,
+            "live-hash",
+            Now.UtcDateTime.AddMinutes(-1));
+        var store = new FakeVisitStartStore
+        {
+            Context = CreateContext(appointment, doctor, [pending], [live]),
+            ConflictOnSaveNumber = 2
+        };
+        var (service, _) = CreateService(appointment, doctor, store);
+
+        var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StartVisitFailure.RequestConflict, result.Failure);
+        Assert.Empty(store.AddedRequests);
+        Assert.Equal(Now.UtcDateTime, live.RevokedAtUtc);
+        Assert.Equal(2, store.SaveCount);
     }
 
     [Fact]

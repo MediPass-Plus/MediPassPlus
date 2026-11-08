@@ -35,9 +35,10 @@ public interface IVisitStartStore
     /// Commits the staged changes.
     /// </summary>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <exception cref="PendingRequestConflictException">
-    /// A concurrent call created the pending request first, so the filtered unique index rejected this one. The
-    /// caller should surface a conflict instead of a server error; a retry reuses the request that won.
+    /// <exception cref="VisitStartConflictException">
+    /// A concurrent call created the appointment's pending request or the request's live QR credential first, so a
+    /// filtered unique index rejected this write. The caller should surface a conflict instead of a server error; a
+    /// retry reuses the pending request and issues a fresh credential.
     /// </exception>
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }

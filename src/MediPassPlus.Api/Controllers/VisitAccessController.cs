@@ -44,7 +44,8 @@ public class VisitAccessController : ControllerBase
     /// <response code="403">The caller is not a doctor, has no doctor profile, or does not own the appointment.</response>
     /// <response code="404">No appointment has the requested identifier.</response>
     /// <response code="409">
-    /// A concurrent call created the appointment's pending request first. Retrying reuses that request.
+    /// A concurrent call won the pending-request or live-credential race. Retrying reuses the pending request and
+    /// issues a fresh credential.
     /// </response>
     [Authorize(Roles = "Doctor")]
     [HttpPost("{appointmentId:int}/start-visit")]
@@ -108,7 +109,7 @@ public class VisitAccessController : ControllerBase
                 StatusCodes.Status409Conflict,
                 ConflictType,
                 "The visit start conflicted with another request.",
-                "Another request for this visit created its pending request first. Retry to reuse it."),
+                "Another request for this visit won the race. Retry to reuse its pending request."),
             _ => throw new InvalidOperationException($"Unexpected start-visit failure: {result.Failure}.")
         };
     }

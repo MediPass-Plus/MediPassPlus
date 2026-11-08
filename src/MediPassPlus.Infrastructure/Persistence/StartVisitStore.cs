@@ -93,28 +93,49 @@ public sealed class StartVisitStore : IVisitStartStore
         {
             await _context.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException exception) when (IsPendingRequestConflict(exception))
+        catch (DbUpdateException exception) when (IsVisitStartConflict(exception))
         {
-            throw new PendingRequestConflictException(
-                "Another pending access request already exists for this appointment.",
+            throw new VisitStartConflictException(
+                "Another request for this visit won the race.",
                 exception);
         }
     }
 
-    private static bool IsPendingRequestConflict(DbUpdateException exception)
+    private static bool IsVisitStartConflict(DbUpdateException exception)
+    {
+        var message = exception.GetBaseException().Message;
+
+        return IsPendingRequestConflict(exception, message)
+            || IsLiveCredentialConflict(exception, message);
+    }
+
+    private static bool IsPendingRequestConflict(DbUpdateException exception, string message)
     {
         // SQL Server reports the filtered index by name; SQLite reports the column pair. Checking both keeps the
         // mapping provider-independent without referencing a provider-specific exception type.
-        var message = exception.GetBaseException().Message;
-        var isPendingIndexViolation =
+        var isIndexViolation =
             message.Contains("IX_AccessRequests_AppointmentId_Pending", StringComparison.Ordinal)
             || message.Contains(
                 "UNIQUE constraint failed: AccessRequests.AppointmentId",
                 StringComparison.Ordinal);
 
-        return isPendingIndexViolation
+        return isIndexViolation
             && exception.Entries.Any(entry =>
                 entry.Entity is AccessRequest request
                 && request.Status == AccessRequestStatus.Pending);
+    }
+
+    private static bool IsLiveCredentialConflict(DbUpdateException exception, string message)
+    {
+        var isIndexViolation =
+            message.Contains(
+                "IX_VisitAccessCredentials_AccessRequestId_Type",
+                StringComparison.Ordinal)
+            || message.Contains(
+                "UNIQUE constraint failed: VisitAccessCredentials.AccessRequestId",
+                StringComparison.Ordinal);
+
+        return isIndexViolation
+            && exception.Entries.Any(entry => entry.Entity is VisitAccessCredential);
     }
 }

@@ -138,10 +138,10 @@ public sealed class StartVisitService : IStartVisitService
         {
             await _store.SaveChangesAsync(cancellationToken);
         }
-        catch (PendingRequestConflictException)
+        catch (VisitStartConflictException)
         {
-            // A concurrent call created its pending request first; the filtered unique index rejected this one.
-            // 409 lets the caller retry, and the retry reuses the request that won the race.
+            // A concurrent call won the pending-request or live-credential race; a filtered unique index rejected
+            // this write. 409 lets the caller retry, and the retry reuses the pending request.
             return StartVisitResult.Denied(StartVisitFailure.RequestConflict);
         }
 

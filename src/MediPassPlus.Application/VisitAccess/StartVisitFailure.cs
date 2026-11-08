@@ -26,7 +26,7 @@ public enum StartVisitFailure
     AppointmentNotCheckedIn,
 
     /// <summary>
-    /// A concurrent call created the appointment's pending request first; retrying reuses that request.
+    /// A concurrent call won the pending-request or live-credential race; retrying reuses the pending request.
     /// </summary>
     RequestConflict
 }

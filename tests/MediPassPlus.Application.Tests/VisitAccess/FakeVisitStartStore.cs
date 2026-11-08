@@ -15,7 +15,7 @@ internal sealed class FakeVisitStartStore : IVisitStartStore
 
     public bool WasLoaded { get; private set; }
 
-    public bool ThrowPendingRequestConflictOnSave { get; set; }
+    public int? ConflictOnSaveNumber { get; set; }
 
     public Task<StartVisitContext?> LoadAsync(
         int appointmentId,
@@ -35,9 +35,9 @@ internal sealed class FakeVisitStartStore : IVisitStartStore
     {
         SaveCount++;
 
-        if (ThrowPendingRequestConflictOnSave)
+        if (SaveCount == ConflictOnSaveNumber)
         {
-            throw new PendingRequestConflictException();
+            throw new VisitStartConflictException();
         }
 
         return Task.CompletedTask;
