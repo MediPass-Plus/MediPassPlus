@@ -1,19 +1,23 @@
 using System.Security.Claims;
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Api.RateLimiting;
 using MediPassPlus.Application.VisitAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace MediPassPlus.Api.Controllers;
 
 /// <summary>
 /// Patient decisions on a visit-access request. V2 answers a known request by its identifier; the scan-token path is
 /// a later ticket. Approval creates the grant that the access-grant checker requires; rejection creates none.
+/// Both actions share the per-patient <c>QrApprove</c> rate limit (ADR-0007 decision 2, FR-PRV-07).
 /// </summary>
 [ApiController]
 [Route("api/access-requests")]
 [Authorize(Roles = "Patient")]
+[EnableRateLimiting(QrApproveRateLimitPolicy.Name)]
 public class AccessRequestsController : ControllerBase
 {
     private const string UnauthorizedType = "https://tools.ietf.org/html/rfc9110#section-15.5.2";
@@ -42,6 +46,9 @@ public class AccessRequestsController : ControllerBase
     /// <response code="403">The caller is not the patient who owns the request's appointment.</response>
     /// <response code="404">No access request has the requested identifier.</response>
     /// <response code="409">The request was already answered, or another decision won the race.</response>
+    /// <response code="429">
+    /// The patient exceeded the configured approve/reject limit; the response carries <c>Retry-After</c>.
+    /// </response>
     [HttpPost("{requestId:guid}/approve")]
     [Produces("application/json")]
     [ProducesResponseType(typeof(AccessGrantResponse), StatusCodes.Status200OK)]
@@ -49,6 +56,7 @@ public class AccessRequestsController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Approve(Guid requestId, CancellationToken cancellationToken)
     {
         if (!TryGetPatientUserId(out var patientUserId))
@@ -90,12 +98,16 @@ public class AccessRequestsController : ControllerBase
     /// <response code="403">The caller is not the patient who owns the request's appointment.</response>
     /// <response code="404">No access request has the requested identifier.</response>
     /// <response code="409">The request was already answered, or another decision won the race.</response>
+    /// <response code="429">
+    /// The patient exceeded the configured approve/reject limit; the response carries <c>Retry-After</c>.
+    /// </response>
     [HttpPost("{requestId:guid}/reject")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Reject(Guid requestId, CancellationToken cancellationToken)
     {
         if (!TryGetPatientUserId(out var patientUserId))

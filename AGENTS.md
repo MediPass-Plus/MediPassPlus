@@ -40,7 +40,9 @@ returns `409`. A newly created request is audited with `AccessRequestCreated` in
 ADR-0011 decision 8). `POST api/access-requests/{requestId}/approve` and `/reject` let the authenticated owner of the
 appointment answer a pending request: approval creates the visit's grant (two-hour cap) and its audit row, rejection
 creates no grant, and both answer the request and change its credentials in one unit of work. `AccessRequest.Status`
-is an EF concurrency token, so only the first decision wins and the other returns `409`. Nine migrations live in
+is an EF concurrency token, so only the first decision wins and the other returns `409`. Both decisions also share the
+named `QrApprove` fixed-window rate limit (default 5 attempts / 15 minutes per patient, configurable and validated at
+startup); a rejection is `429` with `Retry-After` (ADR-0007). Nine migrations live in
 `src/MediPassPlus.Infrastructure/Migrations/`, including
 `AddClinicStaffAndAdmin`, `AddAuditLog` and `EnforceSinglePendingAccessRequest`. The audit store (`AuditLog`,
 `IAuditWriter` and an append-only EF interceptor) now exists. There is
@@ -134,8 +136,9 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor), and
   `POST api/access-requests/{requestId}/approve` / `/reject` (Patient). Start-visit exercises the scope check and
-  issues a one-time QR credential; the patient endpoints answer a request by ID and consume or revoke its credentials,
-  but no endpoint yet verifies a presented QR or 6-digit credential, and there is still no medical-record endpoint.
+  issues a one-time QR credential; the patient endpoints answer a request by ID, consume or revoke its credentials,
+  and return `429` with `Retry-After` after the per-patient `QrApprove` limit. No endpoint yet verifies a presented QR
+  or 6-digit credential, and there is still no medical-record endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for
