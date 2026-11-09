@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using System.Text.Json;
 using MediPassPlus.Api.Authorization;
@@ -161,8 +162,30 @@ public class AccessGrantFilterTests
     }
 
     [Fact]
-    public async Task OnActionExecutionAsync_WithANonIntegerAppointmentId_FailsClosedWith403()
+    public async Task OnActionExecutionAsync_WithANonIntegerRouteAppointmentId_FailsClosedWith403()
     {
+        var checker = new FakeAccessGrantChecker
+        {
+            Result = AccessGrantCheckResult.Allowed(CreateGrant())
+        };
+        var context = CreateContextWithArguments(
+            new Dictionary<string, object?>(),
+            userId: DoctorUserId,
+            routeAppointmentId: "not-an-integer");
+
+        await CreateFilter(checker).OnActionExecutionAsync(
+            context,
+            () => Task.FromResult<ActionExecutedContext>(null!));
+
+        var objectResult = Assert.IsType<ObjectResult>(context.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, objectResult.StatusCode);
+        Assert.False(checker.WasCalled);
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_WithAnAppointmentIdOnlyInTheActionArguments_FailsClosedWith403()
+    {
+        // A query-string or request-body-bound 'appointmentId' must never choose the appointment scope.
         var checker = new FakeAccessGrantChecker
         {
             Result = AccessGrantCheckResult.Allowed(CreateGrant())
@@ -170,7 +193,7 @@ public class AccessGrantFilterTests
         var context = CreateContextWithArguments(
             new Dictionary<string, object?>
             {
-                ["appointmentId"] = "42"
+                ["appointmentId"] = AppointmentId
             },
             userId: DoctorUserId);
 
@@ -184,7 +207,7 @@ public class AccessGrantFilterTests
     }
 
     [Fact]
-    public async Task OnActionExecutionAsync_UsesTheBoundAppointmentIdAndIgnoresABodyProperty()
+    public async Task OnActionExecutionAsync_UsesTheRouteAppointmentIdAndIgnoresABodyProperty()
     {
         var checker = new FakeAccessGrantChecker
         {
@@ -196,7 +219,8 @@ public class AccessGrantFilterTests
                 ["appointmentId"] = AppointmentId,
                 ["request"] = new { appointmentId = 999 }
             },
-            userId: DoctorUserId);
+            userId: DoctorUserId,
+            routeAppointmentId: AppointmentId);
 
         await CreateFilter(checker).OnActionExecutionAsync(
             context,
@@ -250,18 +274,23 @@ public class AccessGrantFilterTests
             arguments["appointmentId"] = appointmentId.Value;
         }
 
-        return CreateContextWithArguments(arguments, userId);
+        return CreateContextWithArguments(
+            arguments,
+            userId,
+            routeAppointmentId: appointmentId?.ToString(CultureInfo.InvariantCulture));
     }
 
     private static ActionExecutingContext CreateContextWithRawUserId(string? userId, int appointmentId) =>
         CreateContextWithArguments(
             new Dictionary<string, object?> { ["appointmentId"] = appointmentId },
-            rawUserId: userId);
+            rawUserId: userId,
+            routeAppointmentId: appointmentId.ToString(CultureInfo.InvariantCulture));
 
     private static ActionExecutingContext CreateContextWithArguments(
         Dictionary<string, object?> arguments,
         Guid? userId = null,
-        string? rawUserId = null)
+        string? rawUserId = null,
+        object? routeAppointmentId = null)
     {
         var httpContext = new DefaultHttpContext { TraceIdentifier = TraceIdentifier };
 
@@ -273,9 +302,15 @@ public class AccessGrantFilterTests
                 "Test"));
         }
 
+        var routeData = new RouteData();
+        if (routeAppointmentId is not null)
+        {
+            routeData.Values["appointmentId"] = routeAppointmentId;
+        }
+
         var actionContext = new ActionContext(
             httpContext,
-            new RouteData(),
+            routeData,
             new ActionDescriptor { DisplayName = "TestAction" });
 
         return new ActionExecutingContext(

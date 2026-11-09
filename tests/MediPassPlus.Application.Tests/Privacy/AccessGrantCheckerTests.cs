@@ -118,6 +118,27 @@ public class AccessGrantCheckerTests
     }
 
     [Fact]
+    public async Task RequireActiveGrantAsync_WhenTheStoredExpiryIsEarlierThanTheEndedAt_ReturnsGrantExpired()
+    {
+        // Defence in depth: a corrupted row can have an EndedAtUtc later than ExpiresAtUtc. The stored
+        // expiry is still absolute and must reject the request before the lifecycle check (FR-ACS-07).
+        var grant = CreateGrant(Start);
+        grant.CompleteVisit(Start.AddMinutes(30));
+        typeof(AccessGrant)
+            .GetProperty(nameof(AccessGrant.ExpiresAtUtc))!
+            .SetValue(grant, Start.AddMinutes(40));
+
+        var store = new FakeAccessGrantStore { Grant = grant };
+        var checker = CreateChecker(store, FakeVisitAccessScopeService.Allowing(Scope), Start.AddMinutes(42));
+
+        var result = await checker.RequireActiveGrantAsync(DoctorUserId, Scope.AppointmentId);
+
+        Assert.False(result.IsAllowed);
+        Assert.Null(result.Grant);
+        Assert.Equal(AccessGrantCheckFailure.GrantExpired, result.Failure);
+    }
+
+    [Fact]
     public async Task RequireActiveGrantAsync_WhenNoGrantExists_ReturnsGrantNotFound()
     {
         var store = new FakeAccessGrantStore();

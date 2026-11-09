@@ -6,8 +6,8 @@ namespace MediPassPlus.Application.Privacy;
 /// <summary>
 /// Database-backed implementation of the medical access gate. It resolves the real doctor and patient from the
 /// appointment (FR-ACS-06), loads the appointment's grant, and applies the lifecycle rules of ADR-0011: a grant is
-/// active while <c>now &lt; EndedAtUtc ?? ExpiresAtUtc</c>, and never past <c>GrantedAtUtc + 2 hours</c>
-/// (FR-ACS-07, UC-24).
+/// active while <c>now &lt; EndedAtUtc ?? ExpiresAtUtc</c>, never past <c>ExpiresAtUtc</c>, and never past
+/// <c>GrantedAtUtc + 2 hours</c> (FR-ACS-07, UC-24).
 /// </summary>
 public sealed class AccessGrantChecker : IAccessGrantChecker
 {
@@ -42,6 +42,7 @@ public sealed class AccessGrantChecker : IAccessGrantChecker
     /// <item>the authenticated doctor owns the appointment (the patient is taken from the appointment);</item>
     /// <item>a grant exists for the exact appointment, doctor and patient scope;</item>
     /// <item>the stored grant still matches that scope;</item>
+    /// <item>the stored <see cref="AccessGrant.ExpiresAtUtc"/> has not been reached;</item>
     /// <item>the absolute two-hour cap has not been reached;</item>
     /// <item>the grant lifecycle still reports <see cref="AccessGrantStatus.Active"/>.</item>
     /// </list>
@@ -86,7 +87,14 @@ public sealed class AccessGrantChecker : IAccessGrantChecker
 
         var utcNow = _timeProvider.GetUtcNow().UtcDateTime;
 
-        // The two-hour cap is absolute (FR-ACS-07, UC-24) and must hold even if ExpiresAtUtc is wrong.
+        // Both bounds are absolute: the stored expiry and the two-hour cap. Checking ExpiresAtUtc separately
+        // keeps a corrupted EndedAtUtc from extending access past the expiry, and the cap protects against a
+        // corrupted ExpiresAtUtc (FR-ACS-07, UC-24).
+        if (utcNow >= grant.ExpiresAtUtc)
+        {
+            return AccessGrantCheckResult.Denied(AccessGrantCheckFailure.GrantExpired);
+        }
+
         if (utcNow >= grant.GrantedAtUtc.Add(MaximumLifetime))
         {
             return AccessGrantCheckResult.Denied(AccessGrantCheckFailure.GrantExpired);

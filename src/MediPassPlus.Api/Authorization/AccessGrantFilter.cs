@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using MediPassPlus.Application.Privacy;
 using Microsoft.AspNetCore.Mvc;
@@ -7,15 +8,15 @@ namespace MediPassPlus.Api.Authorization;
 
 /// <summary>
 /// Enforces <see cref="RequireActiveGrantAttribute"/>: resolves the authenticated doctor from the user identifier
-/// and the appointment from the bound route value, asks <see cref="IAccessGrantChecker"/> for the active grant, and
+/// and the appointment from the route value, asks <see cref="IAccessGrantChecker"/> for the active grant, and
 /// short-circuits with a single generic <c>403</c> response when the check is refused. The refusal body is identical
 /// for every reason, so a caller cannot tell whether the appointment exists (NFR-PRI-01).
 /// </summary>
 /// <remarks>
-/// The filter reads only two inputs: the <c>ClaimTypes.NameIdentifier</c> claim and the bound integer
-/// <c>appointmentId</c> action argument. It runs before the global validation filter so an unauthorized caller gets
-/// no validation feedback about a record it may not touch, and it denies rather than allows when the argument is
-/// missing or is not an integer.
+/// The filter reads only two inputs: the <c>ClaimTypes.NameIdentifier</c> claim and the integer
+/// <c>appointmentId</c> route value. It runs before the global validation filter so an unauthorized caller gets
+/// no validation feedback about a record it may not touch, and it denies rather than allows when the route value is
+/// missing or is not an integer. A query-string or request-body value is never used to choose the appointment.
 /// </remarks>
 public sealed class AccessGrantFilter : IAsyncActionFilter
 {
@@ -60,10 +61,10 @@ public sealed class AccessGrantFilter : IAsyncActionFilter
 
         if (!TryGetAppointmentId(context, out var appointmentId))
         {
-            // A decorated action without a bound appointment id is a wiring mistake. Fail closed: never allow access
-            // because the identifier the grant is scoped to is missing.
+            // A decorated action without an appointment id route value is a wiring mistake. Fail closed: never allow
+            // access because the identifier the grant is scoped to is missing.
             _logger.LogError(
-                "The access-grant filter is applied to {Action}, but no integer 'appointmentId' argument was bound.",
+                "The access-grant filter is applied to {Action}, but no integer 'appointmentId' route value was supplied.",
                 context.ActionDescriptor.DisplayName);
 
             context.Result = CreateForbidden(context.HttpContext.TraceIdentifier);
@@ -86,20 +87,19 @@ public sealed class AccessGrantFilter : IAsyncActionFilter
 
     private static bool TryGetAppointmentId(ActionExecutingContext context, out int appointmentId)
     {
-        // Only a bound integer action argument is accepted. An 'appointmentId' property on a request body is a
-        // different argument and is ignored, so a caller cannot redirect the check to another appointment.
-        foreach (var argument in context.ActionArguments)
+        // The appointment scope must come from the route. Reading only route data means a query-string or
+        // request-body 'appointmentId' can never redirect the check to another appointment.
+        if (context.RouteData.Values[AppointmentArgumentName] is not { } routeValue)
         {
-            if (string.Equals(argument.Key, AppointmentArgumentName, StringComparison.OrdinalIgnoreCase)
-                && argument.Value is int value)
-            {
-                appointmentId = value;
-                return true;
-            }
+            appointmentId = 0;
+            return false;
         }
 
-        appointmentId = 0;
-        return false;
+        return int.TryParse(
+            Convert.ToString(routeValue, CultureInfo.InvariantCulture),
+            NumberStyles.Integer,
+            CultureInfo.InvariantCulture,
+            out appointmentId);
     }
 
     private static ObjectResult CreateForbidden(string traceIdentifier) =>
