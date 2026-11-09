@@ -298,11 +298,12 @@ public class BookingServiceTests
     {
         var slot = CreateSlot();
         var appointment = CreateAppointment(slot);
+        var doctor = CreateDoctor();
         var store = new FakeBookingStore
         {
             AppointmentContext = new BookingAppointmentContext(
                 appointment,
-                CreateDoctor(),
+                doctor,
                 NewUser(DoctorUserId, role: "Doctor"),
                 NewUser(PatientId))
         };
@@ -312,6 +313,9 @@ public class BookingServiceTests
         Assert.True(result.IsSuccess);
         Assert.Equal(AppointmentStatus.Cancelled, appointment.Status);
         Assert.True(slot.IsAvailable);
+        Assert.Equal(doctor.Id, appointment.DoctorId);
+        Assert.Equal(PatientId, appointment.PatientId);
+        Assert.Equal(slot.Id, appointment.DoctorSlotId);
         Assert.Equal(nameof(AppointmentStatus.Cancelled), result.Appointment!.Status);
         Assert.Equal(1, store.SaveCount);
     }

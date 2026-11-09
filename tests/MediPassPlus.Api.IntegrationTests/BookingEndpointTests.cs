@@ -306,6 +306,10 @@ public sealed class BookingEndpointTests
         var appointment = await response.Content.ReadFromJsonAsync<AppointmentDto>();
         Assert.NotNull(appointment);
         Assert.Equal(nameof(AppointmentStatus.Cancelled), appointment.Status);
+        Assert.Equal(scenario.Appointment.Id, appointment.Id);
+        Assert.Equal(scenario.Doctor.Id, appointment.DoctorId);
+        Assert.Equal(scenario.PatientUser.Id, appointment.PatientId);
+        Assert.Equal(scenario.AppointmentSlot.Id, appointment.DoctorSlotId);
 
         await using var db = _factory.CreateDbContext();
 
