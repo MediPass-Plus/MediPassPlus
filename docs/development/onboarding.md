@@ -13,7 +13,7 @@ assume you have read anyone's chat history: everything you need is in the reposi
 | Git | any recent version | `git --version` |
 | `dotnet-ef` | global tool matching the SDK — **only for migrations** | `dotnet ef --version`; install with `dotnet tool install --global dotnet-ef` |
 | SQL Server | Express, LocalDB or a Docker container — needed as soon as code opens the database | connect with your client; run `dotnet ef database update` once a migration exists |
-| Docker | Desktop — needed for Testcontainers integration tests after ADR-0006 | `docker info` |
+| Docker | Desktop — needed for the Testcontainers SQL Server integration tests (ADR-0006) | `docker info` |
 
 Optional: Visual Studio 2022+ or VS Code with the C# Dev Kit for the backend, and any editor for the Angular frontend.
 
