@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using MediPassPlus.Api.Extensions;
 using MediPassPlus.Application.VisitAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -73,7 +74,7 @@ public class VisitAccessController : ControllerBase
         var result = await _startVisitService.StartAsync(
             appointmentId,
             doctorUserId,
-            GetAuditIpAddress(),
+            HttpContext.GetAuditIpAddress(),
             cancellationToken);
 
         if (result.IsSuccess)
@@ -112,16 +113,6 @@ public class VisitAccessController : ControllerBase
                 "Another request for this visit won the race. Retry to reuse its pending request."),
             _ => throw new InvalidOperationException($"Unexpected start-visit failure: {result.Failure}.")
         };
-    }
-
-    private string GetAuditIpAddress()
-    {
-        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-
-        // AuditLog stores at most 45 characters; keep the event even when a scoped IPv6 address is longer.
-        return string.IsNullOrWhiteSpace(ipAddress) || ipAddress.Length > 45
-            ? "unknown"
-            : ipAddress;
     }
 
     private ObjectResult CreateProblem(int statusCode, string type, string title, string detail) =>
