@@ -1,6 +1,6 @@
 # ADR-0006: HTTP integration tests with WebApplicationFactory
 
-- **Status:** Proposed (blocked: the team has not approved Testcontainers SQL Server as the integration-test database)
+- **Status:** Accepted (2026-11-09) — Testcontainers SQL Server is the integration-test database.
 - **Date:** 2026-10-29
 - **Affects:** `tests/`, CI, every endpoint PR
 
@@ -21,10 +21,12 @@ authorization or the database. Unit tests cannot cover 401/403/grant behaviour.
 4. **Mandatory authorization matrix** per medical endpoint: no token → 401; wrong role (staff/admin, other doctor) →
    403; no grant → 403; expired grant → 403; revoked/ended grant → 403; consumed credential → 400/403;
    foreign appointment id → 403/404 without leaking existence.
-5. **Database strategy (open):**
-   - *Preferred:* Testcontainers SQL Server — provider parity with production, works on the Ubuntu CI runner.
-   - *Fallback:* SQLite in-memory with a provider swap — fast, no Docker, but SQL Server specifics (filtered indexes,
-     column types, encryption-at-rest assertions) are not covered.
+5. **Database strategy:** Testcontainers SQL Server is the integration-test database. It gives provider parity with
+   development and production, covers filtered indexes, column types, provider error behavior and migration SQL, and
+   works on the Ubuntu CI runner where Docker is available.
+   - SQLite remains the fast persistence-test provider in `MediPassPlus.Infrastructure.Tests`; it is not used for the
+     HTTP integration matrix.
+   - *Rejected:* the EF InMemory provider — it does not enforce relational constraints.
    - *Rejected:* LocalDB — Windows-only, breaks the Ubuntu CI job.
 6. Assertions must prove what left the server: no medical content in error bodies, problem details shaped consistently,
    and audit rows created for the successful read/write paths.
@@ -34,6 +36,8 @@ authorization or the database. Unit tests cannot cover 401/403/grant behaviour.
 - The CI backend job stays `dotnet build/test -c Release`; no workflow change is required beyond the project joining
   the solution. Docker is available on GitHub-hosted Ubuntu runners for Testcontainers.
 - Database-backed tests become the slowest step; keep the matrix focused on authorization, not CRUD breadth.
+- The SQLite persistence tests stay as the fast layer. They are not evidence of SQL Server behavior; the Testcontainers
+  HTTP suite is the provider-parity gate.
 - A test-only factory must not weaken production code paths (no special-cased auth bypass in `Program.cs`).
 
 ## Conflict check

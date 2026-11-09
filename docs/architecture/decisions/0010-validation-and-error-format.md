@@ -61,8 +61,8 @@ return stack traces, and document how to use it.
   handler.
 - The filter resolves validators per action argument by runtime type; polymorphic request bodies resolve the declared
   type, which is acceptable for this project.
-- Tests can cover the validator, the filter and the handler with plain unit tests, without the HTTP test project that
-  ADR-0006 still leaves open.
+- Tests can cover the validator, the filter and the handler with plain unit tests, without the HTTP test project
+  defined by ADR-0006.
 
 ## Alternatives considered
 
@@ -83,4 +83,4 @@ return stack traces, and document how to use it.
 
 No conflict with an Accepted ADR. It implements NFR-SEC-06 and NFR-REL-04 and reuses the `ProblemDetails` envelope
 that `AGENTS.md` §7 already mandates. It does not depend on ADR-0003 (identity), ADR-0005 (diagnosis), ADR-0006
-(integration tests) or ADR-0009 (database baseline), all of which remain Proposed.
+(integration tests) or ADR-0009 (database baseline).

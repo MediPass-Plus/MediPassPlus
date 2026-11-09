@@ -199,7 +199,9 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
 
 - Backend xUnit; frontend Vitest + jsdom.
 - New or changed logic gets unit tests. Endpoint changes get HTTP tests in `tests/MediPassPlus.Api.IntegrationTests`
-  once ADR-0006 is accepted.
+  against Testcontainers SQL Server (ADR-0006, Accepted 2026-11-09). SQLite stays the fast persistence-test provider.
+  On a machine without Docker, set `MEDIPASS_TEST_SQLSERVER` to an existing SQL Server connection string; the
+  suite creates and drops its own database. See the project README.
 - Every medical endpoint needs negative tests: no token (401), wrong role (403), no grant (403), expired grant (403),
   ended grant (403), wrong doctor (403) — NFR-SEC-10.
 - Never weaken, skip or delete a test to get a green build. Report the failure instead.
