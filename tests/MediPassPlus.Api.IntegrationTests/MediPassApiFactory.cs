@@ -288,6 +288,83 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             credential);
     }
 
+    /// <summary>
+    /// Seeds a clinic, two doctor accounts with profiles, a patient account, a free future slot, an appointment on
+    /// its own slot, a second free slot for rescheduling and a slot owned by the second doctor.
+    /// </summary>
+    /// <param name="appointmentStatus">The status of the seeded appointment.</param>
+    /// <param name="slotStartUtc">The first slot start; defaults to tomorrow at 09:00 UTC.</param>
+    /// <param name="freeSlotAvailable">Whether the first free slot starts as available.</param>
+    /// <returns>The seeded booking graph.</returns>
+    public async Task<BookingScenario> CreateBookingScenarioAsync(
+        AppointmentStatus appointmentStatus = AppointmentStatus.Booked,
+        DateTime? slotStartUtc = null,
+        bool freeSlotAvailable = true)
+    {
+        var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
+        var patientUser = await CreateUserAsync(DefaultRoles.Patient);
+        var otherDoctorUser = await CreateUserAsync(DefaultRoles.Doctor);
+
+        await using var db = CreateDbContext();
+
+        var clinic = new Clinic
+        {
+            Name = $"Booking Clinic {Guid.NewGuid():N}",
+            Address = "1 Integration Way"
+        };
+        db.Clinics.Add(clinic);
+        await db.SaveChangesAsync();
+
+        var doctor = new Doctor
+        {
+            UserId = doctorUser.Id,
+            Specialty = "General Medicine",
+            ClinicId = clinic.Id
+        };
+        var otherDoctor = new Doctor
+        {
+            UserId = otherDoctorUser.Id,
+            Specialty = "Dermatology",
+            ClinicId = clinic.Id
+        };
+        db.Doctors.AddRange(doctor, otherDoctor);
+        await db.SaveChangesAsync();
+
+        var start = slotStartUtc ?? DateTime.UtcNow.Date.AddDays(1).AddHours(9);
+
+        var freeSlot = NewSlot(doctor.Id, start, freeSlotAvailable);
+        var appointmentSlot = NewSlot(doctor.Id, start.AddHours(1), isAvailable: false);
+        var targetSlot = NewSlot(doctor.Id, start.AddHours(2), isAvailable: true);
+        var otherDoctorSlot = NewSlot(otherDoctor.Id, start, isAvailable: true);
+
+        db.DoctorSlots.AddRange(freeSlot, appointmentSlot, targetSlot, otherDoctorSlot);
+        await db.SaveChangesAsync();
+
+        var appointment = new Appointment
+        {
+            PatientId = patientUser.Id,
+            DoctorId = doctor.Id,
+            DoctorSlotId = appointmentSlot.Id,
+            Status = appointmentStatus,
+            CreatedAtUtc = DateTime.UtcNow.AddDays(-1)
+        };
+        db.Appointments.Add(appointment);
+        await db.SaveChangesAsync();
+
+        return new BookingScenario(
+            doctorUser,
+            patientUser,
+            clinic,
+            doctor,
+            freeSlot,
+            appointmentSlot,
+            appointment,
+            targetSlot,
+            otherDoctorUser,
+            otherDoctor,
+            otherDoctorSlot);
+    }
+
     /// <summary>Disposes the host, drops the test database and stops the Testcontainers database.</summary>
     public async ValueTask CleanupAsync()
     {
@@ -325,6 +402,15 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         // for every environment, and the test factory creates only the users each test needs.
         builder.UseEnvironment("Testing");
     }
+
+    private static DoctorSlot NewSlot(int doctorId, DateTime startUtc, bool isAvailable) =>
+        new()
+        {
+            DoctorId = doctorId,
+            StartTimeUtc = startUtc,
+            EndTimeUtc = startUtc.AddMinutes(30),
+            IsAvailable = isAvailable
+        };
 
     private void ApplyMigrations()
     {
