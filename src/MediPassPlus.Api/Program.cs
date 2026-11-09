@@ -85,3 +85,6 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+
+// Exposes the entry point to WebApplicationFactory for the HTTP integration tests (ADR-0006).
+public partial class Program { }
