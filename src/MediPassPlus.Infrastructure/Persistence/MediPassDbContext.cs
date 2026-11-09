@@ -20,6 +20,7 @@ public class MediPassDbContext : IdentityDbContext<ApplicationUser, IdentityRole
         public DbSet<ClinicStaff> ClinicStaff => Set<ClinicStaff>();
     public DbSet<Admin> Admins => Set<Admin>();
     public DbSet<VisitAccessCredential> VisitAccessCredentials => Set<VisitAccessCredential>();
+    /// <summary>The append-only audit entries written for medical and access-control events (ADR-0004).</summary>
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public MediPassDbContext(DbContextOptions<MediPassDbContext> options)
         : base(options)
