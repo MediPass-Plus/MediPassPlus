@@ -8,6 +8,8 @@ using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using MediPassPlus.Application.AdminManagement;
+using MediPassPlus.Infrastructure.AdminManagement;
 
 namespace MediPassPlus.Infrastructure.Extensions;
 
@@ -44,8 +46,10 @@ public static class ServiceCollectionExtensions
         // Add other infrastructure services here as needed
 
 
-
-
+        // Admin management: clinics (MP-29).
+        services.AddScoped<IClinicAdminService, ClinicAdminService>();
+        services.AddScoped<IAccountAdminService, AccountAdminService>();
+        services.AddScoped<IAccountStatusService, AccountStatusService>();
 
 
         return services;
