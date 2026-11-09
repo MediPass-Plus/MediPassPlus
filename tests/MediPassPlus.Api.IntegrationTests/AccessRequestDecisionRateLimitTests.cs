@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using MediPassPlus.Api.IntegrationTests.Infrastructure;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,20 +15,21 @@ public sealed class AccessRequestDecisionRateLimitTests
     private const int PermitLimit = 5;
     private const int WindowMinutes = 15;
 
-    private readonly IntegrationTestHost _host;
+    private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared host.</summary>
-    public AccessRequestDecisionRateLimitTests(IntegrationTestHost host)
+    /// <summary>Initializes the test class with the shared API factory.</summary>
+    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    public AccessRequestDecisionRateLimitTests(MediPassApiFactory factory)
     {
-        _host = host;
+        _factory = factory;
     }
 
     /// <summary>The sixth decision in the window is rejected before the controller runs.</summary>
     [Fact]
     public async Task SixthDecisionInTheWindow_Returns429WithRetryAfterAndProblemDetails()
     {
-        var patient = await _host.CreateUserAsync(DefaultRoles.Patient);
-        using var client = await _host.CreateAuthenticatedClientAsync(patient);
+        var patient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var client = _factory.CreateAuthenticatedClient(patient);
 
         for (var attempt = 1; attempt <= PermitLimit; attempt++)
         {
@@ -59,8 +59,8 @@ public sealed class AccessRequestDecisionRateLimitTests
     [Fact]
     public async Task LimitIsPartitionedPerPatient()
     {
-        var limitedPatient = await _host.CreateUserAsync(DefaultRoles.Patient);
-        using var limitedClient = await _host.CreateAuthenticatedClientAsync(limitedPatient);
+        var limitedPatient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var limitedClient = _factory.CreateAuthenticatedClient(limitedPatient);
 
         for (var attempt = 1; attempt <= PermitLimit; attempt++)
         {
@@ -71,8 +71,8 @@ public sealed class AccessRequestDecisionRateLimitTests
         using var rejected = await PostDecisionAsync(limitedClient);
         Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
 
-        var otherPatient = await _host.CreateUserAsync(DefaultRoles.Patient);
-        using var otherClient = await _host.CreateAuthenticatedClientAsync(otherPatient);
+        var otherPatient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var otherClient = _factory.CreateAuthenticatedClient(otherPatient);
 
         using var otherResponse = await PostDecisionAsync(otherClient);
 

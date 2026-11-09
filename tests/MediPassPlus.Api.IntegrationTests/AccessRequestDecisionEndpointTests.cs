@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using MediPassPlus.Api.IntegrationTests.Infrastructure;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.VisitAccess;
@@ -17,21 +16,23 @@ namespace MediPassPlus.Api.IntegrationTests;
 [Collection(IntegrationTestCollection.Name)]
 public sealed class AccessRequestDecisionEndpointTests
 {
-    private readonly IntegrationTestHost _host;
+    private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared host.</summary>
-    public AccessRequestDecisionEndpointTests(IntegrationTestHost host)
+    /// <summary>Initializes the test class with the shared API factory.</summary>
+    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    public AccessRequestDecisionEndpointTests(MediPassApiFactory factory)
     {
-        _host = host;
+        _factory = factory;
     }
 
     /// <summary>No bearer token means the endpoint is never reached.</summary>
+    /// <param name="action">The decision action under test.</param>
     [Theory]
     [InlineData("approve")]
     [InlineData("reject")]
     public async Task Decision_WithoutToken_ReturnsUnauthorized(string action)
     {
-        using var client = _host.CreateClient();
+        using var client = _factory.CreateClient();
 
         using var response = await client.PostAsync(
             $"/api/access-requests/{Guid.NewGuid()}/{action}",
@@ -41,6 +42,8 @@ public sealed class AccessRequestDecisionEndpointTests
     }
 
     /// <summary>Only the Patient role may answer an access request.</summary>
+    /// <param name="role">The non-patient role under test.</param>
+    /// <param name="action">The decision action under test.</param>
     [Theory]
     [InlineData(DefaultRoles.Doctor, "approve")]
     [InlineData(DefaultRoles.Doctor, "reject")]
@@ -48,8 +51,8 @@ public sealed class AccessRequestDecisionEndpointTests
     [InlineData(DefaultRoles.Admin, "reject")]
     public async Task Decision_WithNonPatientRole_ReturnsForbidden(string role, string action)
     {
-        var user = await _host.CreateUserAsync(role);
-        using var client = await _host.CreateAuthenticatedClientAsync(user);
+        var user = await _factory.CreateUserAsync(role);
+        using var client = _factory.CreateAuthenticatedClient(user);
 
         using var response = await client.PostAsync(
             $"/api/access-requests/{Guid.NewGuid()}/{action}",
@@ -59,13 +62,14 @@ public sealed class AccessRequestDecisionEndpointTests
     }
 
     /// <summary>An unknown request id is a 404 with the shared problem-details envelope.</summary>
+    /// <param name="action">The decision action under test.</param>
     [Theory]
     [InlineData("approve")]
     [InlineData("reject")]
     public async Task Decision_ForUnknownRequest_ReturnsNotFound(string action)
     {
-        var patient = await _host.CreateUserAsync(DefaultRoles.Patient);
-        using var client = await _host.CreateAuthenticatedClientAsync(patient);
+        var patient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var client = _factory.CreateAuthenticatedClient(patient);
 
         using var response = await client.PostAsync(
             $"/api/access-requests/{Guid.NewGuid()}/{action}",
@@ -78,15 +82,16 @@ public sealed class AccessRequestDecisionEndpointTests
     }
 
     /// <summary>A patient cannot answer a request for another patient's appointment.</summary>
+    /// <param name="action">The decision action under test.</param>
     [Theory]
     [InlineData("approve")]
     [InlineData("reject")]
     public async Task Decision_ForAnotherPatientsRequest_ReturnsForbiddenAndChangesNothing(string action)
     {
-        var scenario = await _host.CreateVisitScenarioAsync();
+        var scenario = await _factory.CreateVisitScenarioAsync();
         var request = RequireRequest(scenario);
-        var otherPatient = await _host.CreateUserAsync(DefaultRoles.Patient);
-        using var client = await _host.CreateAuthenticatedClientAsync(otherPatient);
+        var otherPatient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var client = _factory.CreateAuthenticatedClient(otherPatient);
 
         using var response = await client.PostAsync(
             $"/api/access-requests/{request.Id}/{action}",
@@ -97,7 +102,7 @@ public sealed class AccessRequestDecisionEndpointTests
         Assert.NotNull(problem);
         Assert.Equal(403, problem.Status);
 
-        await using var db = _host.CreateDbContext();
+        await using var db = _factory.CreateDbContext();
         Assert.Equal(
             AccessRequestStatus.Pending,
             (await db.AccessRequests.AsNoTracking().SingleAsync(r => r.Id == request.Id)).Status);
@@ -109,9 +114,9 @@ public sealed class AccessRequestDecisionEndpointTests
     [Fact]
     public async Task Approve_PendingRequest_CreatesGrantConsumesCredentialAndWritesAudit()
     {
-        var scenario = await _host.CreateVisitScenarioAsync();
+        var scenario = await _factory.CreateVisitScenarioAsync();
         var request = RequireRequest(scenario);
-        using var client = await _host.CreateAuthenticatedClientAsync(scenario.PatientUser);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsync(
             $"/api/access-requests/{request.Id}/approve",
@@ -127,7 +132,7 @@ public sealed class AccessRequestDecisionEndpointTests
         Assert.Equal(scenario.Doctor.Id, grant.DoctorId);
         Assert.Equal(TimeSpan.FromHours(2), grant.ExpiresAtUtc - grant.GrantedAtUtc);
 
-        await using var db = _host.CreateDbContext();
+        await using var db = _factory.CreateDbContext();
 
         var storedRequest = await db.AccessRequests.AsNoTracking()
             .SingleAsync(r => r.Id == request.Id);
@@ -156,9 +161,9 @@ public sealed class AccessRequestDecisionEndpointTests
     [Fact]
     public async Task Reject_PendingRequest_RevokesCredentialAndAuditsWithoutGrant()
     {
-        var scenario = await _host.CreateVisitScenarioAsync();
+        var scenario = await _factory.CreateVisitScenarioAsync();
         var request = RequireRequest(scenario);
-        using var client = await _host.CreateAuthenticatedClientAsync(scenario.PatientUser);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsync(
             $"/api/access-requests/{request.Id}/reject",
@@ -167,7 +172,7 @@ public sealed class AccessRequestDecisionEndpointTests
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal(0, response.Content.Headers.ContentLength ?? 0);
 
-        await using var db = _host.CreateDbContext();
+        await using var db = _factory.CreateDbContext();
 
         var storedRequest = await db.AccessRequests.AsNoTracking()
             .SingleAsync(r => r.Id == request.Id);
@@ -189,6 +194,8 @@ public sealed class AccessRequestDecisionEndpointTests
     }
 
     /// <summary>A request can be answered once; every later decision is a 409 and changes nothing.</summary>
+    /// <param name="firstAction">The decision that answers the request.</param>
+    /// <param name="secondAction">The decision attempted after it was answered.</param>
     [Theory]
     [InlineData("approve", "approve")]
     [InlineData("approve", "reject")]
@@ -196,9 +203,9 @@ public sealed class AccessRequestDecisionEndpointTests
     [InlineData("reject", "reject")]
     public async Task Decision_WhenRequestWasAlreadyAnswered_ReturnsConflict(string firstAction, string secondAction)
     {
-        var scenario = await _host.CreateVisitScenarioAsync();
+        var scenario = await _factory.CreateVisitScenarioAsync();
         var request = RequireRequest(scenario);
-        using var client = await _host.CreateAuthenticatedClientAsync(scenario.PatientUser);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var first = await client.PostAsync(
             $"/api/access-requests/{request.Id}/{firstAction}",
@@ -216,7 +223,7 @@ public sealed class AccessRequestDecisionEndpointTests
         Assert.NotNull(problem);
         Assert.Equal(409, problem.Status);
 
-        await using var db = _host.CreateDbContext();
+        await using var db = _factory.CreateDbContext();
 
         var expectedStatus = firstAction == "approve"
             ? AccessRequestStatus.Approved

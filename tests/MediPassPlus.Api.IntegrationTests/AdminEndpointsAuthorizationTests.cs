@@ -17,7 +17,8 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// admin route surface against medical/patient route names; the NFR-SEC-10 HTTP matrix will cover
 /// medical endpoints when that module lands.
 /// </summary>
-public sealed class AdminEndpointsAuthorizationTests : IClassFixture<MediPassApiFactory>, IAsyncLifetime
+[Collection(IntegrationTestCollection.Name)]
+public sealed class AdminEndpointsAuthorizationTests : IAsyncLifetime
 {
     private static readonly Guid TargetUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
@@ -44,11 +45,15 @@ public sealed class AdminEndpointsAuthorizationTests : IClassFixture<MediPassApi
     private readonly Dictionary<string, string> _tokens = new(StringComparer.Ordinal);
     private HttpClient _client = null!;
 
+    /// <summary>Initializes the test class with the shared API factory.</summary>
+    /// <param name="factory">The collection fixture that hosts the API and database.</param>
     public AdminEndpointsAuthorizationTests(MediPassApiFactory factory)
     {
         _factory = factory;
     }
 
+    /// <summary>Builds one anonymous request case for every admin endpoint.</summary>
+    /// <returns>The method, path and body of each endpoint.</returns>
     public static IEnumerable<object[]> AnonymousCases()
     {
         foreach (var endpoint in AdminEndpoints)
@@ -57,6 +62,8 @@ public sealed class AdminEndpointsAuthorizationTests : IClassFixture<MediPassApi
         }
     }
 
+    /// <summary>Builds one non-admin request case for every role and admin endpoint.</summary>
+    /// <returns>The role, method, path and body of each case.</returns>
     public static IEnumerable<object[]> NonAdminCases()
     {
         foreach (var role in NonAdminRoles)
@@ -68,6 +75,8 @@ public sealed class AdminEndpointsAuthorizationTests : IClassFixture<MediPassApi
         }
     }
 
+    /// <summary>Mints one token per role and creates the unauthenticated client.</summary>
+    /// <returns>A task that completes when the tokens and client are ready.</returns>
     public async Task InitializeAsync()
     {
         foreach (var role in NonAdminRoles.Append("Admin"))
@@ -81,12 +90,18 @@ public sealed class AdminEndpointsAuthorizationTests : IClassFixture<MediPassApi
         });
     }
 
+    /// <summary>Disposes the test class's HTTP client.</summary>
+    /// <returns>A completed task.</returns>
     public Task DisposeAsync()
     {
         _client?.Dispose();
         return Task.CompletedTask;
     }
 
+    /// <summary>An anonymous request to any admin endpoint is rejected with 401.</summary>
+    /// <param name="method">The HTTP method.</param>
+    /// <param name="path">The endpoint path.</param>
+    /// <param name="body">The optional JSON body.</param>
     [Theory]
     [MemberData(nameof(AnonymousCases))]
     public async Task AdminEndpoint_WithoutToken_Returns401(string method, string path, string? body)
@@ -96,6 +111,11 @@ public sealed class AdminEndpointsAuthorizationTests : IClassFixture<MediPassApi
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    /// <summary>A Patient, Doctor or Staff token is rejected by every admin endpoint with 403.</summary>
+    /// <param name="role">The non-admin role.</param>
+    /// <param name="method">The HTTP method.</param>
+    /// <param name="path">The endpoint path.</param>
+    /// <param name="body">The optional JSON body.</param>
     [Theory]
     [MemberData(nameof(NonAdminCases))]
     public async Task AdminEndpoint_WithNonAdminRole_Returns403(
@@ -106,6 +126,7 @@ public sealed class AdminEndpointsAuthorizationTests : IClassFixture<MediPassApi
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    /// <summary>An Admin token reaches the protected admin surface.</summary>
     [Fact]
     public async Task AdminEndpoint_WithAdminRole_IsAuthorized()
     {

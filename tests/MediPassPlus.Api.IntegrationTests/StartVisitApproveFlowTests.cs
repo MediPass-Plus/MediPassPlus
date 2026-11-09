@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using MediPassPlus.Api.IntegrationTests.Infrastructure;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.VisitAccess;
@@ -15,12 +14,13 @@ namespace MediPassPlus.Api.IntegrationTests;
 [Collection(IntegrationTestCollection.Name)]
 public sealed class StartVisitApproveFlowTests
 {
-    private readonly IntegrationTestHost _host;
+    private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared host.</summary>
-    public StartVisitApproveFlowTests(IntegrationTestHost host)
+    /// <summary>Initializes the test class with the shared API factory.</summary>
+    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    public StartVisitApproveFlowTests(MediPassApiFactory factory)
     {
-        _host = host;
+        _factory = factory;
     }
 
     /// <summary>
@@ -30,8 +30,8 @@ public sealed class StartVisitApproveFlowTests
     [Fact]
     public async Task StartVisit_ThenApprove_CreatesTheGrantForTheStartedVisit()
     {
-        var scenario = await _host.CreateVisitScenarioAsync(includePendingRequest: false);
-        using var doctorClient = await _host.CreateAuthenticatedClientAsync(scenario.DoctorUser);
+        var scenario = await _factory.CreateVisitScenarioAsync(includePendingRequest: false);
+        using var doctorClient = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
 
         using var startResponse = await doctorClient.PostAsync(
             $"/api/appointments/{scenario.Appointment.Id}/start-visit",
@@ -49,7 +49,7 @@ public sealed class StartVisitApproveFlowTests
         var remainingLifetime = start.ExpiresAtUtc - DateTime.UtcNow;
         Assert.InRange(remainingLifetime, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(125));
 
-        await using (var db = _host.CreateDbContext())
+        await using (var db = _factory.CreateDbContext())
         {
             var storedRequest = await db.AccessRequests.AsNoTracking()
                 .SingleAsync(r => r.Id == start.AccessRequestId);
@@ -74,7 +74,7 @@ public sealed class StartVisitApproveFlowTests
             Assert.Equal(scenario.DoctorUser.Id, audit.UserId);
         }
 
-        using var patientClient = await _host.CreateAuthenticatedClientAsync(scenario.PatientUser);
+        using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
         using var approveResponse = await patientClient.PostAsync(
             $"/api/access-requests/{start.AccessRequestId}/approve",
             content: null);
@@ -87,7 +87,7 @@ public sealed class StartVisitApproveFlowTests
         Assert.Equal(scenario.Doctor.Id, grant.DoctorId);
         Assert.Equal(TimeSpan.FromHours(2), grant.ExpiresAtUtc - grant.GrantedAtUtc);
 
-        await using var verificationDb = _host.CreateDbContext();
+        await using var verificationDb = _factory.CreateDbContext();
         var consumed = await verificationDb.VisitAccessCredentials.AsNoTracking()
             .SingleAsync(c => c.AccessRequestId == start.AccessRequestId);
         Assert.NotNull(consumed.ConsumedAtUtc);

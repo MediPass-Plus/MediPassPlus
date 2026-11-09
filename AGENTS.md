@@ -47,8 +47,8 @@ startup); a rejection is `429` with `Retry-After` (ADR-0007). Nine migrations li
 `AddClinicStaffAndAdmin`, `AddAuditLog` and `EnforceSinglePendingAccessRequest`. The audit store (`AuditLog`,
 `IAuditWriter` and an append-only EF interceptor) now exists. HTTP integration tests live in
 `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local server
-through `MEDIPASS_INTEGRATION_SQLSERVER`) and cover the approve/reject matrix, the start-visit→approve flow and the
-`QrApprove` 429. There is
+through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the approve/reject
+matrix, the start-visit→approve flow, the `QrApprove` 429 and the MP-29 admin 401/403 matrix. There is
 still no record-read or visit-completion endpoint, no endpoint that verifies a presented QR or 6-digit credential,
 no medical-record module and no audit endpoint, and the
 frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
@@ -212,7 +212,7 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
 - Backend xUnit; frontend Vitest + jsdom.
 - New or changed logic gets unit tests. Endpoint changes get HTTP tests in `tests/MediPassPlus.Api.IntegrationTests`
   against Testcontainers SQL Server (ADR-0006, Accepted 2026-11-09). SQLite stays the fast persistence-test provider.
-  On a machine without Docker, set `MEDIPASS_INTEGRATION_SQLSERVER` to an existing SQL Server connection string; the
+  On a machine without Docker, set `MEDIPASS_TEST_SQLSERVER` to an existing SQL Server connection string; the
   suite creates and drops its own database. See the project README.
 - Every medical endpoint needs negative tests: no token (401), wrong role (403), no grant (403), expired grant (403),
   ended grant (403), wrong doctor (403) — NFR-SEC-10.
