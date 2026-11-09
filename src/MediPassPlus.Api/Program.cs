@@ -25,7 +25,6 @@ builder.Services.Configure<DemoSeedOptions>(builder.Configuration.GetSection(Dem
 builder.Services.AddScoped<ISeeder, DemoDataSeeder>();
 builder.Services.AddScoped<DatabaseSeeder>();
 
-builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
   
 builder.Services.AddControllers(options =>

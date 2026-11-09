@@ -1,5 +1,6 @@
 using FluentValidation;
 using MediPassPlus.Api.Validation;
+using MediPassPlus.Application.Clinical;
 using MediPassPlus.Application.Validation;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -139,5 +140,21 @@ public class ValidationFilterTests
 
         Assert.False(nextCalled);
         Assert.IsType<BadRequestObjectResult>(context.Result);
+    }
+
+    [Fact]
+    public async Task Clinical_query_with_page_size_above_50_returns_400()
+    {
+        using var services = BuildServices();
+        var context = CreateContext(services, typeof(ClinicSearchQuery), new ClinicSearchQuery { PageSize = 51 });
+        var filter = new ValidationFilter();
+        var nextCalled = false;
+
+        await filter.OnActionExecutionAsync(context, Next(context, () => nextCalled = true));
+
+        Assert.False(nextCalled);
+        var result = Assert.IsType<BadRequestObjectResult>(context.Result);
+        var problem = Assert.IsType<ValidationProblemDetails>(result.Value);
+        Assert.Contains(nameof(ClinicSearchQuery.PageSize), problem.Errors.Keys);
     }
 }

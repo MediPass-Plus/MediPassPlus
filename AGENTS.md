@@ -29,7 +29,9 @@ the projects.
 
 This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
 register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
-`DoctorSlot` and `Appointment` (CLB-01); MP-1301 added `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
+`DoctorSlot` and `Appointment` (CLB-01); B1 exposes read-only clinic search, clinic-doctor search and doctor-slot
+listing endpoints. Clinic and doctor searches default to 20 results per page, accept at most 50, and return 400 for
+invalid page or page-size values. MP-1301 added `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
 A read-only visit-access scope service now verifies that the acting doctor or patient matches the appointment, and
 `POST api/appointments/{appointmentId}/start-visit` lets a doctor start a today, checked-in appointment, reuse its
 pending request or create a new one, and receive a fresh two-minute QR credential whose SHA-256 hash is the only
