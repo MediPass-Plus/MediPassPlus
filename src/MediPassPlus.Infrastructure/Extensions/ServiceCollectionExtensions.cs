@@ -48,7 +48,8 @@ public static class ServiceCollectionExtensions
 
         // Admin management: clinics (MP-29).
         services.AddScoped<IClinicAdminService, ClinicAdminService>();
-
+        services.AddScoped<IAccountAdminService, AccountAdminService>();
+        services.AddScoped<IAccountStatusService, AccountStatusService>();
 
 
         return services;
