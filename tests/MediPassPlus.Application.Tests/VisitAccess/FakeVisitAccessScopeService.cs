@@ -7,7 +7,12 @@ internal sealed class FakeVisitAccessScopeService : IVisitAccessScopeService
     public VisitAccessScopeResult DoctorResult { get; set; } =
         VisitAccessScopeResult.Denied(VisitAccessScopeFailure.AppointmentNotFound);
 
+    public VisitAccessScopeResult PatientResult { get; set; } =
+        VisitAccessScopeResult.Denied(VisitAccessScopeFailure.AppointmentNotFound);
+
     public bool WasCalled { get; private set; }
+
+    public bool WasPatientCalled { get; private set; }
 
     public Task<VisitAccessScopeResult> ResolveForDoctorAsync(
         int appointmentId,
@@ -21,9 +26,15 @@ internal sealed class FakeVisitAccessScopeService : IVisitAccessScopeService
     public Task<VisitAccessScopeResult> ResolveForPatientAsync(
         int appointmentId,
         Guid patientUserId,
-        CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
+        CancellationToken cancellationToken = default)
+    {
+        WasPatientCalled = true;
+        return Task.FromResult(PatientResult);
+    }
 
     public static FakeVisitAccessScopeService Allowing(VisitAccessScope scope) =>
         new() { DoctorResult = VisitAccessScopeResult.Allowed(scope) };
+
+    public static FakeVisitAccessScopeService AllowingPatient(VisitAccessScope scope) =>
+        new() { PatientResult = VisitAccessScopeResult.Allowed(scope) };
 }

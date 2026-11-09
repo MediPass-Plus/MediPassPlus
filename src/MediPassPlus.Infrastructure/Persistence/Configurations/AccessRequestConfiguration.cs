@@ -12,7 +12,14 @@ public class AccessRequestConfiguration : IEntityTypeConfiguration<AccessRequest
     {
         builder.ToTable("AccessRequests", "access");
 
-        builder.Property(r => r.Status).HasConversion<string>().HasMaxLength(20).IsRequired();
+        // Status is the request's state machine. Making it a concurrency token makes EF include the original state
+        // in UPDATE, so a concurrent approve/reject cannot overwrite the decision that won the race (ADR-0011
+        // decision 7). This is an EF mapping change only; it needs no schema migration.
+        builder.Property(r => r.Status)
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired()
+            .IsConcurrencyToken();
         builder.Property(r => r.CreatedAtUtc).IsRequired();
 
         // At most one pending request per appointment. The filtered unique index is the authoritative guard against

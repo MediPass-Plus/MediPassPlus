@@ -39,6 +39,11 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IVisitStartStore, StartVisitStore>();
         services.AddScoped<IStartVisitService, StartVisitService>();
 
+        // Patient decision: approve creates the grant, reject creates none; both are audited in the same unit of
+        // work (FR-ACS-03, FR-ACS-04, FR-PRV-02).
+        services.AddScoped<IAccessRequestDecisionStore, AccessRequestDecisionStore>();
+        services.AddScoped<IAccessRequestDecisionService, AccessRequestDecisionService>();
+
         // The grant gate every medical endpoint must pass: database-backed on each request (FR-PRV-01, FR-ACS-06).
         services.AddScoped<IAccessGrantStore, AccessGrantStore>();
         services.AddScoped<IAccessGrantChecker, AccessGrantChecker>();

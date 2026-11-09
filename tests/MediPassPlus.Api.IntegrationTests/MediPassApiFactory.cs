@@ -1,7 +1,13 @@
 using System.Collections.Concurrent;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using MediPassPlus.Application.VisitAccess;
+using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
+using MediPassPlus.Domain.VisitAccess;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Infrastructure.Persistence;
+using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -18,13 +24,16 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// connection string to run locally without Docker; the provider stays SQL Server, so authorization
 /// and Identity behavior are exercised through the same code path as production.
 /// </summary>
-public sealed class MediPassApiFactory : WebApplicationFactory<Program>
+public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     private const string JwtIssuer = "MediPassPlus";
     private const string JwtAudience = "MediPassPlus.Client";
-    private const string JwtSecretKey = "integration-tests-only-key-0123456789abcdef";
     private const string TestPassword = "Integration1!";
     private const string LocalSqlServerVariable = "MEDIPASS_TEST_SQLSERVER";
+
+    // Generated at runtime: the test signing key is never committed (NFR-SEC-08).
+    private static readonly string JwtSecretKey =
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
 
     private readonly string _connectionString;
     private readonly string _databaseName;
@@ -33,6 +42,10 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>
     private readonly ConcurrentDictionary<string, string> _tokens = new(StringComparer.Ordinal);
     private bool _cleanedUp;
 
+    /// <summary>
+    /// Starts the database server when no local SQL Server is configured, creates this run's isolated database and
+    /// applies every migration.
+    /// </summary>
     public MediPassApiFactory()
     {
         var serverConnectionString = Environment.GetEnvironmentVariable(LocalSqlServerVariable);
@@ -126,6 +139,155 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>
         return token;
     }
 
+    /// <summary>
+    /// Creates a unique account in the requested role and mints a bearer token for it, so each test can use its own
+    /// patient, doctor or other actor without sharing rate-limit partitions.
+    /// </summary>
+    /// <param name="role">The application role to assign.</param>
+    /// <returns>The new account and its signed token.</returns>
+    public async Task<TestUser> CreateUserAsync(string role)
+    {
+        using var scope = Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var jwt = scope.ServiceProvider.GetRequiredService<JwtTokenService>();
+        var email = $"{role.ToLowerInvariant()}.{Guid.NewGuid():N}@integration.medipass.test";
+
+        var user = new ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            FullName = $"{role} Integration Test",
+            Role = role,
+            IsActive = true,
+            EmailConfirmed = true
+        };
+
+        var userResult = await userManager.CreateAsync(user, TestPassword);
+        if (!userResult.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Could not create '{email}': {string.Join("; ", userResult.Errors.Select(e => e.Description))}");
+        }
+
+        var roleAssignment = await userManager.AddToRoleAsync(user, role);
+        if (!roleAssignment.Succeeded)
+        {
+            throw new InvalidOperationException(
+                $"Could not add '{email}' to '{role}': {string.Join("; ", roleAssignment.Errors.Select(e => e.Description))}");
+        }
+
+        return new TestUser(user.Id, email, jwt.CreateAccessToken(user, new[] { role }));
+    }
+
+    /// <summary>Creates an HTTP client that sends the user's bearer token with every request.</summary>
+    /// <param name="user">The user returned by <see cref="CreateUserAsync"/> or a token-only test user.</param>
+    /// <returns>A client that is not followed through redirects.</returns>
+    public HttpClient CreateAuthenticatedClient(TestUser user)
+    {
+        ArgumentNullException.ThrowIfNull(user);
+
+        var client = CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false
+        });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", user.Token);
+        return client;
+    }
+
+    /// <summary>Creates a context for assertions against this run's isolated database.</summary>
+    /// <returns>A context that the caller disposes.</returns>
+    public MediPassDbContext CreateDbContext()
+    {
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlServer(_connectionString)
+            .Options;
+
+        return new MediPassDbContext(options);
+    }
+
+    /// <summary>
+    /// Seeds a clinic, a doctor account and profile, a patient account, a slot for today and an appointment for them.
+    /// With <paramref name="includePendingRequest"/>, it also creates the pending request and its live QR credential.
+    /// </summary>
+    /// <param name="appointmentStatus">The initial appointment status.</param>
+    /// <param name="includePendingRequest">Whether to create the pending request and QR credential.</param>
+    /// <returns>The seeded graph.</returns>
+    public async Task<VisitScenario> CreateVisitScenarioAsync(
+        AppointmentStatus appointmentStatus = AppointmentStatus.CheckedIn,
+        bool includePendingRequest = true)
+    {
+        var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
+        var patientUser = await CreateUserAsync(DefaultRoles.Patient);
+
+        await using var db = CreateDbContext();
+
+        var clinic = new Clinic
+        {
+            Name = $"Integration Clinic {Guid.NewGuid():N}",
+            Address = "1 Integration Way"
+        };
+        db.Clinics.Add(clinic);
+        await db.SaveChangesAsync();
+
+        var doctor = new Doctor
+        {
+            UserId = doctorUser.Id,
+            Specialty = "General Medicine",
+            ClinicId = clinic.Id
+        };
+        db.Doctors.Add(doctor);
+        await db.SaveChangesAsync();
+
+        var slotStart = DateTime.UtcNow.Date.AddHours(9);
+        var slot = new DoctorSlot
+        {
+            DoctorId = doctor.Id,
+            StartTimeUtc = slotStart,
+            EndTimeUtc = slotStart.AddMinutes(30),
+            IsAvailable = false
+        };
+        db.DoctorSlots.Add(slot);
+        await db.SaveChangesAsync();
+
+        var appointment = new Appointment
+        {
+            PatientId = patientUser.Id,
+            DoctorId = doctor.Id,
+            DoctorSlotId = slot.Id,
+            Status = appointmentStatus,
+            CreatedAtUtc = DateTime.UtcNow.AddDays(-1)
+        };
+        db.Appointments.Add(appointment);
+        await db.SaveChangesAsync();
+
+        AccessRequest? request = null;
+        VisitAccessCredential? credential = null;
+        if (includePendingRequest)
+        {
+            request = AccessRequest.Create(appointment, doctor, DateTime.UtcNow);
+            db.AccessRequests.Add(request);
+            await db.SaveChangesAsync();
+
+            credential = VisitAccessCredential.Create(
+                request.Id,
+                VisitCredentialType.QrToken,
+                QrTokenGenerator.Generate().Sha256Hash,
+                DateTime.UtcNow);
+            db.VisitAccessCredentials.Add(credential);
+            await db.SaveChangesAsync();
+        }
+
+        return new VisitScenario(
+            doctorUser,
+            patientUser,
+            clinic,
+            doctor,
+            slot,
+            appointment,
+            request,
+            credential);
+    }
+
     /// <summary>Disposes the host, drops the test database and stops the Testcontainers database.</summary>
     public async ValueTask CleanupAsync()
     {
@@ -145,11 +307,18 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>
         }
     }
 
+    /// <summary>Disposes the host and releases the test database (ADR-0006).</summary>
     public override async ValueTask DisposeAsync()
     {
         await CleanupAsync();
     }
 
+    Task IAsyncLifetime.InitializeAsync() => Task.CompletedTask;
+
+    async Task IAsyncLifetime.DisposeAsync() => await CleanupAsync();
+
+    /// <summary>Runs the API in the test environment so the development demo seeder never executes.</summary>
+    /// <param name="builder">The web host builder.</param>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         // The API's Development seeder must not run in tests; default roles are seeded by Program
