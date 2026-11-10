@@ -13,32 +13,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Look for a solution file
-        id: sln
-        run: |
-          if ls *.sln *.slnx >/dev/null 2>&1; then echo "found=true" >> "$GITHUB_OUTPUT"; else echo "found=false" >> "$GITHUB_OUTPUT"; fi
-
       - name: Set up .NET
-        if: steps.sln.outputs.found == 'true'
         uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
 
       - name: Restore
-        if: steps.sln.outputs.found == 'true'
-        run: dotnet restore
+        run: dotnet restore MediPassPlus.slnx
 
       - name: Build
-        if: steps.sln.outputs.found == 'true'
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build MediPassPlus.slnx --no-restore --configuration Release
 
       - name: Test
-        if: steps.sln.outputs.found == 'true'
-        run: dotnet test --no-build --configuration Release --verbosity normal
-
-      - name: Nothing to build yet
-        if: steps.sln.outputs.found != 'true'
-        run: echo "No solution file yet, backend steps skipped."
+        run: dotnet test MediPassPlus.slnx --no-build --configuration Release --verbosity normal
 
   frontend:
     name: frontend
