@@ -86,12 +86,14 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .HasColumnType("int");
 
                     b.Property<int>("DoctorSlotId")
+                        .IsConcurrencyToken()
                         .HasColumnType("int");
 
                     b.Property<Guid>("PatientId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
@@ -103,6 +105,10 @@ namespace MediPassPlus.Infrastructure.Migrations
                     b.HasIndex("PatientId");
 
                     b.HasIndex("DoctorSlotId", "DoctorId");
+
+                    b.HasIndex(new[] { "DoctorSlotId" }, "IX_Appointments_DoctorSlotId_Active")
+                        .IsUnique()
+                        .HasFilter("[Status] <> 'Cancelled'");
 
                     b.ToTable("Appointments", "clinical");
                 });
@@ -178,6 +184,7 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<bool>("IsAvailable")
+                        .IsConcurrencyToken()
                         .HasColumnType("bit");
 
                     b.Property<DateTime>("StartTimeUtc")
@@ -378,6 +385,7 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<string>("Status")
+                        .IsConcurrencyToken()
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");

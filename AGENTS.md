@@ -30,7 +30,13 @@ the projects.
 This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
 register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
 `DoctorSlot` and `Appointment` (CLB-01); B1 exposes read-only clinic search, clinic-doctor search and doctor-slot
-listing endpoints. Clinic and doctor searches default to 20 results per page, accept at most 50, and return 400 for
+listing endpoints. MP-27 adds the patient booking slice: `POST api/appointments` books a free future slot for the
+authenticated patient, `POST api/appointments/{appointmentId}/cancel` cancels a booked appointment, and
+`POST api/appointments/{appointmentId}/reschedule` moves it to another free slot of the same doctor. Every refusal is
+the shared `ProblemDetails` envelope (`400` invalid state, `404` out of the patient's scope, `409` slot/state
+conflict), and a filtered unique index (`IX_Appointments_DoctorSlotId_Active`) plus slot and appointment concurrency
+tokens make a concurrent double booking impossible. Clinic and doctor searches default to 20 results per page,
+accept at most 50, and return 400 for
 invalid page or page-size values. MP-1301 added `AccessRequest`, `AccessGrant` and `VisitAccessCredential`.
 A read-only visit-access scope service now verifies that the acting doctor or patient matches the appointment, and
 `POST api/appointments/{appointmentId}/start-visit` lets a doctor start a today, checked-in appointment, reuse its
@@ -42,13 +48,14 @@ appointment answer a pending request: approval creates the visit's grant (two-ho
 creates no grant, and both answer the request and change its credentials in one unit of work. `AccessRequest.Status`
 is an EF concurrency token, so only the first decision wins and the other returns `409`. Both decisions also share the
 named `QrApprove` fixed-window rate limit (default 5 attempts / 15 minutes per patient, configurable and validated at
-startup); a rejection is `429` with `Retry-After` (ADR-0007). Nine migrations live in
-`src/MediPassPlus.Infrastructure/Migrations/`, including
-`AddClinicStaffAndAdmin`, `AddAuditLog` and `EnforceSinglePendingAccessRequest`. The audit store (`AuditLog`,
+startup); a rejection is `429` with `Retry-After` (ADR-0007). Ten migrations live in
+`src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin`, `AddAuditLog`,
+`EnforceSinglePendingAccessRequest` and `EnforceSingleActiveAppointmentPerSlot`. The audit store (`AuditLog`,
 `IAuditWriter` and an append-only EF interceptor) now exists. HTTP integration tests live in
 `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local server
 through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the approve/reject
-matrix, the start-visit→approve flow, the `QrApprove` 429 and the MP-29 admin 401/403 matrix. There is
+matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix (including a
+concurrent double-booking test) and the MP-29 admin 401/403 matrix. There is
 still no record-read or visit-completion endpoint, no endpoint that verifies a presented QR or 6-digit credential,
 no medical-record module and no audit endpoint, and the
 frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
@@ -137,11 +144,14 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   It marks operations that carry `[Authorize]` automatically, so do not hand-write security requirements.
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
   `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
-  existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor), and
-  `POST api/access-requests/{requestId}/approve` / `/reject` (Patient). Start-visit exercises the scope check and
-  issues a one-time QR credential; the patient endpoints answer a request by ID, consume or revoke its credentials,
-  and return `429` with `Retry-After` after the per-patient `QrApprove` limit. No endpoint yet verifies a presented QR
-  or 6-digit credential, and there is still no medical-record endpoint.
+  existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
+  `POST api/access-requests/{requestId}/approve` / `/reject` (Patient), and the booking actions
+  `POST api/appointments` / `{appointmentId}/cancel` / `{appointmentId}/reschedule` (Patient). Start-visit exercises
+  the scope check and issues a one-time QR credential; the patient endpoints answer a request by ID, consume or
+  revoke its credentials, and return `429` with `Retry-After` after the per-patient `QrApprove` limit. The booking
+  actions stay inside the authenticated patient's scope and return `400`/`404`/`409` `ProblemDetails` for every
+  refused rule. No endpoint yet verifies a presented QR or 6-digit credential, and there is still no medical-record
+  endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for

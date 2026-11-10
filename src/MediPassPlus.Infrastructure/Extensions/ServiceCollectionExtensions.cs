@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using MediPassPlus.Application.Audit;
+using MediPassPlus.Application.Booking;
 using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Infrastructure.Persistence;
@@ -47,6 +48,11 @@ public static class ServiceCollectionExtensions
         // The grant gate every medical endpoint must pass: database-backed on each request (FR-PRV-01, FR-ACS-06).
         services.AddScoped<IAccessGrantStore, AccessGrantStore>();
         services.AddScoped<IAccessGrantChecker, AccessGrantChecker>();
+
+        // Booking: book, cancel and reschedule with a filtered unique index as the double-booking guard
+        // (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-09, NFR-REL-03).
+        services.AddScoped<IBookingStore, BookingStore>();
+        services.AddScoped<IBookingService, BookingService>();
 
         // Add other infrastructure services here as needed
 
