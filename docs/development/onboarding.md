@@ -180,6 +180,7 @@ Do not ask an agent for a full repository audit again. The audit lives in `AGENT
 |---|---|
 | No secrets / no SQL Server | The API still starts and the build and tests pass. Anything that opens the database will fail until `ConnectionStrings:Default` is set. Say so in your report; do not hard-code a connection string |
 | Build fails after pulling | Check `dotnet --version` against `global.json`, run `dotnet restore` once, and read the first error. If the failure is inside another module, report it — never "fix" it by reverting or rewriting someone else's code |
+| `dotnet ef database update` fails creating `IX_Appointments_DoctorSlotId_Active` | The database already has duplicate non-cancelled appointments for one slot. Follow the [MP-27 booking index rollout](mp-27-booking-index-rollout.md) and clean the data before rerunning; do not edit the merged migration |
 | `npm ci` fails | Check the Node version (`node -v`) against `frontend/package.json`; delete `node_modules` and retry once |
 | Frontend test dies with `Failed to start forks worker` | Record the initial failure first. Then check for a stale Node/Vitest worker holding the workspace and that `node_modules` is complete (`npm ci` if unsure), and rerun the tests as a diagnostic step. Report the initial failure and the rerun result separately — a passing rerun does not erase the initial failure |
 | `/swagger` returns 404 | Confirm `ASPNETCORE_ENVIRONMENT` is `Development` (`launchSettings.json` sets it for `dotnet run`). In another environment the routes are off by design |
