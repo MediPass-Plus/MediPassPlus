@@ -55,3 +55,56 @@ public sealed record BookingScenario(
     TestUser OtherDoctorUser,
     Doctor OtherDoctor,
     DoctorSlot OtherDoctorSlot);
+
+/// <summary>
+/// The seeded graph a check-in or completion test needs: a doctor, a patient, a same-clinic staff member, a staff
+/// member in another clinic, and one appointment in the doctor's clinic.
+/// </summary>
+/// <param name="StaffUser">The staff account in the appointment's clinic.</param>
+/// <param name="OtherClinicStaffUser">A staff account in a different clinic.</param>
+/// <param name="DoctorUser">The doctor's account and token.</param>
+/// <param name="PatientUser">The patient's account and token.</param>
+/// <param name="Clinic">The clinic that owns the doctor and the staff member.</param>
+/// <param name="OtherClinic">A second clinic that owns another staff member.</param>
+/// <param name="Doctor">The doctor profile.</param>
+/// <param name="OtherClinicDoctor">A doctor profile in the second clinic.</param>
+/// <param name="Slot">The appointment's slot.</param>
+/// <param name="Appointment">The appointment being checked in or completed.</param>
+public sealed record AppointmentStatusScenario(
+    TestUser StaffUser,
+    TestUser OtherClinicStaffUser,
+    TestUser DoctorUser,
+    TestUser OtherClinicDoctorUser,
+    TestUser PatientUser,
+    Clinic Clinic,
+    Clinic OtherClinic,
+    Doctor Doctor,
+    Doctor OtherClinicDoctor,
+    DoctorSlot Slot,
+    Appointment Appointment);
+
+/// <summary>
+/// The seeded graph a doctor schedule test needs: the caller's today appointments, a cancelled one, another
+/// doctor's appointment and one on the next clinic-local day.
+/// </summary>
+/// <param name="DoctorUser">The authenticated doctor's account and token.</param>
+/// <param name="OtherDoctorUser">A second doctor's account and token.</param>
+/// <param name="Clinic">The shared clinic.</param>
+/// <param name="Doctor">The authenticated doctor profile.</param>
+/// <param name="OtherDoctor">The second doctor profile.</param>
+/// <param name="BookedAppointment">A booked appointment of the authenticated doctor today.</param>
+/// <param name="CheckedInAppointment">A checked-in appointment of the authenticated doctor today.</param>
+/// <param name="CancelledAppointment">A cancelled appointment that must not appear.</param>
+/// <param name="OtherDoctorAppointment">Another doctor's appointment that must not appear.</param>
+/// <param name="TomorrowAppointment">The authenticated doctor's appointment tomorrow.</param>
+public sealed record DoctorScheduleScenario(
+    TestUser DoctorUser,
+    TestUser OtherDoctorUser,
+    Clinic Clinic,
+    Doctor Doctor,
+    Doctor OtherDoctor,
+    Appointment BookedAppointment,
+    Appointment CheckedInAppointment,
+    Appointment CancelledAppointment,
+    Appointment OtherDoctorAppointment,
+    Appointment TomorrowAppointment);

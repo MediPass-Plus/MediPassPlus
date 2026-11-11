@@ -145,7 +145,12 @@ public sealed class BookingService : IBookingService
 
         // Cancelling is always possible for the patient, even when the doctor account was deactivated: FR-BKG-04
         // only requires the appointment not to have started, and blocking it would leave the slot occupied forever.
-        appointment.Status = AppointmentStatus.Cancelled;
+        // The domain method enforces the only allowed cancellation transition, Booked -> Cancelled (FR-BKG-08).
+        if (!appointment.TryCancel(now))
+        {
+            return BookingResult.Denied(BookingFailure.AppointmentNotCancellable);
+        }
+
         slot.IsAvailable = true;
 
         try

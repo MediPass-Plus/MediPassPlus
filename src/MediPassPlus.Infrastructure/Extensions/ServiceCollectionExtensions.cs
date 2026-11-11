@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using MediPassPlus.Application.AppointmentStatusFlow;
 using MediPassPlus.Application.Audit;
 using MediPassPlus.Application.Booking;
+using MediPassPlus.Application.Common;
+using MediPassPlus.Application.DoctorSchedule;
 using MediPassPlus.Application.Email;
 using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
@@ -55,6 +58,18 @@ public static class ServiceCollectionExtensions
         // (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-09, NFR-REL-03).
         services.AddScoped<IBookingStore, BookingStore>();
         services.AddScoped<IBookingService, BookingService>();
+
+        // Appointment status flow: staff check-in and doctor completion share the domain state machine, and every
+        // "today" decision uses the clinic's Cairo calendar while timestamps stay UTC (FR-BKG-08, FR-STF-03,
+        // FR-ACS-08).
+        services.AddSingleton<IClinicTimeZone, CairoClinicTimeZone>();
+        services.AddScoped<IAppointmentStatusStore, AppointmentStatusStore>();
+        services.AddScoped<IAppointmentStatusService, AppointmentStatusService>();
+
+        // Doctor daily schedule: the doctor is resolved from the authenticated user, never from a caller-supplied id
+        // (FR-BKG-07, US-10).
+        services.AddScoped<IDoctorScheduleStore, DoctorScheduleStore>();
+        services.AddScoped<IDoctorScheduleService, DoctorScheduleService>();
 
         // Add other infrastructure services here as needed
 
