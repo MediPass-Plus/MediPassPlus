@@ -116,7 +116,7 @@ dotnet run --project src/MediPassPlus.Api --launch-profile http
 | URL | What |
 |---|---|
 | <http://localhost:5114/swagger> | Swagger UI (Development only) |
-| <http://localhost:5114/openapi/v1.json> | The generated OpenAPI document |
+| <http://localhost:5114/swagger/v1/swagger.json> | The generated Swagger document |
 | <http://localhost:5114/WeatherForecast> | The sample endpoint |
 
 The `https` profile listens on <https://localhost:7041> and <http://localhost:5114>.
@@ -125,11 +125,10 @@ Both the UI and the document are mapped only in Development or when `OpenApi:Exp
 (default `false` in `appsettings.json`). In any other environment they return 404 without the flag — that is correct,
 not a bug.
 
-**Authorizing a request in the UI.** Once login exists, call the login endpoint, copy the `accessToken` value from the
-response, click **Authorize** at the top of the page, paste the raw token (no `Bearer ` prefix) and click Authorize
-again. Operations that carry `[Authorize]` are marked with a padlock, because an OpenAPI transformer reads the
-endpoint metadata — you never edit the document by hand. Today no endpoint is authorized, so the padlock is absent and
-the button sends nothing; that changes as soon as the first `[Authorize]` endpoint lands.
+**Authorizing a request in the UI.** Call the login endpoint, copy the `accessToken` value from the response, click
+**Authorize** at the top of the page, paste the raw token (no `Bearer ` prefix) and click Authorize again. Operations
+that carry `[Authorize]` are marked with a padlock, because a Swashbuckle operation filter reads the endpoint
+metadata — you never edit the document by hand. Anonymous endpoints stay unmarked.
 
 ### Demo data and demo accounts (Development only)
 
