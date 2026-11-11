@@ -62,8 +62,8 @@ force-push, and touching `main`.
 - Codestyle: 4 spaces, file-scoped namespaces, `System` usings first, nullable enabled; frontend 2 spaces + Prettier
   (`singleQuote`, width 100).
 - XML documentation on every public controller action and every public contract whose shape is not obvious, and a
-  `[ProducesResponseType]` plus `<response code="...">` for each status code the action can return. The comments flow
-  into `/openapi/v1.json` automatically.
+  `[ProducesResponseType]` plus `<response code="...">` for each status code the action can return. Swashbuckle
+  includes the comments in `/swagger/v1/swagger.json`.
 - Preserve unrelated working-tree changes. If a file is already modified and is not yours, leave it untouched and say
   so in your report. Never `git reset`, `git checkout --`, `git clean` or `git stash`.
 
