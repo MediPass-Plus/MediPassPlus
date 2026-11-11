@@ -72,6 +72,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         SetEnvironmentVariable("Jwt__SecretKey", JwtSecretKey);
         SetEnvironmentVariable("Jwt__AccessTokenMinutes", "15");
         SetEnvironmentVariable("ConnectionStrings__DefaultConnection", _connectionString);
+        SetEnvironmentVariable("OpenApi__ExposeOutsideDevelopment", "true");
         SetEnvironmentVariable("Logging__LogLevel__Microsoft.EntityFrameworkCore", "Warning");
 
         ApplyMigrations();

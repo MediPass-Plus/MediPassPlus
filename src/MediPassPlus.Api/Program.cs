@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Api.Errors;
-using MediPassPlus.Api.OpenApi;
 using MediPassPlus.Api.Validation;
 using MediPassPlus.Application.Validation;
 using MediPassPlus.Infrastructure.Persistence;
@@ -69,16 +68,9 @@ builder.Services.AddRateLimiter(options =>
 // Validators are discovered from the Application assembly. Every module adds its own assembly here.
 builder.Services.AddValidatorsFromAssemblyContaining<SampleRequestValidator>();
 
-// OpenAPI document (XML documentation is folded in by the .NET 10 source generator) plus JWT bearer metadata.
-builder.Services.AddOpenApi("v1", options =>
-{
-    options.AddDocumentTransformer<BearerSecuritySchemeTransformer>();
-    options.AddOperationTransformer<BearerSecuritySchemeTransformer>();
-});
-
 // DbContext + Identity + Roles + JWT (all registered in Infrastructure/Extensions)
 builder.Services.AddInfrastructure(builder.Configuration);
-//  Swagger Services
+// Swashbuckle is the single Swagger document generator and UI (ADR-0012).
 builder.Services.AddSwaggerDocumentation();
 var app = builder.Build();
 

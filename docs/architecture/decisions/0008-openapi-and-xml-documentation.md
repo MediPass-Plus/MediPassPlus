@@ -1,9 +1,12 @@
 # ADR-0008: OpenAPI and XML documentation as a delivery requirement
 
-- **Status:** Accepted (2026-10-29). Swagger UI is approved as a Development tool; production exposure stays off by
-  default.
+- **Status:** Superseded by [ADR-0012](0012-swagger-single-document-generator.md) on 2026-11-11. The decision below
+  is retained for history; ADR-0012 replaces the single-generator choice and the wiring.
 - **Date:** 2026-10-29
 - **Affects:** every endpoint PR, README, CONTRIBUTING, `.csproj` build settings, `Program.cs`, `appsettings.json`
+
+> **Superseded:** ADR-0012 makes Swashbuckle the single document generator and removes
+> `Microsoft.AspNetCore.OpenApi`.
 
 ## Context
 
