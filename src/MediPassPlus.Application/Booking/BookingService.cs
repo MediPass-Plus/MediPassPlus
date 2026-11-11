@@ -132,11 +132,6 @@ public sealed class BookingService : IBookingService
         var slot = appointment.DoctorSlot
             ?? throw new InvalidOperationException("The appointment has no doctor slot.");
 
-        if (appointment.Status != AppointmentStatus.Booked)
-        {
-            return BookingResult.Denied(BookingFailure.AppointmentNotCancellable);
-        }
-
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         if (slot.StartTimeUtc <= now)
         {
@@ -145,7 +140,8 @@ public sealed class BookingService : IBookingService
 
         // Cancelling is always possible for the patient, even when the doctor account was deactivated: FR-BKG-04
         // only requires the appointment not to have started, and blocking it would leave the slot occupied forever.
-        // The domain method enforces the only allowed cancellation transition, Booked -> Cancelled (FR-BKG-08).
+        // The domain method is the single owner of the only allowed cancellation transition, Booked -> Cancelled
+        // (FR-BKG-04, FR-BKG-08).
         if (!appointment.TryCancel(now))
         {
             return BookingResult.Denied(BookingFailure.AppointmentNotCancellable);

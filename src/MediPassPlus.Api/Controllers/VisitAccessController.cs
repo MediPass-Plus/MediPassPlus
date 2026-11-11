@@ -32,21 +32,22 @@ public class VisitAccessController : ControllerBase
     }
 
     /// <summary>
-    /// Starts a doctor's own appointment when it is today and checked in, and returns a fresh one-time QR token.
-    /// The newest pending request is reused; when none is pending, a new request is created. Creating a request also
-    /// stages an <c>AccessRequestCreated</c> audit row (ADR-0011 decision 8).
+    /// Starts a doctor's own appointment when it is today and checked in or already in visit, and returns a fresh
+    /// one-time QR token. The newest pending request is reused; when none is pending, a new request is created.
+    /// Creating a request also stages an <c>AccessRequestCreated</c> audit row (ADR-0011 decision 8).
     /// </summary>
     /// <param name="appointmentId">The appointment to start.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The one-time QR token and its expiry.</returns>
     /// <response code="200">The visit was started and the QR token was issued.</response>
-    /// <response code="400">The appointment is not today or is not checked in.</response>
+    /// <response code="400">The appointment is not today, is not checked in, or is not in visit.</response>
     /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
     /// <response code="403">The caller is not a doctor, has no doctor profile, or does not own the appointment.</response>
     /// <response code="404">No appointment has the requested identifier.</response>
     /// <response code="409">
-    /// A concurrent call won the pending-request or live-credential race. Retrying reuses the pending request and
-    /// issues a fresh credential.
+    /// The patient already approved a request for this appointment, so the visit's grant exists and no new QR can be
+    /// approved (FR-ACS-11). A concurrent call can also win the pending-request or live-credential race; retrying
+    /// reuses the pending request and issues a fresh credential.
     /// </response>
     [Authorize(Roles = "Doctor")]
     [HttpPost("{appointmentId:int}/start-visit")]
@@ -105,7 +106,12 @@ public class VisitAccessController : ControllerBase
                 StatusCodes.Status400BadRequest,
                 BadRequestType,
                 "The visit cannot be started.",
-                "The appointment must be checked in."),
+                "The appointment must be checked in or already in visit."),
+            StartVisitFailure.AccessAlreadyGranted => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The visit already has an access grant.",
+                "The patient already approved access for this visit, so a new QR code cannot be approved."),
             StartVisitFailure.RequestConflict => CreateProblem(
                 StatusCodes.Status409Conflict,
                 ConflictType,

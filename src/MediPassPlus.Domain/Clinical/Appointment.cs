@@ -88,7 +88,9 @@ public class Appointment
 
     /// <summary>
     /// Moves a <see cref="AppointmentStatus.Booked"/> appointment to <see cref="AppointmentStatus.Cancelled"/>.
-    /// Any other state is refused and left untouched (FR-BKG-04, FR-BKG-08).
+    /// Any other state is refused and left untouched (FR-BKG-04, FR-BKG-08). "Before the visit starts" is interpreted
+    /// as before the appointment's scheduled start and while it is still Booked: once staff checks the patient in,
+    /// the patient has arrived and cancellation is refused.
     /// </summary>
     /// <param name="utcNow">The current UTC time.</param>
     /// <returns>True when the transition happened.</returns>

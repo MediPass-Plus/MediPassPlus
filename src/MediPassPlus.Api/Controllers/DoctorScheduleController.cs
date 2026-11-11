@@ -31,6 +31,11 @@ public class DoctorScheduleController : ControllerBase
     /// Returns the authenticated doctor's appointments for one clinic-local day, ordered by slot start. Cancelled
     /// appointments are omitted, and only the patient's name is exposed (FR-BKG-07, FR-STF-04).
     /// </summary>
+    /// <remarks>
+    /// This list is deliberately not paged. NFR-PRF-04 asks for paging on lists, but a single clinic-local day for
+    /// one doctor is a naturally bounded set and the doctor needs the whole day in one view; paging would hide
+    /// appointments from the schedule.
+    /// </remarks>
     /// <param name="date">The clinic-local date in Africa/Cairo.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The ordered schedule for that day.</returns>

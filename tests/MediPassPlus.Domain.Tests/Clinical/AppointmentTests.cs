@@ -123,14 +123,73 @@ public class AppointmentTests
     }
 
     [Fact]
-    public void RepeatedTransition_IsRefusedAndKeepsTheFirstTimestamp()
+    public void TryCancel_WhenThePatientWasCheckedIn_IsRefused()
+    {
+        // FR-BKG-04 / US-08 "before the visit starts" is interpreted as before the slot and while still Booked:
+        // once staff checks the patient in, the patient has arrived and cancellation is refused.
+        var appointment = NewAppointment();
+        appointment.TryCheckIn(Now.AddMinutes(-5));
+
+        Assert.False(appointment.TryCancel(Now));
+
+        Assert.Equal(AppointmentStatus.CheckedIn, appointment.Status);
+        Assert.Equal(Now.AddMinutes(-5), appointment.CheckedInAtUtc);
+        Assert.Null(appointment.CancelledAtUtc);
+    }
+
+    [Theory]
+    [InlineData(AppointmentStatus.CheckedIn)]
+    [InlineData(AppointmentStatus.InVisit)]
+    [InlineData(AppointmentStatus.Completed)]
+    [InlineData(AppointmentStatus.Cancelled)]
+    public void RepeatedTransition_IsRefusedAndKeepsTheFirstTimestamp(AppointmentStatus state)
     {
         var appointment = NewAppointment();
-        appointment.TryCheckIn(Now);
+        ReachState(appointment, state, Now);
 
-        Assert.False(appointment.TryCheckIn(Now.AddHours(1)));
-        Assert.Equal(Now, appointment.CheckedInAtUtc);
+        var succeeded = Transition(appointment, state, Now.AddHours(1));
+
+        Assert.False(succeeded);
+        Assert.Equal(state, appointment.Status);
+        Assert.Equal(Now, TimestampFor(appointment, state));
     }
+
+    private static void ReachState(Appointment appointment, AppointmentStatus state, DateTime utcNow)
+    {
+        switch (state)
+        {
+            case AppointmentStatus.CheckedIn:
+                Assert.True(appointment.TryCheckIn(utcNow));
+                break;
+            case AppointmentStatus.InVisit:
+                Assert.True(appointment.TryCheckIn(utcNow));
+                Assert.True(appointment.TryMarkInVisit(utcNow));
+                break;
+            case AppointmentStatus.Completed:
+                Assert.True(appointment.TryCheckIn(utcNow));
+                Assert.True(appointment.TryMarkInVisit(utcNow));
+                Assert.True(appointment.TryComplete(utcNow));
+                break;
+            case AppointmentStatus.Cancelled:
+                Assert.True(appointment.TryCancel(utcNow));
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(state), state, "Booked is the initial state.");
+        }
+    }
+
+    private static DateTime? TimestampFor(Appointment appointment, AppointmentStatus state) =>
+        state switch
+        {
+            AppointmentStatus.CheckedIn => appointment.CheckedInAtUtc,
+            AppointmentStatus.InVisit => appointment.InVisitAtUtc,
+            AppointmentStatus.Completed => appointment.CompletedAtUtc,
+            AppointmentStatus.Cancelled => appointment.CancelledAtUtc,
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(state),
+                state,
+                "Booked has no transition timestamp.")
+        };
 
     private static bool Transition(Appointment appointment, AppointmentStatus to, DateTime utcNow) =>
         to switch

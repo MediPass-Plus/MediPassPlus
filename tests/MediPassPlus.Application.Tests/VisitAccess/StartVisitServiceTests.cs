@@ -184,24 +184,26 @@ public class StartVisitServiceTests
     }
 
     [Fact]
-    public async Task StartAsync_WhenTheLastRequestWasApproved_CreatesANewPendingRequest()
+    public async Task StartAsync_WhenTheLastRequestWasApproved_ReturnsAccessAlreadyGrantedWithoutWriting()
     {
-        var appointment = CreateAppointment();
+        var appointment = CreateAppointment(status: AppointmentStatus.InVisit);
+        appointment.InVisitAtUtc = Now.UtcDateTime.AddMinutes(-5);
         var doctor = CreateDoctor(appointment.DoctorId);
-        var approved = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-5));
+        var approved = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-10));
         approved.Approve();
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [approved]) };
         var (service, auditWriter) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
-        Assert.True(result.IsSuccess);
-        var request = Assert.Single(store.AddedRequests);
-        Assert.Equal(AccessRequestStatus.Pending, request.Status);
-        Assert.NotEqual(approved.Id, request.Id);
-        Assert.Equal(request.Id, result.Response!.AccessRequestId);
-        var audit = Assert.Single(auditWriter.AddedEntries);
-        Assert.Equal(request.Id.ToString(), audit.EntityId);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StartVisitFailure.AccessAlreadyGranted, result.Failure);
+        Assert.Equal(AppointmentStatus.InVisit, appointment.Status);
+        Assert.Equal(Now.UtcDateTime.AddMinutes(-5), appointment.InVisitAtUtc);
+        Assert.Empty(store.AddedRequests);
+        Assert.Empty(store.AddedCredentials);
+        Assert.Empty(auditWriter.AddedEntries);
+        Assert.Equal(0, store.SaveCount);
     }
 
     [Fact]

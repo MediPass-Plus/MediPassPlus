@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.VisitAccess;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace MediPassPlus.Api.IntegrationTests;
@@ -92,5 +94,48 @@ public sealed class StartVisitApproveFlowTests
             .SingleAsync(c => c.AccessRequestId == start.AccessRequestId);
         Assert.NotNull(consumed.ConsumedAtUtc);
         Assert.Equal(QrTokenGenerator.Hash(start.QrToken), consumed.SecretHash);
+    }
+
+    /// <summary>
+    /// After the patient approves the request, the visit already has its grant. A second start-visit must refuse
+    /// instead of issuing a QR that could never be approved, because only one grant is allowed per appointment and an
+    /// ended grant is never reused (FR-ACS-11).
+    /// </summary>
+    [Fact]
+    public async Task StartVisit_AfterApproval_ReturnsConflictInsteadOfADeadQr()
+    {
+        var scenario = await _factory.CreateVisitScenarioAsync(includePendingRequest: false);
+        using var doctorClient = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
+        using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var startResponse = await doctorClient.PostAsync(
+            $"/api/appointments/{scenario.Appointment.Id}/start-visit",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, startResponse.StatusCode);
+
+        var start = await startResponse.Content.ReadFromJsonAsync<StartVisitResponse>();
+        Assert.NotNull(start);
+
+        using var approveResponse = await patientClient.PostAsync(
+            $"/api/access-requests/{start.AccessRequestId}/approve",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+
+        using var restartResponse = await doctorClient.PostAsync(
+            $"/api/appointments/{scenario.Appointment.Id}/start-visit",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, restartResponse.StatusCode);
+        var problem = await restartResponse.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(StatusCodes.Status409Conflict, problem.Status);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.Equal(
+            1,
+            await db.AccessRequests.CountAsync(request => request.AppointmentId == scenario.Appointment.Id));
+        Assert.Equal(
+            1,
+            await db.AccessGrants.CountAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
     }
 }

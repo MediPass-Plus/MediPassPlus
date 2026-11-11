@@ -53,7 +53,9 @@ startup); a rejection is `429` with `Retry-After` (ADR-0007). MP-34 adds the app
 `Booked -> Cancelled`) and records each state's UTC timestamp, refusing every skipped or backward transition.
 `POST api/appointments/{appointmentId}/check-in` lets staff in the appointment's clinic check in a booked appointment
 for today, `POST api/appointments/{appointmentId}/complete` lets the owning doctor complete an in-visit appointment,
-and `start-visit` now moves `CheckedIn -> InVisit` before it issues the QR (re-issuing while `InVisit` is allowed).
+and `start-visit` now moves `CheckedIn -> InVisit` before it issues the QR (re-issuing while `InVisit` is allowed
+until the patient approves; once a grant exists, a restart returns `409` instead of a QR that could never be
+approved).
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
 calendar while every stored timestamp stays UTC. Eleven migrations live in
@@ -182,7 +184,9 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - C#: 4 spaces, file-scoped namespaces, `System` usings first, nullable enabled (`.editorconfig`).
 - Frontend: 2 spaces, Prettier `singleQuote` + width 100, standalone components, zoneless. Specs settle rendering
   with `await fixture.whenStable()`, not `detectChanges()`.
-- Paging everywhere: default 20, maximum 50 (NFR-PRF-04). Validate the page size instead of trusting it.
+- Paging everywhere: default 20, maximum 50 (NFR-PRF-04). Validate the page size instead of trusting it. The
+  doctor's daily schedule (`GET api/doctors/me/schedule`) is the one documented exception: one clinic-local day for
+  one doctor is a bounded set, so it returns the whole day ordered by start.
 - Return `ProblemDetails` for errors; do not invent a second error envelope.
 - Names of requirement IDs are the shared vocabulary: quote `FR-ACS-02` / `NFR-PRI-02` in code comments, tests and PR
   descriptions when they justify a rule.
