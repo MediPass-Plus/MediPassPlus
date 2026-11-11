@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
+using MediPassPlus.Infrastructure.Persistence.Records;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,7 +17,9 @@ internal static class PersistenceExtensions
     {
         services.AddDbContext<MediPassDbContext>(options =>
             options.UseSqlServer(configuration.GetConnectionString("DefaultConnection"))
-                .AddInterceptors(new AuditLogImmutabilityInterceptor()));
+                .AddInterceptors(new AuditLogImmutabilityInterceptor())
+                // Medical record rows are append-only: no in-place update and no delete (FR-REC-09, ADR-0005).
+                .AddInterceptors(new RecordImmutabilityInterceptor()));
 
         return services;
     }

@@ -80,6 +80,25 @@ public class DemoDataSeederTests
     }
 
     [Fact]
+    public async Task Seeding_gives_the_demo_patient_exactly_one_medical_record()
+    {
+        await using var host = await SeederTestHost.CreateAsync();
+
+        await host.RunSeedersAsync();
+        await host.RunSeedersAsync();
+
+        await using var scope = host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<MediPassDbContext>();
+
+        var patient = await db.Users.SingleAsync(user =>
+            user.Email == DemoSeedData.Email(DemoSeedData.PatientEmailLocalPart));
+
+        // FR-REC-01: one record per patient, and a second seeder run adds nothing.
+        var record = await db.MedicalRecords.SingleAsync(row => row.PatientId == patient.Id);
+        Assert.NotEqual(Guid.Empty, record.Id);
+    }
+
+    [Fact]
     public async Task Seeded_values_are_synthetic_and_contain_no_secret()
     {
         await using var host = await SeederTestHost.CreateAsync();

@@ -2,8 +2,10 @@ using System.Security.Claims;
 using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Application.Email;
 using MediPassPlus.Domain.Identity;
+using MediPassPlus.Domain.Records;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Infrastructure.Persistence;
+using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -107,6 +109,8 @@ public class AuthController : ControllerBase
                     errors = roleResult.Errors.Select(e => e.Description)
                 });
             }
+
+            await AddMedicalRecordIfPatientAsync(user);
 
             // Both operations succeeded, commit the transaction
             await transaction.CommitAsync();
@@ -347,6 +351,8 @@ public class AuthController : ControllerBase
                 });
             }
 
+            await AddMedicalRecordIfPatientAsync(user);
+
             // Both operations succeeded, commit the transaction
             await transaction.CommitAsync();
 
@@ -366,7 +372,20 @@ public class AuthController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Creates the patient's permanent medical record in the same unit of work as registration (FR-REC-01,
+    /// ADR-0005). Only the Patient role owns a record: staff, doctors and admins never reach clinical data, and the
+    /// caller's transaction rolls the record back if registration fails.
+    /// </summary>
+    /// <param name="user">The account that was just created and given its role.</param>
+    private async Task AddMedicalRecordIfPatientAsync(ApplicationUser user)
+    {
+        if (!string.Equals(user.Role, DefaultRoles.Patient, StringComparison.Ordinal))
+        {
+            return;
+        }
 
-    
-
+        _context.MedicalRecords.Add(MedicalRecord.Create(user.Id, DateTime.UtcNow));
+        await _context.SaveChangesAsync();
+    }
 }
