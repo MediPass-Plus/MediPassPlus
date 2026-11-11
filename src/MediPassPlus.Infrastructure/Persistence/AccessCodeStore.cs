@@ -68,6 +68,61 @@ public sealed class AccessCodeStore : IAccessCodeStore
     }
 
     /// <inheritdoc />
+    public async Task<AccessCodeFailedAttemptOutcome> RegisterFailedAttemptAsync(
+        Guid credentialId,
+        DateTime utcNow,
+        CancellationToken cancellationToken = default)
+    {
+        // One conditional UPDATE keeps the attempt counter authoritative. Concurrent entries serialize on the row
+        // and each one re-reads the committed value, so no increment is lost and the fifth entry always sets the lock
+        // even when several wrong codes arrive at once (FR-ACS-05).
+        var updated = await _context.VisitAccessCredentials
+            .Where(credential => credential.Id == credentialId
+                && credential.Type == VisitCredentialType.NumericCode
+                && credential.ConsumedAtUtc == null
+                && credential.RevokedAtUtc == null
+                && credential.LockedAtUtc == null
+                && credential.FailedAttempts < VisitAccessCredential.MaxFailedAttempts
+                && credential.ExpiresAtUtc > utcNow)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(
+                        credential => credential.FailedAttempts,
+                        credential => credential.FailedAttempts + 1)
+                    .SetProperty(
+                        credential => credential.LockedAtUtc,
+                        credential => credential.FailedAttempts + 1 >= VisitAccessCredential.MaxFailedAttempts
+                            ? utcNow
+                            : credential.LockedAtUtc),
+                cancellationToken);
+
+        if (updated > 0)
+        {
+            return AccessCodeFailedAttemptOutcome.Recorded;
+        }
+
+        var state = await _context.VisitAccessCredentials
+            .AsNoTracking()
+            .Where(credential => credential.Id == credentialId)
+            .Select(credential => new
+            {
+                credential.FailedAttempts,
+                credential.LockedAtUtc
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (state is null)
+        {
+            return AccessCodeFailedAttemptOutcome.Unavailable;
+        }
+
+        return state.LockedAtUtc is not null
+            || state.FailedAttempts >= VisitAccessCredential.MaxFailedAttempts
+            ? AccessCodeFailedAttemptOutcome.AlreadyLocked
+            : AccessCodeFailedAttemptOutcome.Unavailable;
+    }
+
+    /// <inheritdoc />
     public void AddGrant(AccessGrant grant)
     {
         ArgumentNullException.ThrowIfNull(grant);

@@ -196,6 +196,136 @@ public class AccessCodeStoreTests
         Assert.DoesNotContain("PlaintextCode", columns);
     }
 
+    [Fact]
+    public async Task RegisterFailedAttemptAsync_CountsEveryEntryAndLocksOnTheFifth()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        var graph = await SeedGraphAsync(options, includeCode: true, includeQr: false);
+        var credentialId = await FindCodeCredentialIdAsync(options, graph);
+
+        await using (var db = new MediPassDbContext(options))
+        {
+            var store = new AccessCodeStore(db);
+
+            for (var attempt = 1; attempt <= VisitAccessCredential.MaxFailedAttempts; attempt++)
+            {
+                var outcome = await store.RegisterFailedAttemptAsync(
+                    credentialId,
+                    Start,
+                    CancellationToken.None);
+
+                Assert.Equal(AccessCodeFailedAttemptOutcome.Recorded, outcome);
+            }
+
+            Assert.Equal(
+                AccessCodeFailedAttemptOutcome.AlreadyLocked,
+                await store.RegisterFailedAttemptAsync(credentialId, Start, CancellationToken.None));
+        }
+
+        await using var assertionDb = new MediPassDbContext(options);
+        var credential = await assertionDb.VisitAccessCredentials.AsNoTracking()
+            .SingleAsync(candidate => candidate.Id == credentialId);
+
+        Assert.Equal(VisitAccessCredential.MaxFailedAttempts, credential.FailedAttempts);
+        Assert.Equal(Start, credential.LockedAtUtc);
+    }
+
+    [Fact]
+    public async Task RegisterFailedAttemptAsync_WhenTheCodeIsExpired_ReturnsUnavailableWithoutCounting()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        var graph = await SeedGraphAsync(options, includeCode: true, includeQr: false);
+        var credentialId = await FindCodeCredentialIdAsync(options, graph);
+
+        await using var db = new MediPassDbContext(options);
+        var store = new AccessCodeStore(db);
+
+        var outcome = await store.RegisterFailedAttemptAsync(
+            credentialId,
+            Start.AddMinutes(5),
+            CancellationToken.None);
+
+        Assert.Equal(AccessCodeFailedAttemptOutcome.Unavailable, outcome);
+
+        var credential = await db.VisitAccessCredentials.AsNoTracking()
+            .SingleAsync(candidate => candidate.Id == credentialId);
+        Assert.Equal(0, credential.FailedAttempts);
+        Assert.Null(credential.LockedAtUtc);
+    }
+
+    [Fact]
+    public async Task RegisterFailedAttemptAsync_WhenTheCodeWasConsumed_ReturnsUnavailableWithoutCounting()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        var graph = await SeedGraphAsync(options, includeCode: true, includeQr: false);
+        var credentialId = await FindCodeCredentialIdAsync(options, graph);
+
+        await using (var seedDb = new MediPassDbContext(options))
+        {
+            var credential = await seedDb.VisitAccessCredentials
+                .SingleAsync(candidate => candidate.Id == credentialId);
+            credential.Consume(Start);
+            await seedDb.SaveChangesAsync();
+        }
+
+        await using var db = new MediPassDbContext(options);
+        var store = new AccessCodeStore(db);
+
+        var outcome = await store.RegisterFailedAttemptAsync(
+            credentialId,
+            Start,
+            CancellationToken.None);
+
+        Assert.Equal(AccessCodeFailedAttemptOutcome.Unavailable, outcome);
+
+        var consumed = await db.VisitAccessCredentials.AsNoTracking()
+            .SingleAsync(candidate => candidate.Id == credentialId);
+        Assert.Equal(0, consumed.FailedAttempts);
+        Assert.Null(consumed.LockedAtUtc);
+    }
+
+    private static async Task<Graph> SeedGraphAsync(
+        DbContextOptions<MediPassDbContext> options,
+        bool includeCode,
+        bool includeQr)
+    {
+        await using var db = new MediPassDbContext(options);
+        await db.Database.EnsureCreatedAsync();
+
+        return await SeedGraphAsync(db, includeCode, includeQr);
+    }
+
+    private static async Task<Guid> FindCodeCredentialIdAsync(
+        DbContextOptions<MediPassDbContext> options,
+        Graph graph)
+    {
+        await using var db = new MediPassDbContext(options);
+
+        return await db.VisitAccessCredentials
+            .Where(candidate => candidate.AccessRequestId == graph.RequestId
+                && candidate.Type == VisitCredentialType.NumericCode)
+            .Select(candidate => candidate.Id)
+            .SingleAsync();
+    }
+
     private static async Task<Graph> SeedGraphAsync(
         MediPassDbContext db,
         bool includeCode,

@@ -70,6 +70,11 @@ answers a request directly, and the code path is the one additional way the pati
 The `AccessGrantCreated` audit row records the doctor as the acting user, the patient as the record owner, and the
 grant id as the affected entity.
 
+The attempt counter is authoritative in the database, not in the API instance: a wrong entry is one conditional
+`UPDATE` that increments `FailedAttempts` and sets `LockedAtUtc` on the fifth, guarded by the credential's usable
+state. Concurrent entries serialize on that row, so no increment is lost and the fifth entry always locks even when
+several wrong codes arrive at once. The rate limit remains defence-in-depth (ADR-0007).
+
 ## Consequences
 
 - No status column and no scheduled job: every checker computes the same answer from the same timestamps.

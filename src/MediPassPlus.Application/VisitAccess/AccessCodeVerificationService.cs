@@ -127,18 +127,21 @@ public sealed class AccessCodeVerificationService : IAccessCodeVerificationServi
 
         if (!_hasher.Verify(code, credential.SecretHash))
         {
-            credential.RegisterFailedAttempt(now);
+            // The store records the wrong entry with one conditional UPDATE. A concurrent entry that already locked
+            // or consumed the credential wins instead of being overwritten by a stale counter (FR-ACS-05).
+            var outcome = await _store.RegisterFailedAttemptAsync(
+                credential.Id,
+                now,
+                cancellationToken);
 
-            try
+            return outcome switch
             {
-                await _store.SaveChangesAsync(cancellationToken);
-            }
-            catch (AccessCodeConflictException)
-            {
-                return AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.RequestConflict);
-            }
-
-            return AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.InvalidCode);
+                AccessCodeFailedAttemptOutcome.Recorded =>
+                    AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.InvalidCode),
+                AccessCodeFailedAttemptOutcome.AlreadyLocked =>
+                    AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.CodeLocked),
+                _ => AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.CodeUnavailable)
+            };
         }
 
         if (context.Appointment.Status == AppointmentStatus.CheckedIn

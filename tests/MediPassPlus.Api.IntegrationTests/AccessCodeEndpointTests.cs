@@ -395,6 +395,52 @@ public sealed class AccessCodeEndpointTests
                 .SingleAsync(request => request.Id == RequireRequest(scenario).Id)).Status);
     }
 
+    /// <summary>
+    /// Five wrong entries sent at the same time still land on exactly five counted attempts and lock the code; a lost
+    /// update would leave the counter below the limit (FR-ACS-05).
+    /// </summary>
+    [Fact]
+    public async Task VerifyCode_WithFiveConcurrentWrongEntries_StillLocksTheCode()
+    {
+        var scenario = await _factory.CreateVisitScenarioAsync(accessCode: KnownCode);
+        using var client = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
+
+        var responses = await Task.WhenAll(
+            Enumerable.Range(0, VisitAccessCredential.MaxFailedAttempts)
+                .Select(_ => PostVerifyAsync(client, scenario.Appointment.Id, WrongCode)));
+
+        try
+        {
+            Assert.All(
+                responses,
+                response => Assert.True(
+                    response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.Conflict,
+                    $"Unexpected status code {response.StatusCode}."));
+        }
+        finally
+        {
+            foreach (var response in responses)
+            {
+                response.Dispose();
+            }
+        }
+
+        await using var db = _factory.CreateDbContext();
+        var credential = await db.VisitAccessCredentials.AsNoTracking()
+            .SingleAsync(candidate => candidate.Type == VisitCredentialType.NumericCode
+                && candidate.AccessRequestId == RequireRequest(scenario).Id);
+
+        Assert.Equal(VisitAccessCredential.MaxFailedAttempts, credential.FailedAttempts);
+        Assert.NotNull(credential.LockedAtUtc);
+        Assert.Null(credential.ConsumedAtUtc);
+        Assert.False(await db.AccessGrants.AsNoTracking()
+            .AnyAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
+        Assert.Equal(
+            AccessRequestStatus.Pending,
+            (await db.AccessRequests.AsNoTracking()
+                .SingleAsync(request => request.Id == RequireRequest(scenario).Id)).Status);
+    }
+
     /// <summary>A locked code refuses even the correct value and creates no grant.</summary>
     [Fact]
     public async Task VerifyCode_WhenTheCodeIsLocked_ReturnsConflictWithoutCreatingGrant()

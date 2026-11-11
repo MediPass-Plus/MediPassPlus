@@ -98,7 +98,46 @@ public class AccessCodeVerificationServiceTests
         Assert.Equal(AccessRequestStatus.Pending, request.Status);
         Assert.Empty(store.AddedGrants);
         Assert.Empty(auditWriter.AddedEntries);
-        Assert.Equal(1, store.SaveCount);
+        Assert.Equal(1, store.FailedAttemptCount);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task VerifyAsync_WhenAConcurrentEntryLockedTheCode_ReturnsCodeLocked()
+    {
+        var appointment = CreateAppointment();
+        var doctor = CreateDoctor(appointment.DoctorId);
+        var request = CreatePendingRequest(appointment, doctor);
+        var credential = CreateCodeCredential(request, Code, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateStore(appointment, [request], [credential]);
+        store.ForcedFailedAttemptOutcome = AccessCodeFailedAttemptOutcome.AlreadyLocked;
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.VerifyAsync(appointment.Id, doctor.UserId, "999999", IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessCodeVerificationFailure.CodeLocked, result.Failure);
+        Assert.Equal(1, store.FailedAttemptCount);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task VerifyAsync_WhenAConcurrentEntryConsumedTheCode_ReturnsCodeUnavailable()
+    {
+        var appointment = CreateAppointment();
+        var doctor = CreateDoctor(appointment.DoctorId);
+        var request = CreatePendingRequest(appointment, doctor);
+        var credential = CreateCodeCredential(request, Code, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateStore(appointment, [request], [credential]);
+        store.ForcedFailedAttemptOutcome = AccessCodeFailedAttemptOutcome.Unavailable;
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.VerifyAsync(appointment.Id, doctor.UserId, "999999", IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessCodeVerificationFailure.CodeUnavailable, result.Failure);
+        Assert.Equal(1, store.FailedAttemptCount);
+        Assert.Equal(0, store.SaveCount);
     }
 
     [Fact]
