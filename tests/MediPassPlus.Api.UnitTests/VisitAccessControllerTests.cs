@@ -7,6 +7,7 @@ using MediPassPlus.Application.VisitAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace MediPassPlus.Api.UnitTests;
 
@@ -172,10 +173,212 @@ public class VisitAccessControllerTests
         Assert.Contains(StatusCodes.Status409Conflict, codes);
     }
 
+    [Fact]
+    public async Task GenerateAccessCode_WithoutAUserIdentifier_Returns401()
+    {
+        var controller = CreateController(new FakeStartVisitService(), authenticated: false);
+
+        var result = await controller.GenerateAccessCode(42, CancellationToken.None);
+
+        var problem = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status401Unauthorized, problem.StatusCode);
+    }
+
+    [Fact]
+    public async Task GenerateAccessCode_WhenSuccessful_ReturnsTheCodeWithoutCaching()
+    {
+        var response = new AccessCodeResponse(42, AccessRequestId, "042915", ExpiresAtUtc);
+        var service = new FakeAccessCodeGenerationService
+        {
+            Result = AccessCodeGenerationResult.Success(response)
+        };
+        var controller = CreateController(new FakeStartVisitService(), generationService: service);
+
+        var result = await controller.GenerateAccessCode(42, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Same(response, ok.Value);
+        Assert.Equal("no-store", controller.Response.Headers["Cache-Control"].ToString());
+        Assert.True(service.WasCalled);
+    }
+
+    [Fact]
+    public async Task GenerateAccessCode_WhenThePatientDoesNotOwnTheAppointment_Returns403()
+    {
+        var service = new FakeAccessCodeGenerationService
+        {
+            Result = AccessCodeGenerationResult.Denied(AccessCodeGenerationFailure.PatientMismatch)
+        };
+        var controller = CreateController(new FakeStartVisitService(), generationService: service);
+
+        var result = await controller.GenerateAccessCode(42, CancellationToken.None);
+
+        var problem = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status403Forbidden, problem.StatusCode);
+    }
+
+    [Fact]
+    public async Task GenerateAccessCode_WhenTheVisitHasNoPendingRequest_Returns409()
+    {
+        var service = new FakeAccessCodeGenerationService
+        {
+            Result = AccessCodeGenerationResult.Denied(AccessCodeGenerationFailure.RequestNotPending)
+        };
+        var controller = CreateController(new FakeStartVisitService(), generationService: service);
+
+        var result = await controller.GenerateAccessCode(42, CancellationToken.None);
+
+        var problem = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status409Conflict, problem.StatusCode);
+    }
+
+    [Fact]
+    public void GenerateAccessCode_RequiresThePatientRoleAndTheGenerationLimit()
+    {
+        var method = typeof(VisitAccessController).GetMethod(nameof(VisitAccessController.GenerateAccessCode))!;
+        var authorize = method.GetCustomAttribute<AuthorizeAttribute>();
+        var rateLimit = method.GetCustomAttribute<EnableRateLimitingAttribute>();
+
+        Assert.NotNull(authorize);
+        Assert.Equal("Patient", authorize.Roles);
+        Assert.NotNull(rateLimit);
+        Assert.Equal("CodeGeneration", rateLimit.PolicyName);
+    }
+
+    [Fact]
+    public void GenerateAccessCode_DeclaresEveryExpectedResponseCode()
+    {
+        var method = typeof(VisitAccessController).GetMethod(nameof(VisitAccessController.GenerateAccessCode))!;
+        var codes = method.GetCustomAttributes<ProducesResponseTypeAttribute>()
+            .Select(attribute => attribute.StatusCode)
+            .ToHashSet();
+
+        Assert.Contains(StatusCodes.Status200OK, codes);
+        Assert.Contains(StatusCodes.Status400BadRequest, codes);
+        Assert.Contains(StatusCodes.Status401Unauthorized, codes);
+        Assert.Contains(StatusCodes.Status403Forbidden, codes);
+        Assert.Contains(StatusCodes.Status404NotFound, codes);
+        Assert.Contains(StatusCodes.Status409Conflict, codes);
+        Assert.Contains(StatusCodes.Status429TooManyRequests, codes);
+    }
+
+    [Fact]
+    public async Task VerifyAccessCode_WithoutAUserIdentifier_Returns401()
+    {
+        var controller = CreateController(new FakeStartVisitService(), authenticated: false);
+
+        var result = await controller.VerifyAccessCode(
+            42,
+            new VerifyAccessCodeRequest("042915"),
+            CancellationToken.None);
+
+        var problem = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status401Unauthorized, problem.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifyAccessCode_WhenSuccessful_ReturnsTheGrantAndPassesTheCodeAndIp()
+    {
+        var grant = new AccessGrantResponse(
+            Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            AccessRequestId,
+            42,
+            7,
+            ExpiresAtUtc.AddMinutes(-120),
+            ExpiresAtUtc);
+        var service = new FakeAccessCodeVerificationService
+        {
+            Result = AccessCodeVerificationResult.Granted(grant)
+        };
+        var controller = CreateController(
+            new FakeStartVisitService(),
+            remoteIp: TestIpAddress,
+            verificationService: service);
+
+        var result = await controller.VerifyAccessCode(
+            42,
+            new VerifyAccessCodeRequest("042915"),
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Same(grant, ok.Value);
+        Assert.Equal("no-store", controller.Response.Headers["Cache-Control"].ToString());
+        Assert.Equal("042915", service.LastCode);
+        Assert.Equal("203.0.113.10", service.LastIpAddress);
+    }
+
+    [Fact]
+    public async Task VerifyAccessCode_WhenTheCodeIsInvalid_Returns400()
+    {
+        var service = new FakeAccessCodeVerificationService
+        {
+            Result = AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.InvalidCode)
+        };
+        var controller = CreateController(new FakeStartVisitService(), verificationService: service);
+
+        var result = await controller.VerifyAccessCode(
+            42,
+            new VerifyAccessCodeRequest("999999"),
+            CancellationToken.None);
+
+        var problem = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, problem.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifyAccessCode_WhenTheCodeIsLocked_Returns409()
+    {
+        var service = new FakeAccessCodeVerificationService
+        {
+            Result = AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.CodeLocked)
+        };
+        var controller = CreateController(new FakeStartVisitService(), verificationService: service);
+
+        var result = await controller.VerifyAccessCode(
+            42,
+            new VerifyAccessCodeRequest("042915"),
+            CancellationToken.None);
+
+        var problem = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status409Conflict, problem.StatusCode);
+    }
+
+    [Fact]
+    public void VerifyAccessCode_RequiresTheDoctorRoleAndTheVerificationLimit()
+    {
+        var method = typeof(VisitAccessController).GetMethod(nameof(VisitAccessController.VerifyAccessCode))!;
+        var authorize = method.GetCustomAttribute<AuthorizeAttribute>();
+        var rateLimit = method.GetCustomAttribute<EnableRateLimitingAttribute>();
+
+        Assert.NotNull(authorize);
+        Assert.Equal("Doctor", authorize.Roles);
+        Assert.NotNull(rateLimit);
+        Assert.Equal("CodeVerification", rateLimit.PolicyName);
+    }
+
+    [Fact]
+    public void VerifyAccessCode_DeclaresEveryExpectedResponseCode()
+    {
+        var method = typeof(VisitAccessController).GetMethod(nameof(VisitAccessController.VerifyAccessCode))!;
+        var codes = method.GetCustomAttributes<ProducesResponseTypeAttribute>()
+            .Select(attribute => attribute.StatusCode)
+            .ToHashSet();
+
+        Assert.Contains(StatusCodes.Status200OK, codes);
+        Assert.Contains(StatusCodes.Status400BadRequest, codes);
+        Assert.Contains(StatusCodes.Status401Unauthorized, codes);
+        Assert.Contains(StatusCodes.Status403Forbidden, codes);
+        Assert.Contains(StatusCodes.Status404NotFound, codes);
+        Assert.Contains(StatusCodes.Status409Conflict, codes);
+        Assert.Contains(StatusCodes.Status429TooManyRequests, codes);
+    }
+
     private static VisitAccessController CreateController(
         FakeStartVisitService service,
         bool authenticated = true,
-        IPAddress? remoteIp = null)
+        IPAddress? remoteIp = null,
+        FakeAccessCodeGenerationService? generationService = null,
+        FakeAccessCodeVerificationService? verificationService = null)
     {
         var context = new DefaultHttpContext();
         context.Connection.RemoteIpAddress = remoteIp;
@@ -186,7 +389,10 @@ public class VisitAccessControllerTests
                 "Test"));
         }
 
-        return new VisitAccessController(service)
+        return new VisitAccessController(
+            service,
+            generationService ?? new FakeAccessCodeGenerationService(),
+            verificationService ?? new FakeAccessCodeVerificationService())
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
@@ -208,6 +414,45 @@ public class VisitAccessControllerTests
             CancellationToken cancellationToken = default)
         {
             WasCalled = true;
+            LastIpAddress = ipAddress;
+            return Task.FromResult(Result);
+        }
+    }
+
+    private sealed class FakeAccessCodeGenerationService : IAccessCodeGenerationService
+    {
+        public AccessCodeGenerationResult Result { get; set; } =
+            AccessCodeGenerationResult.Denied(AccessCodeGenerationFailure.AppointmentNotFound);
+
+        public bool WasCalled { get; private set; }
+
+        public Task<AccessCodeGenerationResult> GenerateAsync(
+            int appointmentId,
+            Guid patientUserId,
+            CancellationToken cancellationToken = default)
+        {
+            WasCalled = true;
+            return Task.FromResult(Result);
+        }
+    }
+
+    private sealed class FakeAccessCodeVerificationService : IAccessCodeVerificationService
+    {
+        public AccessCodeVerificationResult Result { get; set; } =
+            AccessCodeVerificationResult.Denied(AccessCodeVerificationFailure.AppointmentNotFound);
+
+        public string? LastCode { get; private set; }
+
+        public string? LastIpAddress { get; private set; }
+
+        public Task<AccessCodeVerificationResult> VerifyAsync(
+            int appointmentId,
+            Guid doctorUserId,
+            string code,
+            string ipAddress,
+            CancellationToken cancellationToken = default)
+        {
+            LastCode = code;
             LastIpAddress = ipAddress;
             return Task.FromResult(Result);
         }

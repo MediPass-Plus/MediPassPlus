@@ -81,7 +81,11 @@ public sealed class AccessRequest
         return new AccessRequest(Guid.CreateVersion7(), appointment.Id, doctor.Id, appointment.PatientId, utcNow);
     }
 
-    /// <summary>Records the patient's approval. Only a pending request can be approved.</summary>
+    /// <summary>
+    /// Records the patient's approval. Only a pending request can be approved. A successful numeric-code verification
+    /// by the owning doctor records the same approval, because the code is the patient's approval expressed out of
+    /// band (ADR-0011 amendment 2026-11-12).
+    /// </summary>
     public void Approve()
     {
         EnsurePending();

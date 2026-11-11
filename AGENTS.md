@@ -55,7 +55,15 @@ startup); a rejection is `429` with `Retry-After` (ADR-0007). MP-34 adds the app
 for today, `POST api/appointments/{appointmentId}/complete` lets the owning doctor complete an in-visit appointment,
 and `start-visit` now moves `CheckedIn -> InVisit` before it issues the QR (re-issuing while `InVisit` is allowed
 until the patient approves; once a grant exists, a restart returns `409` instead of a QR that could never be
-approved).
+approved). MP-36 adds the six-digit fallback (FR-ACS-05, ADR-0002): `POST
+api/appointments/{appointmentId}/access-code` lets the authenticated patient generate a code for today's
+checked-in or in-visit appointment with a pending request, and `POST
+api/appointments/{appointmentId}/verify-code` lets the owning doctor verify it. The code lives five minutes, is
+stored only as HMAC-SHA-256 under the separate `AccessCode:HmacKey` secret, is consumed on success, and locks after
+five wrong entries. A successful verification records the patient's approval, creates the two-hour grant, moves the
+appointment to `InVisit`, revokes the QR, and writes `AccessGrantCreated` in one unit of work (ADR-0011 amendment
+2026-11-12). Generation is limited to 3 per 15 minutes per patient and verification to 5 per 15 minutes per doctor
+and appointment; both answer `429` with `Retry-After` beyond the budget. No migration was needed.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
 calendar while every stored timestamp stays UTC. Eleven migrations live in
@@ -65,9 +73,10 @@ The audit store (`AuditLog`, `IAuditWriter` and an append-only EF interceptor) n
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
 server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
-(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, and the MP-34 check-in/complete
+(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-34 check-in/complete
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
-boundary). There is still no record-read endpoint, no endpoint that verifies a presented QR or 6-digit credential,
+boundary), and the MP-36 code generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate
+limits, and the HMAC-only storage proof). There is still no record-read endpoint, no QR-verification endpoint,
 no medical-record module and no audit endpoint, and the
 frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
@@ -127,7 +136,8 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - QR token: 128-bit CSPRNG value, 2-minute life, single use, stored only as a **SHA-256** hash (ADR-0001).
 - 6-digit code: 5-minute life, single use, entered by the doctor only (ADR-0002), stored only as **HMAC-SHA-256 with a
   protected server-side key** — a plain SHA-256 over a 6-digit keyspace is precomputable. Compare in fixed time
-  (ADR-0001).
+  (ADR-0001). The key is `AccessCode:HmacKey` (Base64 of at least 32 random bytes), validated at startup and separate
+  from the JWT signing key and the Data Protection ring.
 - Attempts: 5 wrong code entries lock that credential (FR-ACS-05). ADR-0007, decision 1 keeps the per-credential
   lockout authoritative and treats rate limiting as defence-in-depth (5 verifications / 15 min per doctor+appointment,
   3 generations / 15 min per patient; the numbers are tunable). The **lockout duration itself is not settled**: ADR-0003
@@ -157,6 +167,8 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
   `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
+  `POST api/appointments/{appointmentId}/access-code` (Patient),
+  `POST api/appointments/{appointmentId}/verify-code` (Doctor),
   `POST api/appointments/{appointmentId}/check-in` (Staff), `POST api/appointments/{appointmentId}/complete`
   (Doctor), `GET api/doctors/me/schedule?date=` (Doctor),
   `POST api/access-requests/{requestId}/approve` / `/reject` (Patient), and the booking actions
@@ -164,9 +176,10 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   the scope check and issues a one-time QR credential; check-in and completion enforce the appointment state machine
   and the staff-clinic or doctor-ownership scope; the doctor schedule reads one Cairo-local day; the patient
   endpoints answer a request by ID, consume or revoke its credentials, and return `429` with `Retry-After` after the
-  per-patient `QrApprove` limit. The booking actions stay inside the authenticated patient's scope and return
-  `400`/`404`/`409` `ProblemDetails` for every refused rule. No endpoint yet verifies a presented QR or 6-digit
-  credential, and there is still no medical-record endpoint.
+  per-patient `QrApprove` limit. The access-code endpoints are patient generation and owning-doctor verification,
+  with their own `CodeGeneration`/`CodeVerification` limits and the FR-ACS-05 lockout. The booking actions stay inside
+  the authenticated patient's scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. No endpoint
+  yet verifies a presented QR, and there is still no medical-record endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for
