@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using MediPassPlus.Application.Dtos.Auth;
+using MediPassPlus.Application.Email;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Infrastructure.Persistence;
@@ -19,14 +20,18 @@ public class AuthController : ControllerBase
     private readonly UserManager<ApplicationUser> _userManager;
      private readonly JwtTokenService _jwt;
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
-    private readonly IWebHostEnvironment _env;
-    public AuthController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole<Guid>> roleManager, JwtTokenService jwt, IWebHostEnvironment env, MediPassDbContext context)
+     private readonly IEmailSender _emailSender;
+    private readonly IConfiguration _configuration;
+
+    public AuthController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole<Guid>> roleManager, JwtTokenService jwt, MediPassDbContext context, IEmailSender emailSender, IConfiguration configuration)
     {
         _userManager = userManager;
         _roleManager = roleManager;
         _jwt = jwt;
-        _env = env;
+     
         _context = context;
+        _emailSender = emailSender;
+        _configuration = configuration;
     }
 
     [HttpPost("register")]
@@ -136,32 +141,72 @@ public class AuthController : ControllerBase
         return Ok(new { accessToken = token, roles });
     }
     [HttpPost("forgot-password")]
+    [ProducesResponseType(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ForgotPassword(ForgotPasswordDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-        // In a real application, you would send the reset token via email to the user. 
-        if (user is not null && _env.IsDevelopment())
+
+        // A deactivated account must not be able to take itself back over.
+        if (user is not null && user.IsActive)
         {
             var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-            return Ok(new { resetToken = token });  
+
+            var link = PasswordResetMessage.BuildLink(
+                _configuration["App:FrontendBaseUrl"] ?? "http://localhost:4200",
+                user.Email!,
+                token);
+
+            await _emailSender.SendAsync(
+                user.Email!,
+                "Reset your MediPass+ password",
+                PasswordResetMessage.BuildBody(link, token));
         }
 
-        return Ok(new { message = "If the email exists, a reset link has been sent." });
+        // Same answer whether the account exists, is inactive, or does not exist at all.
+        return Accepted(new { message = "If the email exists, a reset link has been sent." });
     }
     [HttpPost("reset-password")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> ResetPassword(ResetPasswordDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-        if (user is null)
-            return BadRequest(new { message = "Invalid request" });
-        // In a real application, you would validate the token and reset the password.
-        var result = await _userManager.ResetPasswordAsync(user, request.Token, request.NewPassword);
-        if (!ModelState.IsValid)
-            return BadRequest("Invalid registration data.");
-        if (!result.Succeeded)
-            return BadRequest(result.Errors.Select(e => e.Description));
 
-        return Ok(new { message = "Password has been reset successfully" });
+        // An unknown account and a bad token produce the same answer, so the endpoint does not
+        // confirm which addresses are registered.
+        if (user is null)
+        {
+            return InvalidResetToken();
+        }
+
+        var result = await _userManager.ResetPasswordAsync(user, request.Token, request.NewPassword);
+
+        if (!result.Succeeded)
+        {
+            return InvalidResetToken(result.Errors.Select(error => error.Description).ToArray());
+        }
+
+        return Ok(new { message = "Password has been reset successfully." });
+    }
+
+    private ObjectResult InvalidResetToken(string[]? details = null)
+    {
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Title = "The reset link is invalid or has expired.",
+            Detail = "Request a new password reset email and try again."
+        };
+
+        if (details is { Length: > 0 })
+        {
+            problem.Extensions["errors"] = details;
+        }
+
+        problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+        return BadRequest(problem);
     }
 
     // Endpoint to create an admin user, accessible only by existing admins

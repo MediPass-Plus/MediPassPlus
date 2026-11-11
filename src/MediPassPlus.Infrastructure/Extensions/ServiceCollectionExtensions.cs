@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Text;
 using MediPassPlus.Application.Audit;
 using MediPassPlus.Application.Booking;
+using MediPassPlus.Application.Email;
 using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
+using MediPassPlus.Infrastructure.Email;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
 using Microsoft.Extensions.Configuration;
@@ -56,11 +58,23 @@ public static class ServiceCollectionExtensions
 
         // Add other infrastructure services here as needed
 
-
         // Admin management: clinics (MP-29).
         services.AddScoped<IClinicAdminService, ClinicAdminService>();
         services.AddScoped<IAccountAdminService, AccountAdminService>();
         services.AddScoped<IAccountStatusService, AccountStatusService>();
+
+        // Password-reset email: real SMTP when Smtp:Host is configured, otherwise a no-op sender so the API still
+        // starts on a machine without mail settings.
+        if (!string.IsNullOrWhiteSpace(configuration["Smtp:Host"]))
+        {
+            services.Configure<SmtpSettings>(configuration.GetSection(SmtpSettings.SectionName));
+            services.AddScoped<IEmailSender, SmtpEmailSender>();
+        }
+        else
+        {
+            services.AddScoped<IEmailSender, NoOpEmailSender>();
+        }
+
 
 
         return services;
