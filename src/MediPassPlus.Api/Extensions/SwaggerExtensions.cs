@@ -11,6 +11,10 @@ public static class SwaggerExtensions
 
         services.AddSwaggerGen(options =>
         {
+            // ClinicDto exists in two namespaces. The default schema id is the type name only, so the
+            // document fails with a duplicate-schemaId 500. Namespace-qualify every id instead.
+            options.CustomSchemaIds(CreateSchemaId);
+
             // Configure JWT Bearer Authentication
             options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
             {
@@ -31,5 +35,21 @@ public static class SwaggerExtensions
         });
 
         return services;
+    }
+
+    
+    // Builds a unique schema id from the type name and its namespace. Generic types keep their
+    /// argument names (<c>Clinical_ClinicDtoPagedResult</c>) so two closed generics cannot collide.
+   
+    private static string CreateSchemaId(Type type)
+    {
+        var typeName = type.Name.Split('`')[0];
+
+        if (!type.IsConstructedGenericType)
+        {
+            return $"{type.Namespace?.Split('.').LastOrDefault()}_{typeName}";
+        }
+
+        return $"{string.Concat(type.GetGenericArguments().Select(CreateSchemaId))}{typeName}";
     }
 }
