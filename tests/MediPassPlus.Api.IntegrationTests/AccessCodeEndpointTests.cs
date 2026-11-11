@@ -288,8 +288,8 @@ public sealed class AccessCodeEndpointTests
     [Fact]
     public async Task VerifyCode_ForUnknownAppointment_ReturnsNotFound()
     {
-        var doctor = await _factory.CreateUserAsync(DefaultRoles.Doctor);
-        using var client = _factory.CreateAuthenticatedClient(doctor);
+        var scenario = await _factory.CreateVisitScenarioAsync(accessCode: KnownCode);
+        using var client = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
 
         using var response = await PostVerifyAsync(client, 999_999, KnownCode);
 
