@@ -1,3 +1,4 @@
+using MediPassPlus.Application.Common;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Clinical;
@@ -37,6 +38,7 @@ public class StartVisitAuditTests
             new VisitAccessScopeService(new VisitAccessScopeStore(db)),
             new StartVisitStore(db),
             new AuditWriter(db, timeProvider),
+            new CairoClinicTimeZone(),
             timeProvider);
 
         var result = await service.StartAsync(42, doctorUserId, "203.0.113.10");

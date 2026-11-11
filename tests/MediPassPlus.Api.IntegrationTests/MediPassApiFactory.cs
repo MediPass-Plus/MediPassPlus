@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using MediPassPlus.Application.Common;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
+using MediPassPlus.Domain.StaffAdmin;
 using MediPassPlus.Domain.VisitAccess;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Infrastructure.Persistence;
@@ -30,6 +32,8 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     private const string JwtAudience = "MediPassPlus.Client";
     private const string TestPassword = "Integration1!";
     private const string LocalSqlServerVariable = "MEDIPASS_TEST_SQLSERVER";
+
+    private static readonly IClinicTimeZone ClinicTimeZone = new CairoClinicTimeZone();
 
     // Generated at runtime: the test signing key is never committed (NFR-SEC-08).
     private static readonly string JwtSecretKey =
@@ -140,13 +144,15 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         return token;
     }
 
-    /// <summary>
-    /// Creates a unique account in the requested role and mints a bearer token for it, so each test can use its own
-    /// patient, doctor or other actor without sharing rate-limit partitions.
-    /// </summary>
+    /// <summary>The clinic-local date in Africa/Cairo, used to seed and query "today" scenarios.</summary>
+    public DateOnly ClinicToday => ClinicTimeZone.GetLocalDate(DateTime.UtcNow);
+
+    /// <summary>Creates a unique account in the requested role and mints a bearer token for it, so each test can use its own
+    /// patient, doctor or other actor without sharing rate-limit partitions.</summary>
     /// <param name="role">The application role to assign.</param>
+    /// <param name="fullName">An optional display name; defaults to the role-based test name.</param>
     /// <returns>The new account and its signed token.</returns>
-    public async Task<TestUser> CreateUserAsync(string role)
+    public async Task<TestUser> CreateUserAsync(string role, string? fullName = null)
     {
         using var scope = Services.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
@@ -157,7 +163,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         {
             UserName = email,
             Email = email,
-            FullName = $"{role} Integration Test",
+            FullName = fullName ?? $"{role} Integration Test",
             Role = role,
             IsActive = true,
             EmailConfirmed = true
@@ -239,7 +245,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         db.Doctors.Add(doctor);
         await db.SaveChangesAsync();
 
-        var slotStart = DateTime.UtcNow.Date.AddHours(9);
+        var slotStart = ClinicDateAtNineUtc(ClinicTimeZone.GetLocalDate(DateTime.UtcNow));
         var slot = new DoctorSlot
         {
             DoctorId = doctor.Id,
@@ -366,6 +372,165 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             otherDoctorSlot);
     }
 
+    /// <summary>
+    /// Seeds a clinic with a doctor and a staff member, a second clinic with its own staff member, a patient, and one
+    /// appointment on a slot in the doctor's clinic. The slot defaults to 09:00 Cairo time today so the "today"
+    /// check is deterministic around a UTC midnight boundary.
+    /// </summary>
+    /// <param name="appointmentStatus">The initial appointment status.</param>
+    /// <param name="slotStartUtc">An optional explicit slot start, in UTC.</param>
+    /// <returns>The seeded status-flow graph.</returns>
+    public async Task<AppointmentStatusScenario> CreateAppointmentStatusScenarioAsync(
+        AppointmentStatus appointmentStatus = AppointmentStatus.Booked,
+        DateTime? slotStartUtc = null)
+    {
+        var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
+        var patientUser = await CreateUserAsync(DefaultRoles.Patient);
+        var staffUser = await CreateUserAsync(DefaultRoles.Staff);
+        var otherClinicStaffUser = await CreateUserAsync(DefaultRoles.Staff);
+        var otherClinicDoctorUser = await CreateUserAsync(DefaultRoles.Doctor);
+
+        await using var db = CreateDbContext();
+
+        var clinic = new Clinic
+        {
+            Name = $"Status Clinic {Guid.NewGuid():N}",
+            Address = "1 Integration Way"
+        };
+        var otherClinic = new Clinic
+        {
+            Name = $"Other Status Clinic {Guid.NewGuid():N}",
+            Address = "2 Integration Way"
+        };
+        db.Clinics.AddRange(clinic, otherClinic);
+        await db.SaveChangesAsync();
+
+        var doctor = new Doctor
+        {
+            UserId = doctorUser.Id,
+            Specialty = "General Medicine",
+            ClinicId = clinic.Id
+        };
+        var otherClinicDoctor = new Doctor
+        {
+            UserId = otherClinicDoctorUser.Id,
+            Specialty = "Dermatology",
+            ClinicId = otherClinic.Id
+        };
+        db.Doctors.AddRange(doctor, otherClinicDoctor);
+        db.ClinicStaff.AddRange(
+            new ClinicStaff { UserId = staffUser.Id, ClinicId = clinic.Id },
+            new ClinicStaff { UserId = otherClinicStaffUser.Id, ClinicId = otherClinic.Id });
+        await db.SaveChangesAsync();
+
+        var start = slotStartUtc ?? ClinicDateAtNineUtc(ClinicToday);
+        var slot = NewSlot(doctor.Id, start, isAvailable: false);
+        db.DoctorSlots.Add(slot);
+        await db.SaveChangesAsync();
+
+        var appointment = new Appointment
+        {
+            PatientId = patientUser.Id,
+            DoctorId = doctor.Id,
+            DoctorSlotId = slot.Id,
+            Status = appointmentStatus,
+            CreatedAtUtc = DateTime.UtcNow.AddDays(-1)
+        };
+        db.Appointments.Add(appointment);
+        await db.SaveChangesAsync();
+
+        return new AppointmentStatusScenario(
+            staffUser,
+            otherClinicStaffUser,
+            doctorUser,
+            otherClinicDoctorUser,
+            patientUser,
+            clinic,
+            otherClinic,
+            doctor,
+            otherClinicDoctor,
+            slot,
+            appointment);
+    }
+
+    /// <summary>
+    /// Seeds one clinic with two doctors and a set of appointments that exercises the doctor schedule scope: two of
+    /// the caller's appointments today, a cancelled one, another doctor's appointment and one tomorrow.
+    /// </summary>
+    /// <returns>The seeded schedule graph.</returns>
+    public async Task<DoctorScheduleScenario> CreateDoctorScheduleScenarioAsync()
+    {
+        var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
+        var otherDoctorUser = await CreateUserAsync(DefaultRoles.Doctor);
+        var firstPatient = await CreateUserAsync(DefaultRoles.Patient, "Schedule Patient A");
+        var secondPatient = await CreateUserAsync(DefaultRoles.Patient, "Schedule Patient B");
+        var cancelledPatient = await CreateUserAsync(DefaultRoles.Patient, "Schedule Patient C");
+        var otherDoctorPatient = await CreateUserAsync(DefaultRoles.Patient, "Schedule Patient D");
+        var tomorrowPatient = await CreateUserAsync(DefaultRoles.Patient, "Schedule Patient E");
+
+        await using var db = CreateDbContext();
+
+        var clinic = new Clinic
+        {
+            Name = $"Schedule Clinic {Guid.NewGuid():N}",
+            Address = "3 Integration Way"
+        };
+        db.Clinics.Add(clinic);
+        await db.SaveChangesAsync();
+
+        var doctor = new Doctor
+        {
+            UserId = doctorUser.Id,
+            Specialty = "General Medicine",
+            ClinicId = clinic.Id
+        };
+        var otherDoctor = new Doctor
+        {
+            UserId = otherDoctorUser.Id,
+            Specialty = "Dermatology",
+            ClinicId = clinic.Id
+        };
+        db.Doctors.AddRange(doctor, otherDoctor);
+        await db.SaveChangesAsync();
+
+        var today = ClinicToday;
+        var todayStart = ClinicDateAtNineUtc(today);
+        var tomorrowStart = ClinicDateAtNineUtc(today.AddDays(1));
+
+        var bookedSlot = NewSlot(doctor.Id, todayStart, isAvailable: false);
+        var checkedInSlot = NewSlot(doctor.Id, todayStart.AddMinutes(30), isAvailable: false);
+        var cancelledSlot = NewSlot(doctor.Id, todayStart.AddHours(1), isAvailable: true);
+        var otherDoctorSlot = NewSlot(otherDoctor.Id, todayStart.AddHours(2), isAvailable: false);
+        var tomorrowSlot = NewSlot(doctor.Id, tomorrowStart, isAvailable: false);
+        db.DoctorSlots.AddRange(bookedSlot, checkedInSlot, cancelledSlot, otherDoctorSlot, tomorrowSlot);
+        await db.SaveChangesAsync();
+
+        var bookedAppointment = NewAppointment(firstPatient.Id, doctor.Id, bookedSlot.Id, AppointmentStatus.Booked);
+        var checkedInAppointment = NewAppointment(secondPatient.Id, doctor.Id, checkedInSlot.Id, AppointmentStatus.CheckedIn);
+        var cancelledAppointment = NewAppointment(cancelledPatient.Id, doctor.Id, cancelledSlot.Id, AppointmentStatus.Cancelled);
+        var otherDoctorAppointment = NewAppointment(otherDoctorPatient.Id, otherDoctor.Id, otherDoctorSlot.Id, AppointmentStatus.Booked);
+        var tomorrowAppointment = NewAppointment(tomorrowPatient.Id, doctor.Id, tomorrowSlot.Id, AppointmentStatus.Booked);
+        db.Appointments.AddRange(
+            bookedAppointment,
+            checkedInAppointment,
+            cancelledAppointment,
+            otherDoctorAppointment,
+            tomorrowAppointment);
+        await db.SaveChangesAsync();
+
+        return new DoctorScheduleScenario(
+            doctorUser,
+            otherDoctorUser,
+            clinic,
+            doctor,
+            otherDoctor,
+            bookedAppointment,
+            checkedInAppointment,
+            cancelledAppointment,
+            otherDoctorAppointment,
+            tomorrowAppointment);
+    }
+
     /// <summary>Disposes the host, drops the test database and stops the Testcontainers database.</summary>
     public async ValueTask CleanupAsync()
     {
@@ -411,6 +576,26 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             StartTimeUtc = startUtc,
             EndTimeUtc = startUtc.AddMinutes(30),
             IsAvailable = isAvailable
+        };
+
+    /// <summary>Returns the UTC instant of 09:00 on a clinic-local date, for deterministic "today" seeds.</summary>
+    /// <param name="date">The clinic-local date in Africa/Cairo.</param>
+    /// <returns>09:00 Cairo time as UTC.</returns>
+    public DateTime ClinicDateAtNineUtc(DateOnly date) =>
+        ClinicTimeZone.GetStartOfDayUtc(date).AddHours(9);
+
+    private static Appointment NewAppointment(
+        Guid patientId,
+        int doctorId,
+        int slotId,
+        AppointmentStatus status) =>
+        new()
+        {
+            PatientId = patientId,
+            DoctorId = doctorId,
+            DoctorSlotId = slotId,
+            Status = status,
+            CreatedAtUtc = DateTime.UtcNow.AddDays(-1)
         };
 
     private void ApplyMigrations()

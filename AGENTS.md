@@ -48,15 +48,26 @@ appointment answer a pending request: approval creates the visit's grant (two-ho
 creates no grant, and both answer the request and change its credentials in one unit of work. `AccessRequest.Status`
 is an EF concurrency token, so only the first decision wins and the other returns `409`. Both decisions also share the
 named `QrApprove` fixed-window rate limit (default 5 attempts / 15 minutes per patient, configurable and validated at
-startup); a rejection is `429` with `Retry-After` (ADR-0007). Ten migrations live in
+startup); a rejection is `429` with `Retry-After` (ADR-0007). MP-34 adds the appointment status flow: the domain
+`Appointment` owns the only allowed transitions (`Booked -> CheckedIn -> InVisit -> Completed`, plus
+`Booked -> Cancelled`) and records each state's UTC timestamp, refusing every skipped or backward transition.
+`POST api/appointments/{appointmentId}/check-in` lets staff in the appointment's clinic check in a booked appointment
+for today, `POST api/appointments/{appointmentId}/complete` lets the owning doctor complete an in-visit appointment,
+and `start-visit` now moves `CheckedIn -> InVisit` before it issues the QR (re-issuing while `InVisit` is allowed
+until the patient approves; once a grant exists, a restart returns `409` instead of a QR that could never be
+approved).
+`GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
+clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
+calendar while every stored timestamp stays UTC. Eleven migrations live in
 `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin`, `AddAuditLog`,
-`EnforceSinglePendingAccessRequest` and `EnforceSingleActiveAppointmentPerSlot`. The audit store (`AuditLog`,
-`IAuditWriter` and an append-only EF interceptor) now exists. HTTP integration tests live in
-`tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local server
-through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the approve/reject
-matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix (including a
-concurrent double-booking test) and the MP-29 admin 401/403 matrix. There is
-still no record-read or visit-completion endpoint, no endpoint that verifies a presented QR or 6-digit credential,
+`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot` and `AddAppointmentStatusTimestamps`.
+The audit store (`AuditLog`, `IAuditWriter` and an append-only EF interceptor) now exists. HTTP integration tests live
+in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
+server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
+approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
+(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, and the MP-34 check-in/complete
+authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
+boundary). There is still no record-read endpoint, no endpoint that verifies a presented QR or 6-digit credential,
 no medical-record module and no audit endpoint, and the
 frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
@@ -146,13 +157,16 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
   `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
+  `POST api/appointments/{appointmentId}/check-in` (Staff), `POST api/appointments/{appointmentId}/complete`
+  (Doctor), `GET api/doctors/me/schedule?date=` (Doctor),
   `POST api/access-requests/{requestId}/approve` / `/reject` (Patient), and the booking actions
   `POST api/appointments` / `{appointmentId}/cancel` / `{appointmentId}/reschedule` (Patient). Start-visit exercises
-  the scope check and issues a one-time QR credential; the patient endpoints answer a request by ID, consume or
-  revoke its credentials, and return `429` with `Retry-After` after the per-patient `QrApprove` limit. The booking
-  actions stay inside the authenticated patient's scope and return `400`/`404`/`409` `ProblemDetails` for every
-  refused rule. No endpoint yet verifies a presented QR or 6-digit credential, and there is still no medical-record
-  endpoint.
+  the scope check and issues a one-time QR credential; check-in and completion enforce the appointment state machine
+  and the staff-clinic or doctor-ownership scope; the doctor schedule reads one Cairo-local day; the patient
+  endpoints answer a request by ID, consume or revoke its credentials, and return `429` with `Retry-After` after the
+  per-patient `QrApprove` limit. The booking actions stay inside the authenticated patient's scope and return
+  `400`/`404`/`409` `ProblemDetails` for every refused rule. No endpoint yet verifies a presented QR or 6-digit
+  credential, and there is still no medical-record endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for
@@ -170,7 +184,9 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - C#: 4 spaces, file-scoped namespaces, `System` usings first, nullable enabled (`.editorconfig`).
 - Frontend: 2 spaces, Prettier `singleQuote` + width 100, standalone components, zoneless. Specs settle rendering
   with `await fixture.whenStable()`, not `detectChanges()`.
-- Paging everywhere: default 20, maximum 50 (NFR-PRF-04). Validate the page size instead of trusting it.
+- Paging everywhere: default 20, maximum 50 (NFR-PRF-04). Validate the page size instead of trusting it. The
+  doctor's daily schedule (`GET api/doctors/me/schedule`) is the one documented exception: one clinic-local day for
+  one doctor is a bounded set, so it returns the whole day ordered by start.
 - Return `ProblemDetails` for errors; do not invent a second error envelope.
 - Names of requirement IDs are the shared vocabulary: quote `FR-ACS-02` / `NFR-PRI-02` in code comments, tests and PR
   descriptions when they justify a rule.
