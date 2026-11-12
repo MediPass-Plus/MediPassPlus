@@ -39,6 +39,13 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     private static readonly string JwtSecretKey =
         Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
 
+    // A separate runtime access-code HMAC key; it must never equal the JWT key (ADR-0007 decision 5).
+    private static readonly string AccessCodeHmacKey =
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(48));
+
+    private static readonly IAccessCodeHasher AccessCodeHasher =
+        new HmacAccessCodeHasher(Convert.FromBase64String(AccessCodeHmacKey));
+
     private readonly string _connectionString;
     private readonly string _databaseName;
     private readonly MsSqlContainer? _sqlContainer;
@@ -75,6 +82,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         SetEnvironmentVariable("Jwt__Audience", JwtAudience);
         SetEnvironmentVariable("Jwt__SecretKey", JwtSecretKey);
         SetEnvironmentVariable("Jwt__AccessTokenMinutes", "15");
+        SetEnvironmentVariable("AccessCode__HmacKey", AccessCodeHmacKey);
         SetEnvironmentVariable("ConnectionStrings__DefaultConnection", _connectionString);
         SetEnvironmentVariable("OpenApi__ExposeOutsideDevelopment", "true");
         SetEnvironmentVariable("Logging__LogLevel__Microsoft.EntityFrameworkCore", "Warning");
@@ -147,6 +155,11 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <summary>The clinic-local date in Africa/Cairo, used to seed and query "today" scenarios.</summary>
     public DateOnly ClinicToday => ClinicTimeZone.GetLocalDate(DateTime.UtcNow);
 
+    /// <summary>Computes the HMAC the API stores for a six-digit code, so a test can seed a known code.</summary>
+    /// <param name="code">The plaintext code.</param>
+    /// <returns>The Base64 HMAC-SHA-256 hash.</returns>
+    public string HashAccessCode(string code) => AccessCodeHasher.Hash(code);
+
     /// <summary>Creates a unique account in the requested role and mints a bearer token for it, so each test can use its own
     /// patient, doctor or other actor without sharing rate-limit partitions.</summary>
     /// <param name="role">The application role to assign.</param>
@@ -215,13 +228,18 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <summary>
     /// Seeds a clinic, a doctor account and profile, a patient account, a slot for today and an appointment for them.
     /// With <paramref name="includePendingRequest"/>, it also creates the pending request and its live QR credential.
+    /// With <paramref name="accessCode"/>, it also seeds the HMAC of that six-digit code for the request.
     /// </summary>
     /// <param name="appointmentStatus">The initial appointment status.</param>
     /// <param name="includePendingRequest">Whether to create the pending request and QR credential.</param>
+    /// <param name="accessCode">An optional plaintext code to seed as its stored HMAC.</param>
+    /// <param name="accessCodeCreatedAtUtc">When the code was generated; defaults to now.</param>
     /// <returns>The seeded graph.</returns>
     public async Task<VisitScenario> CreateVisitScenarioAsync(
         AppointmentStatus appointmentStatus = AppointmentStatus.CheckedIn,
-        bool includePendingRequest = true)
+        bool includePendingRequest = true,
+        string? accessCode = null,
+        DateTime? accessCodeCreatedAtUtc = null)
     {
         var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
         var patientUser = await CreateUserAsync(DefaultRoles.Patient);
@@ -269,6 +287,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
 
         AccessRequest? request = null;
         VisitAccessCredential? credential = null;
+        VisitAccessCredential? codeCredential = null;
         if (includePendingRequest)
         {
             request = AccessRequest.Create(appointment, doctor, DateTime.UtcNow);
@@ -282,6 +301,17 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
                 DateTime.UtcNow);
             db.VisitAccessCredentials.Add(credential);
             await db.SaveChangesAsync();
+
+            if (accessCode is not null)
+            {
+                codeCredential = VisitAccessCredential.Create(
+                    request.Id,
+                    VisitCredentialType.NumericCode,
+                    HashAccessCode(accessCode),
+                    accessCodeCreatedAtUtc ?? DateTime.UtcNow);
+                db.VisitAccessCredentials.Add(codeCredential);
+                await db.SaveChangesAsync();
+            }
         }
 
         return new VisitScenario(
@@ -292,7 +322,8 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             slot,
             appointment,
             request,
-            credential);
+            credential,
+            codeCredential);
     }
 
     /// <summary>

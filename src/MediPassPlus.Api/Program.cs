@@ -10,6 +10,7 @@ using MediPassPlus.Api.Validation;
 using MediPassPlus.Application.Validation;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
+using MediPassPlus.Infrastructure.VisitAccess;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -46,6 +47,25 @@ builder.Services.AddOptions<QrApproveRateLimitOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+builder.Services.AddOptions<CodeGenerationRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(CodeGenerationRateLimitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddOptions<CodeVerificationRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(CodeVerificationRateLimitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// The access-code HMAC key is a server secret, separate from the JWT key and the Data Protection ring
+// (ADR-0007 decision 5). A missing or weak key fails startup instead of silently weakening the stored hash.
+builder.Services.AddOptions<AccessCodeOptions>()
+    .Bind(builder.Configuration.GetSection(AccessCodeOptions.SectionName))
+    .Validate(
+        options => options.TryGetKeyBytes(out _),
+        "AccessCode:HmacKey must be the Base64 encoding of at least 32 random bytes.")
+    .ValidateOnStart();
+
 // One named policy per endpoint group (ADR-0007 decision 4). The QrApprove policy is reused by every approve/reject
 // endpoint, including the scan-token path planned for V6, so no endpoint adds its own limiter.
 builder.Services.AddRateLimiter(options =>
@@ -61,8 +81,47 @@ builder.Services.AddRateLimiter(options =>
         return QrApproveRateLimitPolicy.CreatePartition(httpContext, limits);
     });
 
+    // The six-digit fallback has its own generation and verification budgets (ADR-0007 decision 2).
+    options.AddPolicy(AccessCodeRateLimitPolicy.GenerationName, httpContext =>
+    {
+        var limits = httpContext.RequestServices
+            .GetRequiredService<IOptions<CodeGenerationRateLimitOptions>>()
+            .Value;
+
+        return AccessCodeRateLimitPolicy.CreateGenerationPartition(httpContext, limits);
+    });
+
+    options.AddPolicy(AccessCodeRateLimitPolicy.VerificationName, httpContext =>
+    {
+        var limits = httpContext.RequestServices
+            .GetRequiredService<IOptions<CodeVerificationRateLimitOptions>>()
+            .Value;
+
+        return AccessCodeRateLimitPolicy.CreateVerificationPartition(httpContext, limits);
+    });
+
+    // The rejection body and Retry-After header are shared, but each policy family keeps its own title.
     options.OnRejected = static (context, cancellationToken) =>
-        QrApproveRateLimitPolicy.WriteRejectionAsync(context.HttpContext, context.Lease, cancellationToken);
+    {
+        var policyName = context.HttpContext.GetEndpoint()
+            ?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName;
+
+        return policyName switch
+        {
+            AccessCodeRateLimitPolicy.GenerationName => AccessCodeRateLimitPolicy.WriteGenerationRejectionAsync(
+                context.HttpContext,
+                context.Lease,
+                cancellationToken),
+            AccessCodeRateLimitPolicy.VerificationName => AccessCodeRateLimitPolicy.WriteVerificationRejectionAsync(
+                context.HttpContext,
+                context.Lease,
+                cancellationToken),
+            _ => QrApproveRateLimitPolicy.WriteRejectionAsync(
+                context.HttpContext,
+                context.Lease,
+                cancellationToken)
+        };
+    };
 });
 
 // Validators are discovered from the Application assembly. Every module adds its own assembly here.
