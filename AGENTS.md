@@ -81,15 +81,24 @@ grant and writes no second audit; the doctor retries and the retry completes the
 grant. The token changes no column and needed no migration.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
-calendar while every stored timestamp stays UTC. Eleven migrations live in
+calendar while every stored timestamp stays UTC. Twelve migrations live in
 `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin`, `AddAuditLog`,
-`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot` and `AddAppointmentStatusTimestamps`.
-The audit store (`AuditLog`, `IAuditWriter` and an append-only EF interceptor) now exists. HTTP integration tests live
+`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot`, `AddAppointmentStatusTimestamps` and
+`AddMedicalRecordSchema`. MP-28 adds the `records` schema (`MedicalRecords`, `Diagnoses`, `Prescriptions`, `Reports`):
+one record per patient, diagnoses always scoped to a visit, prescriptions inside a diagnosis, record-level reports
+with an explicit uploader, append-only rows linked by `SupersedesDiagnosisId` / `SupersedesPrescriptionId` for
+corrections, ciphertext columns for diagnosis and prescription text, required owning foreign keys with `Restrict` and
+no cascade path, plus an EF interceptor that refuses updates and deletes. Patient registration creates the record in
+the same transaction and the migration backfills every existing patient. The audit store (`AuditLog`, `IAuditWriter`
+and an append-only EF interceptor) now exists. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
 server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
 (including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-34 check-in/complete
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
+boundary), and the MP-28 registration record matrix and the applied record migration. There is still no record-read
+or record-write endpoint (that is MP-38), no endpoint that verifies a presented QR or 6-digit credential, and no
+audit endpoint, and the
 boundary), and the MP-36 code generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate
 limits, and the HMAC-only storage proof). The MP-37 tests add the completion grant-end/cap/already-ended matrix, the
 patient-end `401`/`403`/`404`/`409` matrix, both audit proofs, a two-context persistence test proving a stale
