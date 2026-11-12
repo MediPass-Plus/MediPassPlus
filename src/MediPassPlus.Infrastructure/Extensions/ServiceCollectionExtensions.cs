@@ -13,6 +13,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MediPassPlus.Application.AdminManagement;
 using MediPassPlus.Infrastructure.AdminManagement;
+using MediPassPlus.Application.Staff;
+using MediPassPlus.Infrastructure.Staff;
 
 namespace MediPassPlus.Infrastructure.Extensions;
 
@@ -62,6 +64,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IClinicAdminService, ClinicAdminService>();
         services.AddScoped<IAccountAdminService, AccountAdminService>();
         services.AddScoped<IAccountStatusService, AccountStatusService>();
+        services.AddScoped<IStaffScheduleService, StaffScheduleService>();
 
         // Password-reset email: real SMTP when Smtp:Host is configured, otherwise a no-op sender so the API still
         // starts on a machine without mail settings.
