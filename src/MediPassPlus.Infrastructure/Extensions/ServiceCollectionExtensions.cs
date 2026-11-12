@@ -97,7 +97,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAccountAdminService, AccountAdminService>();
         services.AddScoped<IAccountStatusService, AccountStatusService>();
         services.AddScoped<IStaffScheduleService, StaffScheduleService>();
-
+                services.AddScoped<IStaffSlotService, StaffSlotService>();
         // Password-reset email: real SMTP when Smtp:Host is configured, otherwise a no-op sender so the API still
         // starts on a machine without mail settings.
         if (!string.IsNullOrWhiteSpace(configuration["Smtp:Host"]))
