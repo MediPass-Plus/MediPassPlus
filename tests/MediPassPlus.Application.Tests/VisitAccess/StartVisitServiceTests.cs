@@ -1,3 +1,4 @@
+using MediPassPlus.Application.Common;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Clinical;
@@ -26,6 +27,8 @@ public class StartVisitServiceTests
         Assert.Equal(appointment.Id, response.AppointmentId);
         Assert.False(string.IsNullOrWhiteSpace(response.QrToken));
         Assert.Equal(Now.UtcDateTime.AddMinutes(2), response.ExpiresAtUtc);
+        Assert.Equal(AppointmentStatus.InVisit, appointment.Status);
+        Assert.Equal(Now.UtcDateTime, appointment.InVisitAtUtc);
 
         var request = Assert.Single(store.AddedRequests);
         Assert.Equal(AccessRequestStatus.Pending, request.Status);
@@ -107,7 +110,6 @@ public class StartVisitServiceTests
 
     [Theory]
     [InlineData(AppointmentStatus.Booked)]
-    [InlineData(AppointmentStatus.InVisit)]
     [InlineData(AppointmentStatus.Completed)]
     [InlineData(AppointmentStatus.Cancelled)]
     public async Task StartAsync_WhenTheAppointmentIsNotCheckedIn_ReturnsFailureWithoutWriting(
@@ -147,24 +149,61 @@ public class StartVisitServiceTests
     }
 
     [Fact]
-    public async Task StartAsync_WhenTheLastRequestWasApproved_CreatesANewPendingRequest()
+    public async Task StartAsync_WhenTheAppointmentIsAlreadyInVisit_ReissuesTheQrWithoutChangingTheState()
     {
-        var appointment = CreateAppointment();
+        var appointment = CreateAppointment(status: AppointmentStatus.InVisit);
+        appointment.InVisitAtUtc = Now.UtcDateTime.AddMinutes(-5);
         var doctor = CreateDoctor(appointment.DoctorId);
-        var approved = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-5));
+        var pending = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-10));
+        var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [pending]) };
+        var (service, _) = CreateService(appointment, doctor, store);
+
+        var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(AppointmentStatus.InVisit, appointment.Status);
+        Assert.Equal(Now.UtcDateTime.AddMinutes(-5), appointment.InVisitAtUtc);
+        Assert.Equal(pending.Id, result.Response!.AccessRequestId);
+        Assert.Single(store.AddedCredentials);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenTheAppointmentIsNotToday_DoesNotChangeTheStatus()
+    {
+        var appointment = CreateAppointment(slotStartUtc: Now.UtcDateTime.AddDays(1));
+        var doctor = CreateDoctor(appointment.DoctorId);
+        var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor) };
+        var (service, _) = CreateService(appointment, doctor, store);
+
+        var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StartVisitFailure.AppointmentNotToday, result.Failure);
+        Assert.Equal(AppointmentStatus.CheckedIn, appointment.Status);
+        Assert.Null(appointment.InVisitAtUtc);
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenTheLastRequestWasApproved_ReturnsAccessAlreadyGrantedWithoutWriting()
+    {
+        var appointment = CreateAppointment(status: AppointmentStatus.InVisit);
+        appointment.InVisitAtUtc = Now.UtcDateTime.AddMinutes(-5);
+        var doctor = CreateDoctor(appointment.DoctorId);
+        var approved = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-10));
         approved.Approve();
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [approved]) };
         var (service, auditWriter) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
-        Assert.True(result.IsSuccess);
-        var request = Assert.Single(store.AddedRequests);
-        Assert.Equal(AccessRequestStatus.Pending, request.Status);
-        Assert.NotEqual(approved.Id, request.Id);
-        Assert.Equal(request.Id, result.Response!.AccessRequestId);
-        var audit = Assert.Single(auditWriter.AddedEntries);
-        Assert.Equal(request.Id.ToString(), audit.EntityId);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StartVisitFailure.AccessAlreadyGranted, result.Failure);
+        Assert.Equal(AppointmentStatus.InVisit, appointment.Status);
+        Assert.Equal(Now.UtcDateTime.AddMinutes(-5), appointment.InVisitAtUtc);
+        Assert.Empty(store.AddedRequests);
+        Assert.Empty(store.AddedCredentials);
+        Assert.Empty(auditWriter.AddedEntries);
+        Assert.Equal(0, store.SaveCount);
     }
 
     [Fact]
@@ -264,7 +303,12 @@ public class StartVisitServiceTests
         {
             DoctorResult = VisitAccessScopeResult.Denied(VisitAccessScopeFailure.AppointmentNotFound)
         };
-        var service = new StartVisitService(scope, store, new FakeAuditWriter(), new FixedTimeProvider(Now));
+        var service = new StartVisitService(
+            scope,
+            store,
+            new FakeAuditWriter(),
+            new CairoClinicTimeZone(),
+            new FixedTimeProvider(Now));
 
         var result = await service.StartAsync(42, Guid.NewGuid(), IpAddress);
 
@@ -281,7 +325,12 @@ public class StartVisitServiceTests
         {
             DoctorResult = VisitAccessScopeResult.Denied(VisitAccessScopeFailure.DoctorMismatch)
         };
-        var service = new StartVisitService(scope, store, new FakeAuditWriter(), new FixedTimeProvider(Now));
+        var service = new StartVisitService(
+            scope,
+            store,
+            new FakeAuditWriter(),
+            new CairoClinicTimeZone(),
+            new FixedTimeProvider(Now));
 
         var result = await service.StartAsync(42, Guid.NewGuid(), IpAddress);
 
@@ -355,6 +404,7 @@ public class StartVisitServiceTests
                     new VisitAccessScope(appointment.Id, doctor.Id, appointment.PatientId)),
                 store,
                 auditWriter,
+                new CairoClinicTimeZone(),
                 new FixedTimeProvider(Now)),
             auditWriter);
     }

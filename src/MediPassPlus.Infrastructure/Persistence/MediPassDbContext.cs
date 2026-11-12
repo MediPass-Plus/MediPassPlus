@@ -1,5 +1,6 @@
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Identity;
+using MediPassPlus.Domain.Records;
 using MediPassPlus.Infrastructure.Extensions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -22,6 +23,19 @@ public class MediPassDbContext : IdentityDbContext<ApplicationUser, IdentityRole
     public DbSet<VisitAccessCredential> VisitAccessCredentials => Set<VisitAccessCredential>();
     /// <summary>The append-only audit entries written for medical and access-control events (ADR-0004).</summary>
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+
+    /// <summary>The permanent record every patient owns, exactly one per patient (FR-REC-01, ADR-0005).</summary>
+    public DbSet<MedicalRecord> MedicalRecords => Set<MedicalRecord>();
+
+    /// <summary>The append-only diagnoses of a record, each produced by one appointment (FR-REC-03, ADR-0005).</summary>
+    public DbSet<Diagnosis> Diagnoses => Set<Diagnosis>();
+
+    /// <summary>The append-only prescriptions of a diagnosis (FR-REC-04, ADR-0005).</summary>
+    public DbSet<Prescription> Prescriptions => Set<Prescription>();
+
+    /// <summary>The append-only reports held by a record (ADR-0005).</summary>
+    public DbSet<Report> Reports => Set<Report>();
+
     public MediPassDbContext(DbContextOptions<MediPassDbContext> options)
         : base(options)
     {

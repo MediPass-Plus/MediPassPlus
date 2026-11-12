@@ -93,6 +93,14 @@ public sealed class StartVisitStore : IVisitStartStore
         {
             await _context.SaveChangesAsync(cancellationToken);
         }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            // Appointment.Status is a concurrency token: a check-in, completion or another start changed the row
+            // first, so the caller must reload and retry instead of overwriting the newer state (FR-BKG-08).
+            throw new VisitStartConflictException(
+                "Another request changed the appointment state first.",
+                exception);
+        }
         catch (DbUpdateException exception) when (IsVisitStartConflict(exception))
         {
             throw new VisitStartConflictException(

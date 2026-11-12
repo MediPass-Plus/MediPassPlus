@@ -13,13 +13,13 @@ be resolved by the team, not silently.
 | [0002](0002-code-generation-and-verification-actors.md) | Code generation and verification actors (doctor-only) | **Accepted** | Visit Access endpoints |
 | [0003](0003-identity-and-jwt-authentication.md) | ASP.NET Core Identity with JWT authorization | Proposed — user model + refresh tokens; see implementation review | Accounts, every authorized endpoint |
 | [0004](0004-audit-logging.md) | Audit logging scope and controlled values | **Accepted** | Record, Privacy, Visit Access |
-| [0005](0005-diagnosis-relationships.md) | Diagnosis → record and appointment relationships | Proposed — revised, awaiting review | Medical Record entities |
+| [0005](0005-diagnosis-relationships.md) | Diagnosis → record and appointment relationships | **Accepted** (2026-11-11; amended 2026-11-11) | Medical Record entities |
 | [0006](0006-api-integration-tests.md) | HTTP integration tests with WebApplicationFactory | **Accepted** (2026-11-09; Testcontainers SQL Server) | Authorization test matrix (NFR-SEC-10) |
 | [0007](0007-rate-limiting-and-data-protection.md) | Rate limiting and Data Protection keys | **Accepted** (values under security review) | Platform, Visit Access, Record |
 | [0008](0008-openapi-and-xml-documentation.md) | OpenAPI, Swagger UI and XML documentation | **Superseded** by ADR-0012 | Every endpoint PR |
 | [0009](0009-database-baseline-strategy.md) | Coordinated database baseline, then serialized migrations | **Accepted** (amended 2026-11-05) | All schema work |
 | [0010](0010-validation-and-error-format.md) | Input validation with FluentValidation and one ProblemDetails error format | **Accepted** (2026-11-05) | Every endpoint PR, error contract |
-| [0011](0011-access-grant-lifecycle.md) | Access grant lifecycle and status derivation | **Accepted** (2026-11-05; amended 2026-11-05 for composite scope enforcement) | Visit Access checker, grant endpoints |
+| [0011](0011-access-grant-lifecycle.md) | Access grant lifecycle and status derivation | **Accepted** (2026-11-05; amended 2026-11-05 and 2026-11-12) | Visit Access checker, grant endpoints |
 | [0012](0012-swagger-single-document-generator.md) | Swashbuckle as the single Swagger document generator | **Accepted** (2026-11-11) | Every endpoint PR, Swagger configuration |
 
 ## How to use these records
@@ -42,5 +42,7 @@ Resolved on 2026-10-29: code verification is doctor-only (ADR-0002); `Diagnosis.
 (ADR-0005 revision); Swagger UI is a Development tool and the document is off in Production by default (ADR-0008).
 Resolved on 2026-11-05: the baseline is closed and migrations are serialized (ADR-0009); the validation/error format
 (ADR-0010) and the access-grant lifecycle (ADR-0011) are accepted. Resolved on 2026-11-09: HTTP integration tests use
-Testcontainers SQL Server (ADR-0006). Resolved on 2026-11-11: Swashbuckle is the single Swagger document generator
-(ADR-0012). ADR-0003 remains open on the implementation gaps listed in that file.
+Testcontainers SQL Server (ADR-0006). Resolved on 2026-11-11: ADR-0005 is accepted with the review amendments
+(prescription cardinality 0..*, supersedes links, report uploader attribution, diagnosis and prescription encryption,
+write invariants); Swashbuckle is the single Swagger document generator (ADR-0012). ADR-0003 remains open on the
+implementation gaps listed in that file.

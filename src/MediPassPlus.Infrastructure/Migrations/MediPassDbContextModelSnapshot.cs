@@ -79,6 +79,15 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CheckedInAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -88,6 +97,9 @@ namespace MediPassPlus.Infrastructure.Migrations
                     b.Property<int>("DoctorSlotId")
                         .IsConcurrencyToken()
                         .HasColumnType("int");
+
+                    b.Property<DateTime?>("InVisitAtUtc")
+                        .HasColumnType("datetime2");
 
                     b.Property<Guid>("PatientId")
                         .HasColumnType("uniqueidentifier");
@@ -192,7 +204,7 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DoctorId");
+                    b.HasIndex(new[] { "DoctorId", "StartTimeUtc" }, "IX_DoctorSlots_DoctorId_StartTimeUtc");
 
                     b.ToTable("DoctorSlots", "clinical");
                 });
@@ -275,6 +287,132 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .HasFilter("[NormalizedUserName] IS NOT NULL");
 
                     b.ToTable("Users", "identity");
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.Diagnosis", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("AppointmentId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("DiagnosedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("MedicalRecordId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("SupersedesDiagnosisId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AppointmentId");
+
+                    b.HasIndex("MedicalRecordId", "DiagnosedAtUtc");
+
+                    b.HasIndex(new[] { "SupersedesDiagnosisId" }, "IX_Diagnoses_SupersedesDiagnosisId")
+                        .IsUnique()
+                        .HasFilter("[SupersedesDiagnosisId] IS NOT NULL");
+
+                    b.ToTable("Diagnoses", "records");
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.MedicalRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("PatientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PatientId")
+                        .IsUnique();
+
+                    b.ToTable("MedicalRecords", "records");
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.Prescription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("DiagnosisId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Dosage")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("MedicineName")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid?>("SupersedesPrescriptionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DiagnosisId");
+
+                    b.HasIndex(new[] { "SupersedesPrescriptionId" }, "IX_Prescriptions_SupersedesPrescriptionId")
+                        .IsUnique()
+                        .HasFilter("[SupersedesPrescriptionId] IS NOT NULL");
+
+                    b.ToTable("Prescriptions", "records");
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.Report", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<Guid>("MedicalRecordId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("UploadedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UploadedByUserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.HasIndex("MedicalRecordId", "UploadedAtUtc");
+
+                    b.ToTable("Reports", "records");
                 });
 
             modelBuilder.Entity("MediPassPlus.Domain.StaffAdmin.Admin", b =>
@@ -658,6 +796,64 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Doctor");
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.Diagnosis", b =>
+                {
+                    b.HasOne("MediPassPlus.Domain.Clinical.Appointment", null)
+                        .WithMany()
+                        .HasForeignKey("AppointmentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Records.MedicalRecord", null)
+                        .WithMany()
+                        .HasForeignKey("MedicalRecordId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Records.Diagnosis", null)
+                        .WithMany()
+                        .HasForeignKey("SupersedesDiagnosisId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.MedicalRecord", b =>
+                {
+                    b.HasOne("MediPassPlus.Domain.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.Prescription", b =>
+                {
+                    b.HasOne("MediPassPlus.Domain.Records.Diagnosis", null)
+                        .WithMany()
+                        .HasForeignKey("DiagnosisId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Records.Prescription", null)
+                        .WithMany()
+                        .HasForeignKey("SupersedesPrescriptionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("MediPassPlus.Domain.Records.Report", b =>
+                {
+                    b.HasOne("MediPassPlus.Domain.Records.MedicalRecord", null)
+                        .WithMany()
+                        .HasForeignKey("MedicalRecordId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MediPassPlus.Domain.Identity.ApplicationUser", null)
+                        .WithMany()
+                        .HasForeignKey("UploadedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("MediPassPlus.Domain.StaffAdmin.Admin", b =>
