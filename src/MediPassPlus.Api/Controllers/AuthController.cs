@@ -380,7 +380,10 @@ public class AuthController : ControllerBase
     /// <param name="user">The account that was just created and given its role.</param>
     private async Task AddMedicalRecordIfPatientAsync(ApplicationUser user)
     {
-        if (!string.Equals(user.Role, DefaultRoles.Patient, StringComparison.Ordinal))
+        // Identity resolves a requested role through its normalized name, so "patient" or "PATIENT" is accepted and
+        // the account really gets the Patient role. Ask Identity for the actual membership instead of comparing the
+        // raw request string case-sensitively, otherwise the account would silently own no record (FR-REC-01).
+        if (!await _userManager.IsInRoleAsync(user, DefaultRoles.Patient))
         {
             return;
         }

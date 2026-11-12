@@ -213,6 +213,13 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     }
 
     /// <summary>
+    /// The connection string of this run's isolated database. The server behind it is shared with the test database,
+    /// so a migration test can create its own scratch catalog on the same instance.
+    /// </summary>
+    public string ConnectionString => _connectionString;
+
+
+    /// <summary>
     /// Seeds a clinic, a doctor account and profile, a patient account, a slot for today and an appointment for them.
     /// With <paramref name="includePendingRequest"/>, it also creates the pending request and its live QR credential.
     /// </summary>

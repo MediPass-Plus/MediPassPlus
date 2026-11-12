@@ -58,17 +58,24 @@ until the patient approves; once a grant exists, a restart returns `409` instead
 approved).
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
-calendar while every stored timestamp stays UTC. Eleven migrations live in
+calendar while every stored timestamp stays UTC. Twelve migrations live in
 `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin`, `AddAuditLog`,
-`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot` and `AddAppointmentStatusTimestamps`.
-The audit store (`AuditLog`, `IAuditWriter` and an append-only EF interceptor) now exists. HTTP integration tests live
+`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot`, `AddAppointmentStatusTimestamps` and
+`AddMedicalRecordSchema`. MP-28 adds the `records` schema (`MedicalRecords`, `Diagnoses`, `Prescriptions`, `Reports`):
+one record per patient, diagnoses always scoped to a visit, prescriptions inside a diagnosis, record-level reports
+with an explicit uploader, append-only rows linked by `SupersedesDiagnosisId` / `SupersedesPrescriptionId` for
+corrections, ciphertext columns for diagnosis and prescription text, required owning foreign keys with `Restrict` and
+no cascade path, plus an EF interceptor that refuses updates and deletes. Patient registration creates the record in
+the same transaction and the migration backfills every existing patient. The audit store (`AuditLog`, `IAuditWriter`
+and an append-only EF interceptor) now exists. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
 server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
-(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, and the MP-34 check-in/complete
+(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-34 check-in/complete
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
-boundary). There is still no record-read endpoint, no endpoint that verifies a presented QR or 6-digit credential,
-no medical-record module and no audit endpoint, and the
+boundary), and the MP-28 registration record matrix and the applied record migration. There is still no record-read
+or record-write endpoint (that is MP-38), no endpoint that verifies a presented QR or 6-digit credential, and no
+audit endpoint, and the
 frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
