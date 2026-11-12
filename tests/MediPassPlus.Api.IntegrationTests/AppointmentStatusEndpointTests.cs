@@ -4,7 +4,9 @@ using System.Net.Http.Json;
 using MediPassPlus.Application.AppointmentStatusFlow;
 using MediPassPlus.Application.DoctorSchedule;
 using MediPassPlus.Application.VisitAccess;
+using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Clinical;
+using MediPassPlus.Domain.VisitAccess;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -224,6 +226,96 @@ public sealed class AppointmentStatusEndpointTests
             .SingleAsync(appointment => appointment.Id == scenario.Appointment.Id);
         Assert.Equal(AppointmentStatus.Completed, stored.Status);
         Assert.NotNull(stored.CompletedAtUtc);
+        Assert.False(await db.AuditLogs.AsNoTracking()
+            .AnyAsync(log => log.PatientId == scenario.PatientUser.Id && log.Action == AuditAction.AccessEnded));
+    }
+
+    [Fact]
+    public async Task Complete_WhenTheVisitHasAnActiveGrant_SchedulesTheEndAndAudits()
+    {
+        var scenario = await _factory.CreateAppointmentStatusScenarioAsync(AppointmentStatus.InVisit);
+        var grant = await _factory.CreateGrantAsync(scenario.Appointment.Id);
+        using var client = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
+        var before = DateTime.UtcNow;
+
+        using var response = await client.PostAsync(
+            $"/api/appointments/{scenario.Appointment.Id}/complete",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+        var stored = await db.AccessGrants.AsNoTracking().SingleAsync(candidate => candidate.Id == grant.Id);
+        Assert.NotNull(stored.EndedAtUtc);
+        Assert.InRange(
+            stored.EndedAtUtc.Value,
+            before.AddMinutes(14),
+            DateTime.UtcNow.AddMinutes(16));
+        Assert.True(stored.EndedAtUtc < stored.ExpiresAtUtc);
+        Assert.Equal(GrantEndReason.VisitCompleted, stored.EndReason);
+
+        var audit = await db.AuditLogs.AsNoTracking()
+            .SingleAsync(log => log.AccessGrantId == grant.Id);
+        Assert.Equal(AuditAction.AccessEnded, audit.Action);
+        Assert.Equal(AuditEntityType.AccessGrant, audit.EntityType);
+        Assert.Equal(scenario.DoctorUser.Id, audit.UserId);
+        Assert.Equal(scenario.PatientUser.Id, audit.PatientId);
+        Assert.Equal(grant.Id, audit.AccessGrantId);
+    }
+
+    [Fact]
+    public async Task Complete_WhenTheGraceWouldPassTheTwoHourLimit_CapsTheEndAtExpiry()
+    {
+        var scenario = await _factory.CreateAppointmentStatusScenarioAsync(AppointmentStatus.InVisit);
+        var grant = await _factory.CreateGrantAsync(
+            scenario.Appointment.Id,
+            grantedAtUtc: DateTime.UtcNow.AddMinutes(-110));
+        using var client = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
+
+        using var response = await client.PostAsync(
+            $"/api/appointments/{scenario.Appointment.Id}/complete",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+        var stored = await db.AccessGrants.AsNoTracking().SingleAsync(candidate => candidate.Id == grant.Id);
+        Assert.NotNull(stored.EndedAtUtc);
+        Assert.Equal(stored.ExpiresAtUtc, stored.EndedAtUtc);
+        Assert.Equal(GrantEndReason.VisitCompleted, stored.EndReason);
+    }
+
+    [Fact]
+    public async Task Complete_WhenTheGrantAlreadyEnded_DoesNotExtendItOrWriteASecondAudit()
+    {
+        var scenario = await _factory.CreateAppointmentStatusScenarioAsync(AppointmentStatus.InVisit);
+        var grant = await _factory.CreateGrantAsync(scenario.Appointment.Id);
+        using var doctorClient = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
+        using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var end = await patientClient.PostAsync(
+            $"/api/access-grants/{grant.Id}/end",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, end.StatusCode);
+        var ended = await end.Content.ReadFromJsonAsync<AccessGrantEndedResponse>();
+        Assert.NotNull(ended);
+
+        using var response = await doctorClient.PostAsync(
+            $"/api/appointments/{scenario.Appointment.Id}/complete",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+        var stored = await db.AccessGrants.AsNoTracking().SingleAsync(candidate => candidate.Id == grant.Id);
+        Assert.Equal(ended.EndedAtUtc, stored.EndedAtUtc);
+        Assert.Equal(GrantEndReason.PatientEnded, stored.EndReason);
+        Assert.Equal(
+            1,
+            await db.AuditLogs.AsNoTracking().CountAsync(log => log.AccessGrantId == grant.Id));
+        var audit = await db.AuditLogs.AsNoTracking()
+            .SingleAsync(log => log.AccessGrantId == grant.Id);
+        Assert.Equal(scenario.PatientUser.Id, audit.UserId);
     }
 
     [Fact]

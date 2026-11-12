@@ -20,8 +20,8 @@ public interface IAppointmentStatusStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Loads the appointment and the authenticated doctor's profile. Returns null only when no appointment has the
-    /// requested identifier.
+    /// Loads the appointment, the authenticated doctor's profile and the appointment's access grant. Returns null only
+    /// when no appointment has the requested identifier.
     /// </summary>
     /// <param name="appointmentId">The appointment identifier.</param>
     /// <param name="doctorUserId">The authenticated doctor user account identifier.</param>

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using MediPassPlus.Api.Extensions;
 using MediPassPlus.Application.AppointmentStatusFlow;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -113,13 +114,17 @@ public class AppointmentStatusController : ControllerBase
 
     /// <summary>
     /// Completes the doctor's own appointment when the visit is in progress. Only an <c>InVisit</c> appointment can
-    /// be completed, and the transition records its UTC timestamp (FR-ACS-08, FR-BKG-08). The visit-access module
-    /// ends the access grant by calling this same transition, so there is exactly one completion route.
+    /// be completed, and the transition records its UTC timestamp (FR-ACS-08, FR-BKG-08). Completion also schedules
+    /// the visit's active access grant to end 15 minutes later, capped by its two-hour limit (FR-ACS-07, UC-18), and
+    /// writes the <c>AccessEnded</c> audit row in the same unit of work (ADR-0004 decision 7).
     /// </summary>
     /// <param name="appointmentId">The appointment to complete.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The appointment identifier, its new status and the completion timestamp.</returns>
-    /// <response code="200">The visit was completed.</response>
+    /// <response code="200">
+    /// The visit was completed. When the visit had an active grant, it now ends 15 minutes after completion or at its
+    /// two-hour limit, whichever is first.
+    /// </response>
     /// <response code="400">The appointment is not in the <c>InVisit</c> state.</response>
     /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
     /// <response code="403">The caller is not a doctor, has no doctor profile, or does not own the appointment.</response>
@@ -148,6 +153,7 @@ public class AppointmentStatusController : ControllerBase
         var result = await _appointmentStatusService.CompleteAsync(
             appointmentId,
             doctorUserId,
+            HttpContext.GetAuditIpAddress(),
             cancellationToken);
 
         if (result.IsSuccess)

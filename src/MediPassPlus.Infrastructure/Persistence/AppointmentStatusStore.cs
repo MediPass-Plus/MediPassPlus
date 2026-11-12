@@ -69,7 +69,11 @@ public sealed class AppointmentStatusStore : IAppointmentStatusStore
         var doctor = await _context.Doctors
             .SingleOrDefaultAsync(doctor => doctor.UserId == doctorUserId, cancellationToken);
 
-        return new CompleteContext(appointment, doctor);
+        // Completion may end the visit's grant; the schema allows at most one grant per appointment (ADR-0011).
+        var grant = await _context.AccessGrants
+            .SingleOrDefaultAsync(grant => grant.AppointmentId == appointmentId, cancellationToken);
+
+        return new CompleteContext(appointment, doctor, grant);
     }
 
     /// <inheritdoc />

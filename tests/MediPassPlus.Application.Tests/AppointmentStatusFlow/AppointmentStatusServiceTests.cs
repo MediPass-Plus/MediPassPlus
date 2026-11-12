@@ -1,14 +1,17 @@
 using MediPassPlus.Application.AppointmentStatusFlow;
 using MediPassPlus.Application.Tests.VisitAccess;
+using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Domain.StaffAdmin;
+using MediPassPlus.Domain.VisitAccess;
 
 namespace MediPassPlus.Application.Tests.AppointmentStatusFlow;
 
 /// <summary>
-/// The staff check-in and doctor completion rules: every refusal reason, the UTC timestamp, and the mapping from a
-/// lost concurrency race to a conflict (FR-BKG-08, FR-STF-03, FR-ACS-08).
+/// The staff check-in and doctor completion rules: every refusal reason, the UTC timestamp, the mapping from a lost
+/// concurrency race to a conflict, and the grant end that completion schedules (FR-BKG-08, FR-STF-03, FR-ACS-07,
+/// FR-ACS-08).
 /// </summary>
 public class AppointmentStatusServiceTests
 {
@@ -16,6 +19,7 @@ public class AppointmentStatusServiceTests
     private static readonly Guid PatientUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid StaffUserId = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private static readonly Guid DoctorUserId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private const string IpAddress = "203.0.113.10";
 
     [Fact]
     public async Task CheckInAsync_WhenTheAppointmentIsTodayInTheStaffClinic_ChecksItIn()
@@ -29,7 +33,7 @@ public class AppointmentStatusServiceTests
                 NewStaff(clinicId: 1),
                 NewPatient())
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -51,7 +55,7 @@ public class AppointmentStatusServiceTests
     public async Task CheckInAsync_WhenTheAppointmentDoesNotExist_ReturnsAppointmentNotFound()
     {
         var store = new FakeAppointmentStatusStore { CheckInContext = null };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(42, StaffUserId);
 
@@ -72,7 +76,7 @@ public class AppointmentStatusServiceTests
                 Staff: null,
                 NewPatient())
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -94,7 +98,7 @@ public class AppointmentStatusServiceTests
                 NewStaff(clinicId: 1),
                 NewPatient())
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -115,7 +119,7 @@ public class AppointmentStatusServiceTests
                 NewStaff(clinicId: 1),
                 Patient: null)
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -136,7 +140,7 @@ public class AppointmentStatusServiceTests
                 NewStaff(clinicId: 2),
                 NewPatient())
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -158,7 +162,7 @@ public class AppointmentStatusServiceTests
                 NewStaff(clinicId: 1),
                 NewPatient())
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -184,6 +188,7 @@ public class AppointmentStatusServiceTests
         var service = new AppointmentStatusService(
             store,
             new FakeClinicTimeZone { Offset = TimeSpan.FromHours(2) },
+            new FakeAuditWriter(),
             new FixedTimeProvider(new DateTimeOffset(2026, 11, 8, 22, 30, 0, TimeSpan.Zero)));
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
@@ -209,7 +214,7 @@ public class AppointmentStatusServiceTests
                 NewStaff(clinicId: 1),
                 NewPatient())
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -232,7 +237,7 @@ public class AppointmentStatusServiceTests
                 NewPatient()),
             ConflictOnSave = true
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
         var result = await service.CheckInAsync(appointment.Id, StaffUserId);
 
@@ -247,16 +252,17 @@ public class AppointmentStatusServiceTests
         var appointment = NewAppointment(status: AppointmentStatus.InVisit);
         var store = new FakeAppointmentStatusStore
         {
-            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1))
+            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1), Grant: null)
         };
-        var service = CreateService(store);
+        var (service, auditWriter) = CreateService(store);
 
-        var result = await service.CompleteAsync(appointment.Id, DoctorUserId);
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(AppointmentStatus.Completed, appointment.Status);
         Assert.Equal(Now.UtcDateTime, appointment.CompletedAtUtc);
         Assert.Equal(1, store.SaveCount);
+        Assert.Empty(auditWriter.AddedEntries);
 
         var dto = Assert.IsType<DoctorAppointmentStatusDto>(result.Appointment);
         Assert.Equal(appointment.Id, dto.AppointmentId);
@@ -265,12 +271,98 @@ public class AppointmentStatusServiceTests
     }
 
     [Fact]
+    public async Task CompleteAsync_WhenTheAppointmentHasAnActiveGrant_SchedulesItsEndAndAuditsIt()
+    {
+        var appointment = NewAppointment(status: AppointmentStatus.InVisit);
+        var grant = NewGrant(appointment);
+        var store = new FakeAppointmentStatusStore
+        {
+            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1), grant)
+        };
+        var (service, auditWriter) = CreateService(store);
+
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(Now.UtcDateTime.AddMinutes(15), grant.EndedAtUtc);
+        Assert.Equal(GrantEndReason.VisitCompleted, grant.EndReason);
+
+        var audit = Assert.Single(auditWriter.AddedEntries);
+        Assert.Equal(DoctorUserId, audit.UserId);
+        Assert.Equal(PatientUserId, audit.PatientId);
+        Assert.Equal(AuditAction.AccessEnded, audit.Action);
+        Assert.Equal(AuditEntityType.AccessGrant, audit.EntityType);
+        Assert.Equal(grant.Id.ToString(), audit.EntityId);
+        Assert.Equal(IpAddress, audit.IpAddress);
+        Assert.Equal(grant.Id, audit.AccessGrantId);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_WhenTheGrantGraceWouldPassTheTwoHourLimit_CapsTheEndAtTheExpiry()
+    {
+        var appointment = NewAppointment(status: AppointmentStatus.InVisit);
+
+        // The grant was created 1 hour 50 minutes ago, so the 15-minute grace would pass its two-hour expiry.
+        var grant = NewGrant(appointment, grantedAtUtc: Now.UtcDateTime.AddMinutes(-110));
+        var store = new FakeAppointmentStatusStore
+        {
+            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1), grant)
+        };
+        var (service, _) = CreateService(store);
+
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(grant.ExpiresAtUtc, grant.EndedAtUtc);
+        Assert.Equal(GrantEndReason.VisitCompleted, grant.EndReason);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_WhenTheGrantAlreadyEnded_DoesNotExtendItOrAuditAgain()
+    {
+        var appointment = NewAppointment(status: AppointmentStatus.InVisit);
+        var endedGrant = NewGrant(appointment, grantedAtUtc: Now.UtcDateTime.AddMinutes(-30));
+        endedGrant.EndByPatient(Now.UtcDateTime.AddMinutes(-5));
+        var store = new FakeAppointmentStatusStore
+        {
+            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1), endedGrant)
+        };
+        var (service, auditWriter) = CreateService(store);
+
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(Now.UtcDateTime.AddMinutes(-5), endedGrant.EndedAtUtc);
+        Assert.Equal(GrantEndReason.PatientEnded, endedGrant.EndReason);
+        Assert.Empty(auditWriter.AddedEntries);
+    }
+
+    [Fact]
+    public async Task CompleteAsync_WhenTheGrantHasExpired_DoesNotChangeItOrAudit()
+    {
+        var appointment = NewAppointment(status: AppointmentStatus.InVisit);
+        var expiredGrant = NewGrant(appointment, grantedAtUtc: Now.UtcDateTime.AddHours(-3));
+        var store = new FakeAppointmentStatusStore
+        {
+            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1), expiredGrant)
+        };
+        var (service, auditWriter) = CreateService(store);
+
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(expiredGrant.EndedAtUtc);
+        Assert.Null(expiredGrant.EndReason);
+        Assert.Empty(auditWriter.AddedEntries);
+    }
+
+    [Fact]
     public async Task CompleteAsync_WhenTheAppointmentDoesNotExist_ReturnsAppointmentNotFound()
     {
         var store = new FakeAppointmentStatusStore { CompleteContext = null };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
-        var result = await service.CompleteAsync(42, DoctorUserId);
+        var result = await service.CompleteAsync(42, DoctorUserId, IpAddress);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(CompleteFailure.AppointmentNotFound, result.Failure);
@@ -283,11 +375,11 @@ public class AppointmentStatusServiceTests
         var appointment = NewAppointment(status: AppointmentStatus.InVisit);
         var store = new FakeAppointmentStatusStore
         {
-            CompleteContext = new CompleteContext(appointment, Doctor: null)
+            CompleteContext = new CompleteContext(appointment, Doctor: null, Grant: null)
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
-        var result = await service.CompleteAsync(appointment.Id, DoctorUserId);
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(CompleteFailure.DoctorNotFound, result.Failure);
@@ -301,11 +393,11 @@ public class AppointmentStatusServiceTests
         var otherDoctor = NewDoctor(clinicId: 1, id: 8);
         var store = new FakeAppointmentStatusStore
         {
-            CompleteContext = new CompleteContext(appointment, otherDoctor)
+            CompleteContext = new CompleteContext(appointment, otherDoctor, Grant: null)
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
-        var result = await service.CompleteAsync(appointment.Id, DoctorUserId);
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(CompleteFailure.DoctorMismatch, result.Failure);
@@ -324,11 +416,11 @@ public class AppointmentStatusServiceTests
         var appointment = NewAppointment(status: status);
         var store = new FakeAppointmentStatusStore
         {
-            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1))
+            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1), Grant: null)
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
-        var result = await service.CompleteAsync(appointment.Id, DoctorUserId);
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(CompleteFailure.AppointmentNotInVisit, result.Failure);
@@ -342,20 +434,39 @@ public class AppointmentStatusServiceTests
         var appointment = NewAppointment(status: AppointmentStatus.InVisit);
         var store = new FakeAppointmentStatusStore
         {
-            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1)),
+            CompleteContext = new CompleteContext(appointment, NewDoctor(clinicId: 1), Grant: null),
             ConflictOnSave = true
         };
-        var service = CreateService(store);
+        var (service, _) = CreateService(store);
 
-        var result = await service.CompleteAsync(appointment.Id, DoctorUserId);
+        var result = await service.CompleteAsync(appointment.Id, DoctorUserId, IpAddress);
 
         Assert.False(result.IsSuccess);
         Assert.Equal(CompleteFailure.AppointmentConflict, result.Failure);
         Assert.Equal(1, store.SaveCount);
     }
 
-    private static AppointmentStatusService CreateService(FakeAppointmentStatusStore store) =>
-        new(store, new FakeClinicTimeZone(), new FixedTimeProvider(Now));
+    private static (AppointmentStatusService Service, FakeAuditWriter AuditWriter) CreateService(
+        FakeAppointmentStatusStore store)
+    {
+        var auditWriter = new FakeAuditWriter();
+
+        return (
+            new AppointmentStatusService(
+                store,
+                new FakeClinicTimeZone(),
+                auditWriter,
+                new FixedTimeProvider(Now)),
+            auditWriter);
+    }
+
+    private static AccessGrant NewGrant(Appointment appointment, DateTime? grantedAtUtc = null)
+    {
+        var request = AccessRequest.Create(appointment, NewDoctor(clinicId: 1), Now.UtcDateTime.AddMinutes(-5));
+        request.Approve();
+
+        return AccessGrant.Create(request, appointment, grantedAtUtc ?? Now.UtcDateTime);
+    }
 
     private static Appointment NewAppointment(
         AppointmentStatus status = AppointmentStatus.Booked,

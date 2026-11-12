@@ -112,6 +112,7 @@ public class AppointmentStatusControllerTests
         Assert.Same(appointment, ok.Value);
         Assert.Equal(42, service.LastCompleteAppointmentId);
         Assert.Equal(DoctorUserId, service.LastCompleteUserId);
+        Assert.Equal("unknown", service.LastCompleteIpAddress);
     }
 
     [Theory]
@@ -195,6 +196,8 @@ public class AppointmentStatusControllerTests
 
         public Guid? LastCompleteUserId { get; private set; }
 
+        public string? LastCompleteIpAddress { get; private set; }
+
         public Task<CheckInResult> CheckInAsync(
             int appointmentId,
             Guid staffUserId,
@@ -209,11 +212,13 @@ public class AppointmentStatusControllerTests
         public Task<CompleteResult> CompleteAsync(
             int appointmentId,
             Guid doctorUserId,
+            string ipAddress,
             CancellationToken cancellationToken = default)
         {
             CompleteCalled = true;
             LastCompleteAppointmentId = appointmentId;
             LastCompleteUserId = doctorUserId;
+            LastCompleteIpAddress = ipAddress;
             return Task.FromResult(CompleteResult);
         }
     }

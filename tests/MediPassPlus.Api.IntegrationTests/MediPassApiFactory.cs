@@ -13,6 +13,7 @@ using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -327,6 +328,47 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     }
 
     /// <summary>
+    /// Approves the appointment's pending request, creating one when the scenario seeded none, and seeds its access
+    /// grant. The appointment and doctor are reloaded so the grant is created against the persisted scope (ADR-0011
+    /// decision 8).
+    /// </summary>
+    /// <param name="appointmentId">The appointment whose grant is seeded.</param>
+    /// <param name="grantedAtUtc">When the patient approved; defaults to now.</param>
+    /// <returns>The seeded grant.</returns>
+    public async Task<AccessGrant> CreateGrantAsync(
+        int appointmentId,
+        DateTime? grantedAtUtc = null)
+    {
+        await using var db = CreateDbContext();
+        var appointment = await db.Appointments
+            .SingleAsync(candidate => candidate.Id == appointmentId);
+
+        var request = await db.AccessRequests
+            .Where(candidate => candidate.AppointmentId == appointmentId)
+            .OrderByDescending(candidate => candidate.CreatedAtUtc)
+            .FirstOrDefaultAsync();
+
+        if (request is null)
+        {
+            var doctor = await db.Doctors
+                .SingleAsync(candidate => candidate.Id == appointment.DoctorId);
+            request = AccessRequest.Create(appointment, doctor, DateTime.UtcNow);
+            db.AccessRequests.Add(request);
+        }
+
+        if (request.Status == AccessRequestStatus.Pending)
+        {
+            request.Approve();
+        }
+
+        var grant = AccessGrant.Create(request, appointment, grantedAtUtc ?? DateTime.UtcNow);
+        db.AccessGrants.Add(grant);
+        await db.SaveChangesAsync();
+
+        return grant;
+    }
+
+    /// <summary>
     /// Seeds a clinic, two doctor accounts with profiles, a patient account, a free future slot, an appointment on
     /// its own slot, a second free slot for rescheduling and a slot owned by the second doctor.
     /// </summary>
@@ -598,6 +640,12 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         // The API's Development seeder must not run in tests; default roles are seeded by Program
         // for every environment, and the test factory creates only the users each test needs.
         builder.UseEnvironment("Testing");
+
+        // The gated test controller lives in this assembly. It proves an HTTP request that passes
+        // [RequireActiveGrant] is refused after the patient ends the grant (FR-ACS-09, NFR-PRI-02).
+        builder.ConfigureTestServices(services =>
+            services.AddControllers()
+                .AddApplicationPart(typeof(MedicalRecordGateTestController).Assembly));
     }
 
     private static DoctorSlot NewSlot(int doctorId, DateTime startUtc, bool isAvailable) =>
