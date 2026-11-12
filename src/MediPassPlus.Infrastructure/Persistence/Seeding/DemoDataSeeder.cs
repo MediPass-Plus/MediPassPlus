@@ -113,7 +113,9 @@ public sealed class DemoDataSeeder : ISeeder
             FullName = account.FullName,
             Role = account.Role,
             PhoneNumber = DemoSeedData.PhoneNumber,
-            IsActive = true
+            IsActive = true,
+            // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
+            LockoutEnabled = true
         };
 
         EnsureSucceeded(await _users.CreateAsync(user, password), $"create the demo account '{account.Email}'");

@@ -18,14 +18,16 @@ public class AuthController : ControllerBase
 {
     private readonly MediPassDbContext _context;
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly SignInManager<ApplicationUser> _signInManager;
      private readonly JwtTokenService _jwt;
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
      private readonly IEmailSender _emailSender;
     private readonly IConfiguration _configuration;
 
-    public AuthController(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole<Guid>> roleManager, JwtTokenService jwt, MediPassDbContext context, IEmailSender emailSender, IConfiguration configuration)
+    public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, RoleManager<IdentityRole<Guid>> roleManager, JwtTokenService jwt, MediPassDbContext context, IEmailSender emailSender, IConfiguration configuration)
     {
         _userManager = userManager;
+        _signInManager = signInManager;
         _roleManager = roleManager;
         _jwt = jwt;
      
@@ -53,7 +55,9 @@ public class AuthController : ControllerBase
             UserName = request.Email,
             Email = request.Email,
             FullName = request.FullName,
-            Role = request.Role
+            Role = request.Role,
+            // FR-ACC-05: Identity only counts failed attempts for accounts that allow lockout.
+            LockoutEnabled = true
         };
 
         // Restrict the user from self-assigning the Admin role
@@ -124,16 +128,40 @@ public class AuthController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Signs a user in and issues a JWT access token.
+    /// </summary>
+    /// <param name="request">The account email and password.</param>
+    /// <returns>The access token and the account's roles, or a generic <c>401</c>.</returns>
+    /// <response code="200">The credentials were valid and the account is active.</response>
+    /// <response code="401">
+    /// The email is unknown, the password is wrong, the account is locked out or the account is deactivated.
+    /// Every one of those answers with the same body on purpose, so the endpoint never confirms which
+    /// addresses or accounts exist.
+    /// </response>
     [HttpPost("login")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Login(LoginDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-        // check if the user exists and the password is correct
-        if (user is null || !await _userManager.CheckPasswordAsync(user, request.Password))
-            return Unauthorized(new { message = "Invalid email or password" });
-        // check if the user is active
-        if (!user.IsActive)
-            return Unauthorized(new { message = "Account is disabled" });
+
+        if (user is null)
+        {
+            return InvalidCredentials();
+        }
+
+        // FR-ACC-05: every wrong password increments AccessFailedCount and the fifth one locks the account
+        // for the configured window; a locked account is refused before the password is even compared.
+        var signInResult = await _signInManager.CheckPasswordSignInAsync(
+            user, request.Password, lockoutOnFailure: true);
+
+        // A wrong password, a lockout and a deactivated account (FR-STF-07) are indistinguishable to the
+        // caller. Reporting "account is disabled" would confirm that the address is registered.
+        if (!signInResult.Succeeded || !user.IsActive)
+        {
+            return InvalidCredentials();
+        }
 
         var roles = await _userManager.GetRolesAsync(user);
         var token = _jwt.CreateAccessToken(user, roles);
@@ -187,7 +215,31 @@ public class AuthController : ControllerBase
             return InvalidResetToken(result.Errors.Select(error => error.Description).ToArray());
         }
 
+        // Proving control of the mailbox is enough to clear a lockout: otherwise the owner would still be
+        // refused for the rest of the window with a password they have just changed (FR-ACC-05).
+        await _userManager.ResetAccessFailedCountAsync(user);
+        await _userManager.SetLockoutEndDateAsync(user, null);
+
         return Ok(new { message = "Password has been reset successfully." });
+    }
+
+    /// <summary>
+    /// Builds the single <c>401</c> answer used for an unknown email, a wrong password, a lockout and a
+    /// deactivated account (ADR-0010). The body must stay identical in all four cases.
+    /// </summary>
+    /// <returns>The <c>401</c> result.</returns>
+    private ObjectResult InvalidCredentials()
+    {
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status401Unauthorized,
+            Title = "Invalid email or password.",
+            Detail = "Check your credentials and try again."
+        };
+
+        problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+        return Unauthorized(problem);
     }
 
     private ObjectResult InvalidResetToken(string[]? details = null)
@@ -232,8 +284,9 @@ public class AuthController : ControllerBase
             Email = request.Email,
             FullName = request.FullName,
             Role = "Admin",
-            EmailConfirmed = true
-           
+            EmailConfirmed = true,
+            // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
+            LockoutEnabled = true
         };
 
         // Start a database transaction
@@ -311,7 +364,10 @@ public class AuthController : ControllerBase
             // Enable all accounts during development
             IsActive = true,
 
-            EmailConfirmed = true
+            EmailConfirmed = true,
+
+            // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
+            LockoutEnabled = true
         };
 
         // Start a database transaction
