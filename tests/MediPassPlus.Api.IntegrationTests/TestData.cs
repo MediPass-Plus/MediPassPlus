@@ -18,6 +18,9 @@ public sealed record TestUser(Guid Id, string Email, string Token);
 /// <param name="Appointment">The appointment being answered.</param>
 /// <param name="Request">The pending access request, or null when the scenario starts before start-visit.</param>
 /// <param name="Credential">The live QR credential, or null when the scenario starts before start-visit.</param>
+/// <param name="CodeCredential">
+/// The live numeric-code credential when the scenario seeded a code, or null.
+/// </param>
 public sealed record VisitScenario(
     TestUser DoctorUser,
     TestUser PatientUser,
@@ -26,7 +29,8 @@ public sealed record VisitScenario(
     DoctorSlot Slot,
     Appointment Appointment,
     AccessRequest? Request,
-    VisitAccessCredential? Credential);
+    VisitAccessCredential? Credential,
+    VisitAccessCredential? CodeCredential = null);
 
 /// <summary>
 /// The seeded graph a booking test needs: a free future slot, an appointment on its own slot, a second free slot

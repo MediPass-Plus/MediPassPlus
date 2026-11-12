@@ -1,15 +1,17 @@
 using System.Security.Claims;
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Api.RateLimiting;
 using MediPassPlus.Application.VisitAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace MediPassPlus.Api.Controllers;
 
 /// <summary>
-/// Visit-access endpoints. MP-4 provides the doctor's start-visit step; approval, record reads and visit completion
-/// are later tickets.
+/// Visit-access endpoints: the doctor's start-visit step, the patient's six-digit fallback generation, and the owning
+/// doctor's code verification.
 /// </summary>
 [ApiController]
 [Route("api/appointments")]
@@ -22,13 +24,25 @@ public class VisitAccessController : ControllerBase
     private const string ConflictType = "https://tools.ietf.org/html/rfc9110#section-15.5.10";
 
     private readonly IStartVisitService _startVisitService;
+    private readonly IAccessCodeGenerationService _accessCodeGenerationService;
+    private readonly IAccessCodeVerificationService _accessCodeVerificationService;
 
     /// <summary>Initializes a new instance of the <see cref="VisitAccessController"/> class.</summary>
     /// <param name="startVisitService">The start-visit application service.</param>
-    public VisitAccessController(IStartVisitService startVisitService)
+    /// <param name="accessCodeGenerationService">The patient's six-digit fallback generator.</param>
+    /// <param name="accessCodeVerificationService">The owning doctor's six-digit code verifier.</param>
+    public VisitAccessController(
+        IStartVisitService startVisitService,
+        IAccessCodeGenerationService accessCodeGenerationService,
+        IAccessCodeVerificationService accessCodeVerificationService)
     {
         ArgumentNullException.ThrowIfNull(startVisitService);
+        ArgumentNullException.ThrowIfNull(accessCodeGenerationService);
+        ArgumentNullException.ThrowIfNull(accessCodeVerificationService);
+
         _startVisitService = startVisitService;
+        _accessCodeGenerationService = accessCodeGenerationService;
+        _accessCodeVerificationService = accessCodeVerificationService;
     }
 
     /// <summary>
@@ -118,6 +132,224 @@ public class VisitAccessController : ControllerBase
                 "The visit start conflicted with another request.",
                 "Another request for this visit won the race. Retry to reuse its pending request."),
             _ => throw new InvalidOperationException($"Unexpected start-visit failure: {result.Failure}.")
+        };
+    }
+
+    /// <summary>
+    /// Generates a new six-digit fallback code for the authenticated patient's pending request and returns it once.
+    /// Only the HMAC is stored (FR-ACS-05, ADR-0001). A new code replaces the previous live code (US-22).
+    /// </summary>
+    /// <param name="appointmentId">The appointment the code is generated for.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The one-time code and its expiry.</returns>
+    /// <response code="200">The code was generated and is returned exactly once.</response>
+    /// <response code="400">The appointment is not today, is not checked in, or is not in visit.</response>
+    /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
+    /// <response code="403">The caller is not the patient who owns the appointment.</response>
+    /// <response code="404">No appointment has the requested identifier.</response>
+    /// <response code="409">
+    /// The visit has no pending request, the patient already approved access, or a concurrent call won the
+    /// code-replacement race.
+    /// </response>
+    /// <response code="429">
+    /// The patient exceeded the configured code-generation limit; the response carries <c>Retry-After</c>.
+    /// </response>
+    [Authorize(Roles = "Patient")]
+    [HttpPost("{appointmentId:int}/access-code")]
+    [EnableRateLimiting(AccessCodeRateLimitPolicy.GenerationName)]
+    [Produces("application/json")]
+    [ProducesResponseType(typeof(AccessCodeResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> GenerateAccessCode(
+        int appointmentId,
+        CancellationToken cancellationToken)
+    {
+        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdValue, out var patientUserId))
+        {
+            return CreateProblem(
+                StatusCodes.Status401Unauthorized,
+                UnauthorizedType,
+                "Authentication required.",
+                "The access token does not identify a user.");
+        }
+
+        var result = await _accessCodeGenerationService.GenerateAsync(
+            appointmentId,
+            patientUserId,
+            cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            // The six-digit code is a one-time secret and must not be cached by a browser or a proxy.
+            Response.Headers["Cache-Control"] = "no-store";
+            return Ok(result.Response);
+        }
+
+        return result.Failure switch
+        {
+            AccessCodeGenerationFailure.AppointmentNotFound => CreateProblem(
+                StatusCodes.Status404NotFound,
+                NotFoundType,
+                "Appointment not found.",
+                "No appointment has the requested identifier."),
+            AccessCodeGenerationFailure.PatientMismatch => CreateProblem(
+                StatusCodes.Status403Forbidden,
+                ForbiddenType,
+                "You cannot request a code for this visit.",
+                "You can request a code only for your own appointment."),
+            AccessCodeGenerationFailure.AppointmentNotCheckedIn => CreateProblem(
+                StatusCodes.Status400BadRequest,
+                BadRequestType,
+                "The visit has not started.",
+                "A code can be requested only when the appointment is checked in or in visit."),
+            AccessCodeGenerationFailure.AppointmentNotToday => CreateProblem(
+                StatusCodes.Status400BadRequest,
+                BadRequestType,
+                "The visit is not today.",
+                "A code can be requested only for an appointment scheduled for today."),
+            AccessCodeGenerationFailure.AccessAlreadyGranted => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The visit already has an access grant.",
+                "The patient already approved access for this visit, so no new code can be generated."),
+            AccessCodeGenerationFailure.RequestNotPending => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The visit has no pending access request.",
+                "The doctor must start the visit before the patient can request a code."),
+            AccessCodeGenerationFailure.RequestConflict => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The code request conflicted with another request.",
+                "Another request for this visit won the race. Retry to generate a new code."),
+            _ => throw new InvalidOperationException(
+                $"Unexpected access-code generation failure: {result.Failure}.")
+        };
+    }
+
+    /// <summary>
+    /// Verifies the patient's six-digit fallback for the authenticated doctor who owns the appointment. A wrong code
+    /// records a failed attempt and locks the code on the fifth one (FR-ACS-05). A match creates the visit's access
+    /// grant with the two-hour cap and consumes the code (ADR-0011 amendment 2026-11-12).
+    /// </summary>
+    /// <param name="appointmentId">The appointment the code was generated for.</param>
+    /// <param name="request">The six-digit code entered by the doctor.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The created grant.</returns>
+    /// <response code="200">The code matched and the access grant was created.</response>
+    /// <response code="400">The code is malformed, wrong, or the appointment is not checked in or in visit.</response>
+    /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
+    /// <response code="403">The caller is not a doctor, has no doctor profile, or does not own the appointment.</response>
+    /// <response code="404">No appointment has the requested identifier.</response>
+    /// <response code="409">
+    /// The code is missing, expired, consumed, revoked or locked; the visit has no pending request; access was already
+    /// granted; or a concurrent call won the race.
+    /// </response>
+    /// <response code="429">
+    /// The doctor exceeded the configured verification limit for this appointment; the response carries
+    /// <c>Retry-After</c>.
+    /// </response>
+    [Authorize(Roles = "Doctor")]
+    [HttpPost("{appointmentId:int}/verify-code")]
+    [EnableRateLimiting(AccessCodeRateLimitPolicy.VerificationName)]
+    [Produces("application/json")]
+    [ProducesResponseType(typeof(AccessGrantResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> VerifyAccessCode(
+        int appointmentId,
+        VerifyAccessCodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdValue, out var doctorUserId))
+        {
+            return CreateProblem(
+                StatusCodes.Status401Unauthorized,
+                UnauthorizedType,
+                "Authentication required.",
+                "The access token does not identify a user.");
+        }
+
+        var result = await _accessCodeVerificationService.VerifyAsync(
+            appointmentId,
+            doctorUserId,
+            request.Code,
+            HttpContext.GetAuditIpAddress(),
+            cancellationToken);
+
+        if (result.IsSuccess)
+        {
+            if (result.Grant is null)
+            {
+                throw new InvalidOperationException("A successful code verification must contain a grant.");
+            }
+
+            // Grant details are personal access-control data and must not be cached by a browser or a proxy.
+            Response.Headers["Cache-Control"] = "no-store";
+            return Ok(result.Grant);
+        }
+
+        return result.Failure switch
+        {
+            AccessCodeVerificationFailure.AppointmentNotFound => CreateProblem(
+                StatusCodes.Status404NotFound,
+                NotFoundType,
+                "Appointment not found.",
+                "No appointment has the requested identifier."),
+            AccessCodeVerificationFailure.DoctorNotFound or AccessCodeVerificationFailure.DoctorMismatch =>
+                CreateProblem(
+                    StatusCodes.Status403Forbidden,
+                    ForbiddenType,
+                    "You cannot verify a code for this visit.",
+                    "You can verify a code only for your own appointment."),
+            AccessCodeVerificationFailure.AppointmentNotCheckedIn => CreateProblem(
+                StatusCodes.Status400BadRequest,
+                BadRequestType,
+                "The visit cannot be verified.",
+                "The appointment must be checked in or already in visit."),
+            AccessCodeVerificationFailure.InvalidCode => CreateProblem(
+                StatusCodes.Status400BadRequest,
+                BadRequestType,
+                "The code is not valid.",
+                "The presented code did not match. The attempt was recorded."),
+            AccessCodeVerificationFailure.AccessAlreadyGranted => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The visit already has an access grant.",
+                "The patient already approved access for this visit."),
+            AccessCodeVerificationFailure.RequestNotPending => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The visit has no pending access request.",
+                "The doctor must start the visit before a code can be verified."),
+            AccessCodeVerificationFailure.CodeUnavailable => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "No usable code exists.",
+                "The code is missing, expired, consumed or revoked. Ask the patient for a new code."),
+            AccessCodeVerificationFailure.CodeLocked => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The code is locked.",
+                "Five wrong entries locked this code. Ask the patient for a new code."),
+            AccessCodeVerificationFailure.RequestConflict => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The code verification conflicted with another request.",
+                "Another request for this visit changed the state first. Retry with the current state."),
+            _ => throw new InvalidOperationException(
+                $"Unexpected access-code verification failure: {result.Failure}.")
         };
     }
 

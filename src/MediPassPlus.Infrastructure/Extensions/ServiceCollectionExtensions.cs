@@ -16,6 +16,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MediPassPlus.Application.AdminManagement;
 using MediPassPlus.Infrastructure.AdminManagement;
+using MediPassPlus.Infrastructure.VisitAccess;
+using Microsoft.Extensions.Options;
 
 namespace MediPassPlus.Infrastructure.Extensions;
 
@@ -50,9 +52,24 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAccessRequestDecisionStore, AccessRequestDecisionStore>();
         services.AddScoped<IAccessRequestDecisionService, AccessRequestDecisionService>();
 
+        // Six-digit fallback: the patient generates the code, the owning doctor verifies it, and only its HMAC is
+        // stored (FR-ACS-05, ADR-0001, ADR-0002). The HMAC key is a separate server secret (ADR-0007 decision 5).
+        services.AddScoped<IAccessCodeStore, AccessCodeStore>();
+        services.AddScoped<IAccessCodeGenerationService, AccessCodeGenerationService>();
+        services.AddScoped<IAccessCodeVerificationService, AccessCodeVerificationService>();
+        services.AddSingleton<IAccessCodeHasher>(provider =>
+        {
+            var options = provider.GetRequiredService<IOptions<AccessCodeOptions>>().Value;
+            return new HmacAccessCodeHasher(options.GetKeyBytes());
+        });
+
         // The grant gate every medical endpoint must pass: database-backed on each request (FR-PRV-01, FR-ACS-06).
         services.AddScoped<IAccessGrantStore, AccessGrantStore>();
         services.AddScoped<IAccessGrantChecker, AccessGrantChecker>();
+
+        // The patient can end a live grant immediately; the end and its audit row commit together (FR-ACS-09, UC-19).
+        services.AddScoped<IAccessGrantEndStore, AccessGrantEndStore>();
+        services.AddScoped<IAccessGrantEndService, AccessGrantEndService>();
 
         // Booking: book, cancel and reschedule with a filtered unique index as the double-booking guard
         // (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-09, NFR-REL-03).

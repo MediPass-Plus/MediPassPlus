@@ -19,7 +19,7 @@ be resolved by the team, not silently.
 | [0008](0008-openapi-and-xml-documentation.md) | OpenAPI, Swagger UI and XML documentation | **Superseded** by ADR-0012 | Every endpoint PR |
 | [0009](0009-database-baseline-strategy.md) | Coordinated database baseline, then serialized migrations | **Accepted** (amended 2026-11-05) | All schema work |
 | [0010](0010-validation-and-error-format.md) | Input validation with FluentValidation and one ProblemDetails error format | **Accepted** (2026-11-05) | Every endpoint PR, error contract |
-| [0011](0011-access-grant-lifecycle.md) | Access grant lifecycle and status derivation | **Accepted** (2026-11-05; amended 2026-11-05 for composite scope enforcement) | Visit Access checker, grant endpoints |
+| [0011](0011-access-grant-lifecycle.md) | Access grant lifecycle and status derivation | **Accepted** (2026-11-05; amended 2026-11-05 and 2026-11-12) | Visit Access checker, grant endpoints |
 | [0012](0012-swagger-single-document-generator.md) | Swashbuckle as the single Swagger document generator | **Accepted** (2026-11-11) | Every endpoint PR, Swagger configuration |
 
 ## How to use these records

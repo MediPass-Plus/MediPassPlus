@@ -1,8 +1,6 @@
-using System.Globalization;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Net.Http.Headers;
 
 namespace MediPassPlus.Api.RateLimiting;
 
@@ -18,7 +16,6 @@ public static class QrApproveRateLimitPolicy
 
     private const string PatientPartitionPrefix = "patient:";
     private const string IpPartitionPrefix = "ip:";
-    private const string RetryAfterFallbackSeconds = "60";
 
     /// <summary>
     /// Creates the fixed-window partition for the authenticated patient. An unauthenticated caller falls back to the
@@ -62,26 +59,10 @@ public static class QrApproveRateLimitPolicy
         RateLimitLease lease,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(httpContext);
-        ArgumentNullException.ThrowIfNull(lease);
-
-        if (lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
-        {
-            httpContext.Response.Headers[HeaderNames.RetryAfter] = Math
-                .Ceiling(retryAfter.TotalSeconds)
-                .ToString(CultureInfo.InvariantCulture);
-        }
-        else
-        {
-            // A limiter without RetryAfter metadata must still honour the response contract.
-            httpContext.Response.Headers[HeaderNames.RetryAfter] = RetryAfterFallbackSeconds;
-        }
-
-        await Results.Problem(
-                statusCode: StatusCodes.Status429TooManyRequests,
-                title: "Too many access-request decisions.",
-                detail: "Wait for the delay in the Retry-After header, then try again.",
-                type: "https://tools.ietf.org/html/rfc6585#section-4")
-            .ExecuteAsync(httpContext);
+        await RateLimitProblem.WriteAsync(
+            httpContext,
+            lease,
+            "Too many access-request decisions.",
+            cancellationToken);
     }
 }

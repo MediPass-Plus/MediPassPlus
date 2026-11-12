@@ -55,7 +55,30 @@ startup); a rejection is `429` with `Retry-After` (ADR-0007). MP-34 adds the app
 for today, `POST api/appointments/{appointmentId}/complete` lets the owning doctor complete an in-visit appointment,
 and `start-visit` now moves `CheckedIn -> InVisit` before it issues the QR (re-issuing while `InVisit` is allowed
 until the patient approves; once a grant exists, a restart returns `409` instead of a QR that could never be
-approved).
+approved). MP-36 adds the six-digit fallback (FR-ACS-05, ADR-0002): `POST
+api/appointments/{appointmentId}/access-code` lets the authenticated patient generate a code for today's
+checked-in or in-visit appointment with a pending request, and `POST
+api/appointments/{appointmentId}/verify-code` lets the owning doctor verify it. The code lives five minutes, is
+stored only as HMAC-SHA-256 under the separate `AccessCode:HmacKey` secret, is consumed on success, and locks after
+five wrong entries. A successful verification records the patient's approval, creates the two-hour grant, moves the
+appointment to `InVisit`, revokes the QR, and writes `AccessGrantCreated` in one unit of work (ADR-0011 amendment
+2026-11-12). Generation is limited to 3 per 15 minutes per patient and verification to 5 per 15 minutes per doctor
+and appointment; both answer `429` with `Retry-After` beyond the budget. No migration was needed.
+MP-37 adds the remaining grant-ending paths (FR-ACS-07, FR-ACS-09, FR-ACS-11). `POST
+api/access-grants/{grantId}/end` lets the authenticated patient end a live grant immediately; it answers `200` with
+the ended grant, `403` for another patient's grant, `404` for an unknown grant, and `409` once the grant has already
+ended or reached its two-hour limit, or when another request ended it first. The grant end and its `AccessEnded`
+audit row commit in one unit of work.
+Completion now loads the appointment's grant and, while it is still active, schedules its end 15 minutes after
+completion capped by the two-hour limit and writes `AccessEnded` in the same unit of work; a visit with no grant, or
+with a grant that already ended or expired, completes without extending it or writing a second audit. The absolute
+two-hour cap itself is already enforced on every read by `AccessGrantChecker`, so no production change was needed
+there. Reaching the cap is time-only: `StatusAt` derives `Expired` from the stored timestamps, there is no stored
+change, no background job and no audit row (ADR-0011 decision 3). Completion and a patient end that are truly
+concurrent cannot overwrite each other: `AccessGrant.EndedAtUtc` is an EF concurrency token, so the first end wins and
+the stale writer updates zero rows and answers `409` instead. A completion that loses the race does not extend the
+grant and writes no second audit; the doctor retries and the retry completes the visit against the already-ended
+grant. The token changes no column and needed no migration.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
 calendar while every stored timestamp stays UTC. Twelve migrations live in
@@ -76,6 +99,13 @@ authorization and state matrix (including the check-in → start-visit → compl
 boundary), and the MP-28 registration record matrix and the applied record migration. There is still no record-read
 or record-write endpoint (that is MP-38), no endpoint that verifies a presented QR or 6-digit credential, and no
 audit endpoint, and the
+boundary), and the MP-36 code generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate
+limits, and the HMAC-only storage proof). The MP-37 tests add the completion grant-end/cap/already-ended matrix, the
+patient-end `401`/`403`/`404`/`409` matrix, both audit proofs, a two-context persistence test proving a stale
+completion cannot overwrite a patient end, and a test-only `[RequireActiveGrant]` controller that
+shows the doctor's next gated request returns `403` after the patient ends the grant. There is still no record-read
+endpoint, no QR-verification endpoint,
+no medical-record module and no audit endpoint, and the
 frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
@@ -134,7 +164,8 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - QR token: 128-bit CSPRNG value, 2-minute life, single use, stored only as a **SHA-256** hash (ADR-0001).
 - 6-digit code: 5-minute life, single use, entered by the doctor only (ADR-0002), stored only as **HMAC-SHA-256 with a
   protected server-side key** — a plain SHA-256 over a 6-digit keyspace is precomputable. Compare in fixed time
-  (ADR-0001).
+  (ADR-0001). The key is `AccessCode:HmacKey` (Base64 of at least 32 random bytes), validated at startup and separate
+  from the JWT signing key and the Data Protection ring.
 - Attempts: 5 wrong code entries lock that credential (FR-ACS-05). ADR-0007, decision 1 keeps the per-credential
   lockout authoritative and treats rate limiting as defence-in-depth (5 verifications / 15 min per doctor+appointment,
   3 generations / 15 min per patient; the numbers are tunable). The **lockout duration itself is not settled**: ADR-0003
@@ -164,16 +195,22 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
   `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
+  `POST api/appointments/{appointmentId}/access-code` (Patient),
+  `POST api/appointments/{appointmentId}/verify-code` (Doctor),
   `POST api/appointments/{appointmentId}/check-in` (Staff), `POST api/appointments/{appointmentId}/complete`
   (Doctor), `GET api/doctors/me/schedule?date=` (Doctor),
-  `POST api/access-requests/{requestId}/approve` / `/reject` (Patient), and the booking actions
+  `POST api/access-requests/{requestId}/approve` / `/reject` (Patient),
+  `POST api/access-grants/{grantId}/end` (Patient), and the booking actions
   `POST api/appointments` / `{appointmentId}/cancel` / `{appointmentId}/reschedule` (Patient). Start-visit exercises
   the scope check and issues a one-time QR credential; check-in and completion enforce the appointment state machine
   and the staff-clinic or doctor-ownership scope; the doctor schedule reads one Cairo-local day; the patient
   endpoints answer a request by ID, consume or revoke its credentials, and return `429` with `Retry-After` after the
-  per-patient `QrApprove` limit. The booking actions stay inside the authenticated patient's scope and return
-  `400`/`404`/`409` `ProblemDetails` for every refused rule. No endpoint yet verifies a presented QR or 6-digit
-  credential, and there is still no medical-record endpoint.
+  per-patient `QrApprove` limit. The access-code endpoints are patient generation and owning-doctor verification,
+  with their own `CodeGeneration`/`CodeVerification` limits and the FR-ACS-05 lockout. Completion also ends the
+  visit's active grant after the 15-minute grace, capped by the two-hour limit, and the patient end takes effect
+  immediately. The booking actions stay inside the authenticated patient's scope and return `400`/`404`/`409`
+  `ProblemDetails` for every refused rule. No endpoint yet verifies a presented QR, and there is still no
+  medical-record endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for
