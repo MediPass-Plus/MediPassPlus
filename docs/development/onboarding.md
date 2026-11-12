@@ -36,15 +36,19 @@ Secrets stay on your machine and never enter Git:
 dotnet user-secrets set "ConnectionStrings:Default" "<your SQL Server connection string>" --project src/MediPassPlus.Api
 dotnet user-secrets set "Jwt:Key" "<at least 32 random characters>" --project src/MediPassPlus.Api
 
+# Base64 of at least 32 random bytes. The API validates it at startup and refuses to run without it.
+$key = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+dotnet user-secrets set "AccessCode:HmacKey" $key --project src/MediPassPlus.Api
+
 dotnet user-secrets list --project src/MediPassPlus.Api     # confirm what is set, never paste the values anywhere
 ```
 
 Secrets are local to each developer: user-secrets are not shared through Git, and one developer's store says nothing
 about another's. Check your own store for the values your task needs — `dotnet user-secrets list --project
 src/MediPassPlus.Api` — and add whatever is missing; do not assume it is empty, and do not assume it is complete. The
-API still starts without them because no code opens the database yet, so set them when your task first touches the
-database or authentication. The JWT signing key, the Data Protection keys and the access-code HMAC key are three
-**different** secrets (ADR-0007).
+API starts without a database connection string until something opens the database, but `AccessCode:HmacKey` is
+validated at startup, so the API does not start without it. The JWT signing key, the Data Protection keys and the
+access-code HMAC key are three **different** secrets (ADR-0007).
 
 ## 3. Open the repository in OpenCode
 

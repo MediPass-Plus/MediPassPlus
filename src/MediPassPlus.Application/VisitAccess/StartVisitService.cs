@@ -1,4 +1,5 @@
 using MediPassPlus.Application.Audit;
+using MediPassPlus.Application.Common;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.VisitAccess;
@@ -6,37 +7,45 @@ using MediPassPlus.Domain.VisitAccess;
 namespace MediPassPlus.Application.VisitAccess;
 
 /// <summary>
-/// Starts a visit: verifies the doctor's scope, checks the appointment is today and checked in, reuses the pending
-/// request or creates a new one, and replaces the live QR credential with a new two-minute one (FR-ACS-01,
-/// FR-ACS-02). A newly created request is audited in the same unit of work (ADR-0011 decision 8, ADR-0004). The
-/// filtered unique index rejects a concurrent second pending request, which is surfaced as a conflict.
+/// Starts a visit: verifies the doctor's scope, checks the appointment is today and is checked in or already in
+/// visit, moves a checked-in appointment to <see cref="AppointmentStatus.InVisit"/>, reuses the pending request or
+/// creates a new one, and replaces the live QR credential with a new two-minute one (FR-ACS-01, FR-ACS-02,
+/// FR-BKG-08). A newly created request is audited in the same unit of work (ADR-0011 decision 8, ADR-0004). Once the
+/// patient has approved a request the appointment already has its grant, so a restart is refused instead of creating
+/// a request that could never be approved (FR-ACS-11). The filtered unique index rejects a concurrent second pending
+/// request, which is surfaced as a conflict. "Today" is the clinic-local date in Africa/Cairo.
 /// </summary>
 public sealed class StartVisitService : IStartVisitService
 {
     private readonly IVisitAccessScopeService _scopeService;
     private readonly IVisitStartStore _store;
     private readonly IAuditWriter _auditWriter;
+    private readonly IClinicTimeZone _clinicTimeZone;
     private readonly TimeProvider _timeProvider;
 
     /// <summary>Initializes a new instance of the <see cref="StartVisitService"/> class.</summary>
     /// <param name="scopeService">Verifies that the authenticated doctor owns the appointment.</param>
     /// <param name="store">The unit of work that loads and stages the visit-access state.</param>
     /// <param name="auditWriter">Stages the request-creation audit row in the same unit of work.</param>
-    /// <param name="timeProvider">The clock used for the QR lifetime and the "today" check.</param>
+    /// <param name="clinicTimeZone">The clinic calendar used for the "today" check.</param>
+    /// <param name="timeProvider">The clock used for the QR lifetime and the status timestamp.</param>
     public StartVisitService(
         IVisitAccessScopeService scopeService,
         IVisitStartStore store,
         IAuditWriter auditWriter,
+        IClinicTimeZone clinicTimeZone,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(scopeService);
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(auditWriter);
+        ArgumentNullException.ThrowIfNull(clinicTimeZone);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _scopeService = scopeService;
         _store = store;
         _auditWriter = auditWriter;
+        _clinicTimeZone = clinicTimeZone;
         _timeProvider = timeProvider;
     }
 
@@ -73,7 +82,7 @@ public sealed class StartVisitService : IStartVisitService
             return StartVisitResult.Denied(StartVisitFailure.AppointmentNotFound);
         }
 
-        if (context.Appointment.Status != AppointmentStatus.CheckedIn)
+        if (context.Appointment.Status is not (AppointmentStatus.CheckedIn or AppointmentStatus.InVisit))
         {
             return StartVisitResult.Denied(StartVisitFailure.AppointmentNotCheckedIn);
         }
@@ -82,9 +91,27 @@ public sealed class StartVisitService : IStartVisitService
         var slot = context.Appointment.DoctorSlot
             ?? throw new InvalidOperationException("The appointment has no doctor slot.");
 
-        if (DateOnly.FromDateTime(slot.StartTimeUtc) != DateOnly.FromDateTime(now))
+        var today = _clinicTimeZone.GetLocalDate(now);
+        if (!_clinicTimeZone.IsLocalDate(slot.StartTimeUtc, today))
         {
             return StartVisitResult.Denied(StartVisitFailure.AppointmentNotToday);
+        }
+
+        // An approved request already produced the visit's grant. A second grant is impossible (one grant per
+        // appointment, and an ended grant is never reused), so a restart must not hand out a QR that the patient
+        // could never approve (FR-ACS-11).
+        if (context.Requests.Any(request => request.Status == AccessRequestStatus.Approved))
+        {
+            return StartVisitResult.Denied(StartVisitFailure.AccessAlreadyGranted);
+        }
+
+        // The first start moves CheckedIn -> InVisit and records the UTC timestamp (FR-BKG-08). Re-issuing the QR
+        // for an already started visit is allowed and does not change the state, which is the UC-11 A1 retry after
+        // the QR expires or the patient rejects the request.
+        if (context.Appointment.Status == AppointmentStatus.CheckedIn
+            && !context.Appointment.TryMarkInVisit(now))
+        {
+            return StartVisitResult.Denied(StartVisitFailure.AppointmentNotCheckedIn);
         }
 
         var pending = context.Requests

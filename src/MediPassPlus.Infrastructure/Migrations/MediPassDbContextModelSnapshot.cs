@@ -79,6 +79,15 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CheckedInAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("datetime2");
 
@@ -88,6 +97,9 @@ namespace MediPassPlus.Infrastructure.Migrations
                     b.Property<int>("DoctorSlotId")
                         .IsConcurrencyToken()
                         .HasColumnType("int");
+
+                    b.Property<DateTime?>("InVisitAtUtc")
+                        .HasColumnType("datetime2");
 
                     b.Property<Guid>("PatientId")
                         .HasColumnType("uniqueidentifier");
@@ -192,7 +204,7 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DoctorId");
+                    b.HasIndex(new[] { "DoctorId", "StartTimeUtc" }, "IX_DoctorSlots_DoctorId_StartTimeUtc");
 
                     b.ToTable("DoctorSlots", "clinical");
                 });
