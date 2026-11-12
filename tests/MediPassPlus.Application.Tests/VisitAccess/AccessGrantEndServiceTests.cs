@@ -176,6 +176,31 @@ public class AccessGrantEndServiceTests
     }
 
     [Fact]
+    public async Task EndAsync_WhenAnotherRequestEndedTheGrantFirst_ReturnsGrantConflict()
+    {
+        var appointment = CreateAppointment();
+        var grant = CreateGrant(appointment);
+        var store = new FakeAccessGrantEndStore
+        {
+            Grant = grant,
+            TrackedGrant = grant,
+            ConflictOnSave = true
+        };
+        var (service, auditWriter) = CreateService(appointment, store);
+
+        var result = await service.EndAsync(grant.Id, PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessGrantEndFailure.GrantConflict, result.Failure);
+        Assert.Null(result.Grant);
+        Assert.Equal(1, store.SaveCount);
+
+        // The audit row was staged with the end, but the refused save means it never commits.
+        Assert.Single(auditWriter.AddedEntries);
+        Assert.Equal(grant.Id, auditWriter.AddedEntries[0].AccessGrantId);
+    }
+
+    [Fact]
     public async Task EndAsync_WhenTheIpAddressIsBlank_Throws()
     {
         var store = new FakeAccessGrantEndStore();

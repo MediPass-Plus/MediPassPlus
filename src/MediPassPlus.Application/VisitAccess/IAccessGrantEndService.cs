@@ -7,7 +7,8 @@ public interface IAccessGrantEndService
 {
     /// <summary>
     /// Ends the grant when the authenticated patient owns its appointment and the grant is still active. The end and
-    /// its <c>AccessEnded</c> audit row commit in one unit of work (ADR-0004 decision 7).
+    /// its <c>AccessEnded</c> audit row commit in one unit of work (ADR-0004 decision 7). A concurrent end wins, so
+    /// access is never reopened and the caller receives <see cref="AccessGrantEndFailure.GrantConflict"/>.
     /// </summary>
     /// <param name="grantId">The grant to end.</param>
     /// <param name="patientUserId">The authenticated patient user account identifier.</param>

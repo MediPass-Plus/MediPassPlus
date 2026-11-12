@@ -164,6 +164,51 @@ public class AccessGrantEndStoreTests
         Assert.False(reloaded.IsActiveAt(Start.AddMinutes(21)));
     }
 
+    [Fact]
+    public async Task SaveChangesAsync_WhenAnotherRequestEndedTheGrantFirst_ThrowsAndKeepsTheFirstEnd()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        GrantScope scope;
+        await using (var seedDb = new MediPassDbContext(options))
+        {
+            await seedDb.Database.EnsureCreatedAsync();
+            scope = await SeedGrantAsync(seedDb);
+        }
+
+        var visitScope = new VisitAccessScope(scope.AppointmentId, scope.DoctorId, scope.PatientId);
+
+        await using var firstDb = new MediPassDbContext(options);
+        await using var secondDb = new MediPassDbContext(options);
+        var firstStore = new AccessGrantEndStore(firstDb);
+        var secondStore = new AccessGrantEndStore(secondDb);
+
+        var first = await firstStore.LoadAsync(scope.GrantId, visitScope);
+        var second = await secondStore.LoadAsync(scope.GrantId, visitScope);
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+
+        // The second request commits its end first. The first request's view is now stale.
+        second.EndByPatient(Start.AddMinutes(20));
+        await secondStore.SaveChangesAsync();
+
+        first.EndByPatient(Start.AddMinutes(25));
+        await Assert.ThrowsAsync<AccessGrantConflictException>(() => firstStore.SaveChangesAsync());
+
+        await using var reloadedDb = new MediPassDbContext(options);
+        var reloaded = await reloadedDb.AccessGrants.AsNoTracking()
+            .SingleAsync(grant => grant.Id == scope.GrantId);
+
+        // The first end stands: the stale writer never overwrites it (FR-ACS-09, FR-ACS-11).
+        Assert.Equal(Start.AddMinutes(20), reloaded.EndedAtUtc);
+        Assert.Equal(GrantEndReason.PatientEnded, reloaded.EndReason);
+    }
+
     private static async Task<GrantScope> SeedGrantAsync(MediPassDbContext db)
     {
         var doctorUserId = Guid.NewGuid();

@@ -35,6 +35,7 @@ public class AccessGrantsControllerTests
     [InlineData(AccessGrantEndFailure.GrantNotFound, StatusCodes.Status404NotFound)]
     [InlineData(AccessGrantEndFailure.PatientMismatch, StatusCodes.Status403Forbidden)]
     [InlineData(AccessGrantEndFailure.GrantNotActive, StatusCodes.Status409Conflict)]
+    [InlineData(AccessGrantEndFailure.GrantConflict, StatusCodes.Status409Conflict)]
     public async Task End_WhenTheServiceRefuses_ReturnsTheMappedProblemDetails(
         AccessGrantEndFailure failure,
         int expectedStatusCode)

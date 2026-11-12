@@ -43,6 +43,19 @@ public sealed class AccessGrantEndStore : IAccessGrantEndStore
     }
 
     /// <inheritdoc />
-    public Task SaveChangesAsync(CancellationToken cancellationToken = default) =>
-        _context.SaveChangesAsync(cancellationToken);
+    public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException exception)
+        {
+            // AccessGrant.EndedAtUtc is a concurrency token: the first end wins and a stale writer is refused, so a
+            // completion can never undo a patient end (FR-ACS-09, FR-ACS-11, ADR-0011).
+            throw new AccessGrantConflictException(
+                "Another request ended the access grant first.",
+                exception);
+        }
+    }
 }

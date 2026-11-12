@@ -7,7 +7,8 @@ namespace MediPassPlus.Application.VisitAccess;
 /// <summary>
 /// Ends a live access grant immediately at the patient's request (FR-ACS-09, UC-19). The grant's appointment scope is
 /// resolved from the database, never from caller-supplied identifiers (FR-ACS-06, ADR-0011 decision 8), and the end
-/// commits together with its <c>AccessEnded</c> audit row (ADR-0004 decision 7).
+/// commits together with its <c>AccessEnded</c> audit row (ADR-0004 decision 7). If another request ends the grant
+/// first, the earlier end stands and the patient is asked to retry (<see cref="AccessGrantEndFailure.GrantConflict"/>).
 /// </summary>
 public sealed class AccessGrantEndService : IAccessGrantEndService
 {
@@ -93,7 +94,16 @@ public sealed class AccessGrantEndService : IAccessGrantEndService
             ipAddress,
             tracked.Id));
 
-        await _store.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _store.SaveChangesAsync(cancellationToken);
+        }
+        catch (AccessGrantConflictException)
+        {
+            // Another request ended the grant first, for example the doctor completing the visit. The earlier end
+            // stands, so the patient is asked to retry rather than overwriting it (FR-ACS-09, FR-ACS-11).
+            return AccessGrantEndResult.Denied(AccessGrantEndFailure.GrantConflict);
+        }
 
         return AccessGrantEndResult.Ended(new AccessGrantEndedResponse(
             tracked.Id,

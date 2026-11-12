@@ -21,6 +21,6 @@ public enum CompleteFailure
     /// <summary>The appointment is not in the <c>InVisit</c> state.</summary>
     AppointmentNotInVisit,
 
-    /// <summary>A concurrent request changed the appointment status first.</summary>
+    /// <summary>A concurrent request changed the appointment status or ended its access grant first.</summary>
     AppointmentConflict
 }

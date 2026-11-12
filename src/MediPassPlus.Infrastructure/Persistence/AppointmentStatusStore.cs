@@ -2,6 +2,7 @@ using MediPassPlus.Application.AppointmentStatusFlow;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Domain.StaffAdmin;
+using MediPassPlus.Domain.VisitAccess;
 using Microsoft.EntityFrameworkCore;
 
 namespace MediPassPlus.Infrastructure.Persistence;
@@ -9,7 +10,8 @@ namespace MediPassPlus.Infrastructure.Persistence;
 /// <summary>
 /// The EF Core unit of work for the appointment status flow. The read side resolves the appointment with its doctor
 /// and slot, the authenticated staff profile and the patient account; the write side maps a lost concurrency race to
-/// <see cref="AppointmentStatusConflictException"/> (FR-BKG-08, NFR-REL-03).
+/// <see cref="AppointmentStatusConflictException"/> (FR-BKG-08, NFR-REL-03). The race can be lost to another request
+/// that changed the appointment status or ended the visit's access grant first (FR-ACS-09).
 /// </summary>
 public sealed class AppointmentStatusStore : IAppointmentStatusStore
 {
@@ -85,9 +87,13 @@ public sealed class AppointmentStatusStore : IAppointmentStatusStore
         }
         catch (DbUpdateConcurrencyException exception)
         {
-            // Appointment.Status is a concurrency token: another request checked in or completed the same row first.
+            // Appointment.Status and AccessGrant.EndedAtUtc are concurrency tokens: another request checked in,
+            // completed the same row, or ended the visit's grant first. The earlier write always stands.
+            var grantConflicted = exception.Entries.Any(entry => entry.Entity is AccessGrant);
             throw new AppointmentStatusConflictException(
-                "Another request changed the appointment status first.",
+                grantConflicted
+                    ? "Another request ended the visit's access grant first."
+                    : "Another request changed the appointment status first.",
                 exception);
         }
     }

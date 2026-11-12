@@ -19,6 +19,11 @@ public class AccessGrantConfiguration : IEntityTypeConfiguration<AccessGrant>
         builder.Property(g => g.GrantedAtUtc).IsRequired();
         builder.Property(g => g.ExpiresAtUtc).IsRequired();
 
+        // The end is written once: NULL becomes the first scheduled or actual end. Marking it as a concurrency
+        // token makes a stale writer update zero rows instead of overwriting an earlier end, so a completion can
+        // never undo a patient's revocation (FR-ACS-09, FR-ACS-11, ADR-0011). No column changes and no migration.
+        builder.Property(g => g.EndedAtUtc).IsConcurrencyToken();
+
         // One grant per request, and one grant per appointment: an ended grant is never reused (FR-ACS-11).
         builder.HasOne<AccessRequest>()
             .WithOne()

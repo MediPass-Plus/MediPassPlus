@@ -11,6 +11,8 @@ internal sealed class FakeAccessGrantEndStore : IAccessGrantEndStore
 
     public int SaveCount { get; private set; }
 
+    public bool ConflictOnSave { get; set; }
+
     public bool WasLoaded { get; private set; }
 
     public VisitAccessScope? LastScope { get; private set; }
@@ -35,6 +37,9 @@ internal sealed class FakeAccessGrantEndStore : IAccessGrantEndStore
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         SaveCount++;
-        return Task.CompletedTask;
+
+        return ConflictOnSave
+            ? throw new AccessGrantConflictException()
+            : Task.CompletedTask;
     }
 }

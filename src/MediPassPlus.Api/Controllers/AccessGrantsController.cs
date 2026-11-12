@@ -42,7 +42,9 @@ public class AccessGrantsController : ControllerBase
     /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
     /// <response code="403">The caller is not the patient who owns the grant's appointment.</response>
     /// <response code="404">No access grant has the requested identifier.</response>
-    /// <response code="409">The grant already ended or reached the two-hour limit and cannot change state.</response>
+    /// <response code="409">
+    /// The grant already ended, reached the two-hour limit, or another request ended it first.
+    /// </response>
     [HttpPost("{grantId:guid}/end")]
     [Produces("application/json")]
     [ProducesResponseType(typeof(AccessGrantEndedResponse), StatusCodes.Status200OK)]
@@ -91,6 +93,11 @@ public class AccessGrantsController : ControllerBase
                 ConflictType,
                 "The access grant is not active.",
                 "The access grant already ended or reached the two-hour limit."),
+            AccessGrantEndFailure.GrantConflict => CreateProblem(
+                StatusCodes.Status409Conflict,
+                ConflictType,
+                "The access grant conflicted with another request.",
+                "Another request ended the access grant first. Refresh and retry."),
             _ => throw new InvalidOperationException(
                 $"Unexpected access-grant end failure: {result.Failure}.")
         };

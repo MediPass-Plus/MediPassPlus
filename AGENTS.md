@@ -67,16 +67,18 @@ and appointment; both answer `429` with `Retry-After` beyond the budget. No migr
 MP-37 adds the remaining grant-ending paths (FR-ACS-07, FR-ACS-09, FR-ACS-11). `POST
 api/access-grants/{grantId}/end` lets the authenticated patient end a live grant immediately; it answers `200` with
 the ended grant, `403` for another patient's grant, `404` for an unknown grant, and `409` once the grant has already
-ended or reached its two-hour limit. The grant end and its `AccessEnded` audit row commit in one unit of work.
+ended or reached its two-hour limit, or when another request ended it first. The grant end and its `AccessEnded`
+audit row commit in one unit of work.
 Completion now loads the appointment's grant and, while it is still active, schedules its end 15 minutes after
 completion capped by the two-hour limit and writes `AccessEnded` in the same unit of work; a visit with no grant, or
 with a grant that already ended or expired, completes without extending it or writing a second audit. The absolute
 two-hour cap itself is already enforced on every read by `AccessGrantChecker`, so no production change was needed
 there. Reaching the cap is time-only: `StatusAt` derives `Expired` from the stored timestamps, there is no stored
-change, no background job and no audit row (ADR-0011 decision 3). Completion vs patient-end that are truly concurrent
-can still overwrite each other because `AccessGrant` has
-no concurrency token; sequential behaviour is correct, and the race is marked with a `TODO` in the completion
-service. No migration was needed.
+change, no background job and no audit row (ADR-0011 decision 3). Completion and a patient end that are truly
+concurrent cannot overwrite each other: `AccessGrant.EndedAtUtc` is an EF concurrency token, so the first end wins and
+the stale writer updates zero rows and answers `409` instead. A completion that loses the race does not extend the
+grant and writes no second audit; the doctor retries and the retry completes the visit against the already-ended
+grant. The token changes no column and needed no migration.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
 calendar while every stored timestamp stays UTC. Eleven migrations live in
@@ -90,7 +92,8 @@ approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the 
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
 boundary), and the MP-36 code generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate
 limits, and the HMAC-only storage proof). The MP-37 tests add the completion grant-end/cap/already-ended matrix, the
-patient-end `401`/`403`/`404`/`409` matrix, both audit proofs, and a test-only `[RequireActiveGrant]` controller that
+patient-end `401`/`403`/`404`/`409` matrix, both audit proofs, a two-context persistence test proving a stale
+completion cannot overwrite a patient end, and a test-only `[RequireActiveGrant]` controller that
 shows the doctor's next gated request returns `403` after the patient ends the grant. There is still no record-read
 endpoint, no QR-verification endpoint,
 no medical-record module and no audit endpoint, and the

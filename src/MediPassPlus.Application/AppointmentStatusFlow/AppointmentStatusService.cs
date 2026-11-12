@@ -145,9 +145,9 @@ public sealed class AppointmentStatusService : IAppointmentStatusService
             // during the grace window (FR-ACS-07, UC-18, ADR-0011 decision 3).
             grant.CompleteVisit(now);
 
-            // TODO: a completion and a patient end that are truly concurrent can overwrite each other because
-            // AccessGrant has no concurrency token. Sequential behaviour is correct; add a rowversion migration only
-            // if this race becomes relevant.
+            // AccessGrant.EndedAtUtc is a concurrency token. If the patient ends the grant after this read but
+            // before the save, the save fails and the earlier end stands; the completion then answers 409 and the
+            // doctor retries against the already-ended grant (FR-ACS-09, FR-ACS-11).
             _auditWriter.Add(new AuditEntry(
                 doctorUserId,
                 grant.PatientId,

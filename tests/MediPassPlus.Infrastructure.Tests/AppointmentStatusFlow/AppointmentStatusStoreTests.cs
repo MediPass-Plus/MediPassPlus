@@ -1,3 +1,4 @@
+using MediPassPlus.Application.AppointmentStatusFlow;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Domain.VisitAccess;
@@ -79,6 +80,58 @@ public class AppointmentStatusStoreTests
         var context = await store.LoadForCompleteAsync(42, Guid.NewGuid());
 
         Assert.Null(context);
+    }
+
+    [Fact]
+    public async Task SaveChangesAsync_WhenThePatientEndedTheGrantFirst_ThrowsAndLeavesTheVisitInVisit()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<MediPassDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        var doctorUserId = Guid.NewGuid();
+        var patientId = Guid.NewGuid();
+        Guid grantId;
+        await using (var seedDb = new MediPassDbContext(options))
+        {
+            await seedDb.Database.EnsureCreatedAsync();
+            var grant = await SeedVisitAsync(seedDb, doctorUserId, patientId);
+            Assert.NotNull(grant);
+            grantId = grant.Id;
+        }
+
+        // The doctor loads the visit and its active grant, then the patient ends the grant before the save.
+        await using var completionDb = new MediPassDbContext(options);
+        await using var patientDb = new MediPassDbContext(options);
+        var store = new AppointmentStatusStore(completionDb);
+
+        var context = await store.LoadForCompleteAsync(42, doctorUserId);
+        Assert.NotNull(context);
+        Assert.NotNull(context.Grant);
+        Assert.True(context.Appointment.TryComplete(Start.AddMinutes(10)));
+        context.Grant.CompleteVisit(Start.AddMinutes(10));
+
+        var patientGrant = await patientDb.AccessGrants
+            .SingleAsync(grant => grant.Id == grantId);
+        patientGrant.EndByPatient(Start.AddMinutes(11));
+        await patientDb.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<AppointmentStatusConflictException>(() => store.SaveChangesAsync());
+
+        await using var reloadedDb = new MediPassDbContext(options);
+        var storedGrant = await reloadedDb.AccessGrants.AsNoTracking()
+            .SingleAsync(grant => grant.Id == grantId);
+        var storedAppointment = await reloadedDb.Appointments.AsNoTracking()
+            .SingleAsync(appointment => appointment.Id == 42);
+
+        // The patient end stands and nothing from the stale completion commits: the whole save rolled back.
+        Assert.Equal(Start.AddMinutes(11), storedGrant.EndedAtUtc);
+        Assert.Equal(GrantEndReason.PatientEnded, storedGrant.EndReason);
+        Assert.Equal(AppointmentStatus.InVisit, storedAppointment.Status);
+        Assert.Null(storedAppointment.CompletedAtUtc);
     }
 
     private static async Task<AccessGrant?> SeedVisitAsync(
