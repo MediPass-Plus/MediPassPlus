@@ -58,8 +58,9 @@ git clone https://github.com/MediPass-Plus/MediPassPlus.git
 cd MediPassPlus
 
 # store secrets locally, never in the repository (the project already declares a UserSecretsId)
-dotnet user-secrets set "ConnectionStrings:Default" "<your connection string>" --project src/MediPassPlus.Api
-dotnet user-secrets set "Jwt:Key" "<a long random key>" --project src/MediPassPlus.Api
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "<your connection string>" --project src/MediPassPlus.Api
+dotnet user-secrets set "Jwt:SecretKey" "<a long random key of at least 32 characters>" --project src/MediPassPlus.Api
+dotnet user-secrets set "AccessCode:HmacKey" "<Base64 of at least 32 random bytes>" --project src/MediPassPlus.Api
 
 dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api
 dotnet run --project src/MediPassPlus.Api --launch-profile http
