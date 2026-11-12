@@ -67,6 +67,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAccessGrantStore, AccessGrantStore>();
         services.AddScoped<IAccessGrantChecker, AccessGrantChecker>();
 
+        // The patient can end a live grant immediately; the end and its audit row commit together (FR-ACS-09, UC-19).
+        services.AddScoped<IAccessGrantEndStore, AccessGrantEndStore>();
+        services.AddScoped<IAccessGrantEndService, AccessGrantEndService>();
+
         // Booking: book, cancel and reschedule with a filtered unique index as the double-booking guard
         // (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-09, NFR-REL-03).
         services.AddScoped<IBookingStore, BookingStore>();

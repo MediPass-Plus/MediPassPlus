@@ -19,14 +19,17 @@ public interface IAppointmentStatusService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Completes the doctor's own appointment when it is in the visit.
+    /// Completes the doctor's own appointment when it is in the visit. An active grant is scheduled to end 15 minutes
+    /// after completion, capped by its two-hour limit (FR-ACS-07, FR-ACS-08).
     /// </summary>
     /// <param name="appointmentId">The appointment identifier.</param>
     /// <param name="doctorUserId">The authenticated doctor user account identifier.</param>
+    /// <param name="ipAddress">The connection IP address recorded on the access-end audit row.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The resulting status or a refusal reason.</returns>
     Task<CompleteResult> CompleteAsync(
         int appointmentId,
         Guid doctorUserId,
+        string ipAddress,
         CancellationToken cancellationToken = default);
 }
