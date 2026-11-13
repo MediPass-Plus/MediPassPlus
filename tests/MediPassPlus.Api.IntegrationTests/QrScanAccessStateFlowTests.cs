@@ -62,7 +62,7 @@ public sealed class QrScanAccessStateFlowTests
         using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var scanResponse = await patientClient.PostAsJsonAsync(
-            "/api/access-requests/scan",
+            "/api/access/scan",
             new QrTokenRequest(scenario.QrToken!));
 
         Assert.Equal(HttpStatusCode.OK, scanResponse.StatusCode);
@@ -112,6 +112,59 @@ public sealed class QrScanAccessStateFlowTests
         Assert.InRange(state.RemainingSeconds, 7190, 7200);
     }
 
+    /// <summary>Approving the same token twice creates one grant; the replay is refused and consumes nothing.</summary>
+    [Fact]
+    public async Task ApproveByToken_WhenReplayedAfterSuccess_Returns410AndCreatesExactlyOneGrant()
+    {
+        var scenario = await _factory.CreateVisitScenarioAsync();
+        using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var first = await patientClient.PostAsJsonAsync(
+            "/api/access-requests/token/approve",
+            new QrTokenRequest(scenario.QrToken!));
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        using var replay = await patientClient.PostAsJsonAsync(
+            "/api/access-requests/token/approve",
+            new QrTokenRequest(scenario.QrToken!));
+        Assert.Equal(HttpStatusCode.Gone, replay.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.Equal(
+            1,
+            await db.AccessGrants.AsNoTracking()
+                .CountAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
+
+        var credential = await db.VisitAccessCredentials.AsNoTracking()
+            .SingleAsync(item => item.Id == scenario.Credential!.Id);
+        Assert.NotNull(credential.ConsumedAtUtc);
+    }
+
+    /// <summary>The owning patient sees the same active grant after a refresh that the doctor sees.</summary>
+    [Fact]
+    public async Task AccessState_ForTheOwningPatient_ReturnsTheActiveGrant()
+    {
+        var scenario = await _factory.CreateVisitScenarioAsync();
+        using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var approve = await patientClient.PostAsJsonAsync(
+            "/api/access-requests/token/approve",
+            new QrTokenRequest(scenario.QrToken!));
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        using var response = await patientClient.GetAsync(
+            $"/api/appointments/{scenario.Appointment.Id}/access-state");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var state = await response.Content.ReadFromJsonAsync<AccessStateResponse>();
+        Assert.NotNull(state);
+        Assert.Equal(scenario.Request!.Id, state.AccessRequestId);
+        Assert.Equal(nameof(AccessRequestStatus.Approved), state.RequestStatus);
+        Assert.Equal(nameof(AccessGrantStatus.Active), state.GrantStatus);
+        Assert.Null(state.EndedAtUtc);
+        Assert.InRange(state.RemainingSeconds, 7190, 7200);
+    }
+
     /// <summary>A camera frame is decoded by the server and resolves the same request as a text scan.</summary>
     [Fact]
     public async Task ScanImage_WithTheRenderedQrPng_ResolvesTheRequest()
@@ -146,8 +199,29 @@ public sealed class QrScanAccessStateFlowTests
         using var client = _factory.CreateAuthenticatedClient(otherPatient);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/access-requests/scan",
+            "/api/access/scan",
             new QrTokenRequest(scenario.QrToken!));
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(StatusCodes.Status403Forbidden, problem.Status);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.False(await db.AccessGrants.AsNoTracking()
+            .AnyAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
+    }
+
+    /// <summary>An unknown token is refused by the scan route with the same 403 as a foreign token.</summary>
+    [Fact]
+    public async Task Scan_WhenTheTokenIsUnknown_Returns403()
+    {
+        var patient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var client = _factory.CreateAuthenticatedClient(patient);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/access/scan",
+            new QrTokenRequest("an-unknown-token"));
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
@@ -164,12 +238,16 @@ public sealed class QrScanAccessStateFlowTests
         using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await patientClient.PostAsJsonAsync(
-            "/api/access-requests/scan",
+            "/api/access/scan",
             new QrTokenRequest(scenario.QrToken!));
 
         Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.Equal(StatusCodes.Status410Gone, problem!.Status);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.False(await db.AccessGrants.AsNoTracking()
+            .AnyAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
     }
 
     /// <summary>A token for a visit that already ended is gone (410).</summary>
@@ -180,7 +258,7 @@ public sealed class QrScanAccessStateFlowTests
         using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await patientClient.PostAsJsonAsync(
-            "/api/access-requests/scan",
+            "/api/access/scan",
             new QrTokenRequest(scenario.QrToken!));
 
         Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
@@ -248,7 +326,7 @@ public sealed class QrScanAccessStateFlowTests
         Assert.Equal(HttpStatusCode.NoContent, rejectResponse.StatusCode);
 
         using var scanResponse = await patientClient.PostAsJsonAsync(
-            "/api/access-requests/scan",
+            "/api/access/scan",
             new QrTokenRequest(scenario.QrToken!));
 
         Assert.Equal(HttpStatusCode.Gone, scanResponse.StatusCode);
@@ -307,7 +385,7 @@ public sealed class QrScanAccessStateFlowTests
         using var client = _factory.CreateClient();
 
         using var response = await client.PostAsJsonAsync(
-            "/api/access-requests/scan",
+            "/api/access/scan",
             new QrTokenRequest("a-token"));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -375,13 +453,13 @@ public sealed class QrScanAccessStateFlowTests
         for (var attempt = 1; attempt <= PermitLimit; attempt++)
         {
             using var allowed = await client.PostAsJsonAsync(
-                "/api/access-requests/scan",
+                "/api/access/scan",
                 new QrTokenRequest($"unknown-token-{attempt}"));
             Assert.Equal(HttpStatusCode.Forbidden, allowed.StatusCode);
         }
 
         using var rejected = await client.PostAsJsonAsync(
-            "/api/access-requests/scan",
+            "/api/access/scan",
             new QrTokenRequest("unknown-token-6"));
 
         Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);

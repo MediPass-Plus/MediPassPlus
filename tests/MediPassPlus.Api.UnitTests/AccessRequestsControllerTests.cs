@@ -171,6 +171,17 @@ public class AccessRequestsControllerTests
     }
 
     [Fact]
+    public void Scan_UsesTheSpecifiedAccessRoute()
+    {
+        var method = typeof(AccessRequestsController)
+            .GetMethod(nameof(AccessRequestsController.Scan))!;
+        var httpPost = method.GetCustomAttribute<HttpPostAttribute>();
+
+        Assert.NotNull(httpPost);
+        Assert.Equal("~/api/access/scan", httpPost.Template);
+    }
+
+    [Fact]
     public void Approve_DeclaresEveryExpectedResponseCode()
     {
         var codes = GetResponseCodes(nameof(AccessRequestsController.Approve));

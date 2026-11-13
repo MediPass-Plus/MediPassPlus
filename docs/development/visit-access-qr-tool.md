@@ -33,7 +33,7 @@ exposed: Development, or `OpenApi:ExposeOutsideDevelopment=true`. Outside Develo
 5. **Scan as the patient.** Start the camera, point it at the QR, and click **Capture & scan**. The page
    posts the frame to `POST api/access-requests/scan-image`; the server decodes it in memory and returns
    the request, doctor, specialty, clinic, address and appointment start. A text token uses
-   `POST api/access-requests/scan`.
+   `POST api/access/scan`.
 6. **Decide.** **Approve access** creates the two-hour grant; **Reject** creates none and revokes the
    credentials. A text scan calls `POST api/access-requests/token/approve` or `/token/reject`; a camera scan
    calls the request-id routes, because the browser never receives the decoded token.

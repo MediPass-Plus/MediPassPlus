@@ -81,7 +81,7 @@ MP-97 closes the presentation gap between `start-visit` and the patient's decisi
 lifecycle. The doctor's response now also carries `qrCodeDataUri`, the same plaintext token rendered as a PNG data
 URI at response time; the token itself is still never stored, and only its SHA-256 hash is (ADR-0001).
 
-A scan is read-only. `POST api/access-requests/scan` (token text) and `POST api/access-requests/scan-image` (a camera
+A scan is read-only. `POST api/access/scan` (token text) and `POST api/access-requests/scan-image` (a camera
 frame decoded in memory) resolve the token by its stored hash and return the doctor, clinic and appointment details
 the patient needs. Neither endpoint consumes, revokes or writes anything, so the patient can look before deciding
 and a retry is harmless. Consumption stays where decision 7 and ADR-0001 put it: the approve or reject action.

@@ -64,7 +64,7 @@ public class AccessRequestsController : ControllerBase
     /// <response code="429">
     /// The patient exceeded the configured scan/decision limit; the response carries <c>Retry-After</c>.
     /// </response>
-    [HttpPost("scan")]
+    [HttpPost("~/api/access/scan")]
     [Produces("application/json")]
     [ProducesResponseType(typeof(AccessRequestScanResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

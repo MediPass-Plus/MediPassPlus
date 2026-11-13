@@ -81,7 +81,7 @@ grant and writes no second audit; the doctor retries and the retry completes the
 grant. The token changes no column and needed no migration.
 MP-97 closes the QR loop. `POST api/appointments/{appointmentId}/start-visit` now also returns `qrCodeDataUri`, the
 same one-time token rendered as a PNG data URI by QRCoder; the plaintext is still never stored and only its SHA-256
-hash is. `POST api/access-requests/scan` resolves a token presented as text and `POST
+hash is. `POST api/access/scan` resolves a token presented as text and `POST
 api/access-requests/scan-image` decodes one from a camera frame in memory with ZXing.Net and ImageSharp (5 MB
 limit); neither consumes the token. `POST api/access-requests/token/approve` and `/token/reject` answer the request
 the token proves, and `GET api/appointments/{appointmentId}/access-state` returns the derived request and grant state
@@ -212,7 +212,7 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   `POST api/appointments/{appointmentId}/check-in` (Staff), `POST api/appointments/{appointmentId}/complete`
   (Doctor), `GET api/doctors/me/schedule?date=` (Doctor),
   `POST api/access-requests/{requestId}/approve` / `/reject` (Patient),
-  `POST api/access-requests/scan` / `/scan-image` (Patient),
+  `POST api/access/scan` / `/scan-image` (Patient),
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
   `POST api/access-grants/{grantId}/end` (Patient), and the booking actions
