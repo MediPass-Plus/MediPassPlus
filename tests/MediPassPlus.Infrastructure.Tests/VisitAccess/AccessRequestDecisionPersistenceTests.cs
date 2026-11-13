@@ -265,6 +265,11 @@ public class AccessRequestDecisionPersistenceTests
             CancellationToken cancellationToken = default) =>
             _inner.LoadAsync(requestId, scope, cancellationToken);
 
+        public Task<AccessRequestTokenContext?> FindByTokenHashAsync(
+            string tokenHash,
+            CancellationToken cancellationToken = default) =>
+            _inner.FindByTokenHashAsync(tokenHash, cancellationToken);
+
         public void AddGrant(AccessGrant grant) => _inner.AddGrant(grant);
 
         public async Task SaveChangesAsync(CancellationToken cancellationToken = default)

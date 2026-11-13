@@ -149,7 +149,7 @@ public class QrApproveRateLimitPolicyTests
         var root = document.RootElement;
 
         Assert.Equal(StatusCodes.Status429TooManyRequests, root.GetProperty("status").GetInt32());
-        Assert.Equal("Too many access-request decisions.", root.GetProperty("title").GetString());
+        Assert.Equal("Too many access-request attempts.", root.GetProperty("title").GetString());
         Assert.Equal(
             "https://tools.ietf.org/html/rfc6585#section-4",
             root.GetProperty("type").GetString());

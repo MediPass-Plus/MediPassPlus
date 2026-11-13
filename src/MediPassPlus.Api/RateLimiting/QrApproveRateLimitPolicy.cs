@@ -62,7 +62,7 @@ public static class QrApproveRateLimitPolicy
         await RateLimitProblem.WriteAsync(
             httpContext,
             lease,
-            "Too many access-request decisions.",
+            "Too many access-request attempts.",
             cancellationToken);
     }
 }

@@ -46,11 +46,22 @@ public static class ServiceCollectionExtensions
         // Start-visit: reuse the pending request and replace its live QR credential (FR-ACS-01, FR-ACS-02).
         services.AddScoped<IVisitStartStore, StartVisitStore>();
         services.AddScoped<IStartVisitService, StartVisitService>();
+        services.AddSingleton<IQrCodeRenderer, QrCodeRenderer>();
+
+        // QR scan: the patient presents the token as text or as a camera image, and the token is resolved by its
+        // stored SHA-256 hash only (UC-12, FR-ACS-02, MP-97).
+        services.AddSingleton<IQrImageDecoder, QrImageDecoder>();
+        services.AddScoped<IAccessRequestScanStore, AccessRequestScanStore>();
+        services.AddScoped<IAccessRequestScanService, AccessRequestScanService>();
 
         // Patient decision: approve creates the grant, reject creates none; both are audited in the same unit of
         // work (FR-ACS-03, FR-ACS-04, FR-PRV-02).
         services.AddScoped<IAccessRequestDecisionStore, AccessRequestDecisionStore>();
         services.AddScoped<IAccessRequestDecisionService, AccessRequestDecisionService>();
+
+        // Derived access state for the doctor and patient; every status is read from stored timestamps (MP-97).
+        services.AddScoped<IAccessStateStore, AccessStateStore>();
+        services.AddScoped<IAccessStateService, AccessStateService>();
 
         // Six-digit fallback: the patient generates the code, the owning doctor verifies it, and only its HMAC is
         // stored (FR-ACS-05, ADR-0001, ADR-0002). The HMAC key is a separate server secret (ADR-0007 decision 5).

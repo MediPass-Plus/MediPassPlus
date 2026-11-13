@@ -52,7 +52,7 @@ public sealed class AccessRequestDecisionRateLimitTests
         var problem = await rejected.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(problem);
         Assert.Equal(429, problem.Status);
-        Assert.Equal("Too many access-request decisions.", problem.Title);
+        Assert.Equal("Too many access-request attempts.", problem.Title);
     }
 
     /// <summary>Exhausting one patient's window does not affect another patient.</summary>

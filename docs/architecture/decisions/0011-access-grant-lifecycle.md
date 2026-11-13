@@ -1,8 +1,8 @@
 # ADR-0011: Access grant lifecycle and status derivation
 
 - **Status:** Accepted (2026-11-05, module review completed by Ahmed; amended 2026-11-05 for composite scope enforcement;
-  amended 2026-11-12 for code-verification approval)
-- **Date:** 2026-11-05 (amended 2026-11-05, amended 2026-11-12)
+  amended 2026-11-12 for code-verification approval; amended 2026-11-13 for QR scanning and the access-state read model)
+- **Date:** 2026-11-05 (amended 2026-11-05, amended 2026-11-12, amended 2026-11-13)
 - **Affects:** Visit Access module, `access.AccessRequests`/`access.AccessGrants`/`clinical.Appointments` schema,
   the future access checker, class diagram (D4)
 
@@ -74,6 +74,32 @@ The attempt counter is authoritative in the database, not in the API instance: a
 `UPDATE` that increments `FailedAttempts` and sets `LockedAtUtc` on the fifth, guarded by the credential's usable
 state. Concurrent entries serialize on that row, so no increment is lost and the fifth entry always locks even when
 several wrong codes arrive at once. The rate limit remains defence-in-depth (ADR-0007).
+
+### Amendment 2026-11-13 — QR scanning and the access-state read model
+
+MP-97 closes the presentation gap between `start-visit` and the patient's decision without changing this ADR's
+lifecycle. The doctor's response now also carries `qrCodeDataUri`, the same plaintext token rendered as a PNG data
+URI at response time; the token itself is still never stored, and only its SHA-256 hash is (ADR-0001).
+
+A scan is read-only. `POST api/access-requests/scan` (token text) and `POST api/access-requests/scan-image` (a camera
+frame decoded in memory) resolve the token by its stored hash and return the doctor, clinic and appointment details
+the patient needs. Neither endpoint consumes, revokes or writes anything, so the patient can look before deciding
+and a retry is harmless. Consumption stays where decision 7 and ADR-0001 put it: the approve or reject action.
+
+The token decision paths (`POST api/access-requests/token/approve` and `/token/reject`) answer the request the token
+proves. An unknown token and another patient's token both answer `403`, so the response never confirms that a token
+exists or who owns it. An expired, consumed, revoked or locked token, an already-answered request, or a visit that is
+no longer `CheckedIn`/`InVisit` answers `410` on these paths. The request-id paths keep their existing vocabulary:
+`404` for an unknown request and `409` for an already-answered request or a closed visit. Approval remains refused
+once the visit is no longer in progress, and rejection remains available because it creates no grant. A decision
+race still answers `409` through the `AccessRequest.Status` concurrency token.
+
+`GET api/appointments/{appointmentId}/access-state` returns the appointment's newest request and its grant to the
+appointment's doctor or patient. Every status and the remaining seconds are derived from the stored timestamps at
+read time with `StatusAt`/`EffectiveEndUtc`; nothing is written, no status is stored, and no background job exists.
+The endpoint adds no table and no column, and MP-97 needed no migration. Scanning is not an access-control event and
+adds no audit action; approve and reject continue to write `AccessGrantCreated` and `AccessRequestRejected` in their
+own unit of work.
 
 ## Consequences
 

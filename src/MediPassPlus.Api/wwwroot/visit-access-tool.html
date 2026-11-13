@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediPass+ visit-access QR tool</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f7f8fa;
+      --card: #ffffff;
+      --text: #1f2933;
+      --muted: #5f6b7a;
+      --line: #d9dee5;
+      --accent: #1f6feb;
+      --danger: #b42318;
+      --ok: #067647;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111418;
+        --card: #1a1f26;
+        --text: #e6e9ee;
+        --muted: #9aa5b1;
+        --line: #2c3440;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    h1 { margin: 0 0 4px; font-size: 1.5rem; }
+    h2 { margin: 0 0 12px; font-size: 1.05rem; }
+
+    p.lede {
+      margin: 0 0 20px;
+      color: var(--muted);
+    }
+
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 18px;
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      margin: 10px 0 4px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    input[type="password"],
+    input[type="text"],
+    textarea {
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 74px;
+      resize: vertical;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.8rem;
+      word-break: break-all;
+    }
+
+    button {
+      margin: 10px 8px 0 0;
+      padding: 9px 14px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+
+    button.danger { background: var(--danger); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .row > div { flex: 1 1 280px; }
+
+    video {
+      width: 100%;
+      max-width: 420px;
+      min-height: 180px;
+      background: #000;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }
+
+    #qrPreview {
+      display: none;
+      width: 264px;
+      height: 264px;
+      image-rendering: pixelated;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    #qrPreview.visible { display: block; }
+
+    #result {
+      margin-top: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      display: none;
+    }
+
+    #result.visible { display: block; }
+
+    #result dl {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 6px 14px;
+      margin: 0;
+    }
+
+    #result dt { color: var(--muted); }
+    #result dd { margin: 0; word-break: break-word; }
+
+    #status {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      white-space: pre-wrap;
+      display: none;
+    }
+
+    #status.visible { display: block; }
+    #status.ok { border-color: var(--ok); color: var(--ok); }
+    #status.error { border-color: var(--danger); color: var(--danger); }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.85em;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Visit-access QR tool</h1>
+  <p class="lede">
+    Development helper for MP-97. It displays the QR returned by
+    <code>POST /api/appointments/{appointmentId}/start-visit</code>, scans that code with the camera, and lets the
+    patient approve or reject the request. The JWT and the QR token stay in this page's memory only; nothing is
+    stored or logged.
+  </p>
+
+  <section>
+    <h2>1. Patient sign-in</h2>
+    <label for="jwt">Patient JWT</label>
+    <input id="jwt" type="password" autocomplete="off" spellcheck="false"
+           placeholder="Paste the accessToken from POST /api/Auth/login" />
+    <button id="clearJwt" class="secondary" type="button">Clear</button>
+    <p class="lede" style="margin: 8px 0 0; font-size: 0.8rem;">
+      Only the <code>Patient</code> role can scan and answer a request.
+    </p>
+  </section>
+
+  <section>
+    <h2>2. Display the doctor's QR</h2>
+    <label for="qrDataUri">qrCodeDataUri from the start-visit response</label>
+    <textarea id="qrDataUri" spellcheck="false"
+              placeholder="data:image/png;base64,..."></textarea>
+    <button id="showQr" type="button">Display QR</button>
+    <img id="qrPreview" alt="Visit access QR code" />
+    <p class="lede" style="margin: 10px 0 0; font-size: 0.8rem;">
+      The doctor runs start-visit in Swagger, copies <code>qrCodeDataUri</code>, and pastes it here. The QR is valid
+      for two minutes.
+    </p>
+  </section>
+
+  <section>
+    <h2>3. Scan as the patient</h2>
+    <div class="row">
+      <div>
+        <label>Camera</label>
+        <video id="preview" autoplay playsinline muted></video>
+        <div>
+          <button id="startCamera" type="button">Start camera</button>
+          <button id="stopCamera" class="secondary" type="button">Stop</button>
+          <button id="capture" type="button">Capture &amp; scan</button>
+        </div>
+      </div>
+      <div>
+        <label for="token">Or paste the QR token</label>
+        <input id="token" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Base64Url token from qrToken" />
+        <button id="scanToken" type="button">Scan token</button>
+      </div>
+    </div>
+
+    <div id="result">
+      <dl>
+        <dt>Request</dt><dd id="rRequest"></dd>
+        <dt>Appointment</dt><dd id="rAppointment"></dd>
+        <dt>Doctor</dt><dd id="rDoctor"></dd>
+        <dt>Specialty</dt><dd id="rSpecialty"></dd>
+        <dt>Clinic</dt><dd id="rClinic"></dd>
+        <dt>Address</dt><dd id="rAddress"></dd>
+        <dt>Appointment starts</dt><dd id="rStart"></dd>
+        <dt>Token expires</dt><dd id="rExpires"></dd>
+      </dl>
+      <button id="approve" type="button">Approve access</button>
+      <button id="reject" class="danger" type="button">Reject</button>
+    </div>
+
+    <div id="status"></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+
+  const state = {
+    stream: null,
+    scan: null,
+    token: null
+  };
+
+  const statusBox = $('status');
+
+  function setStatus(message, kind) {
+    statusBox.textContent = message;
+    statusBox.className = 'visible ' + (kind || '');
+  }
+
+  function clearStatus() {
+    statusBox.textContent = '';
+    statusBox.className = '';
+  }
+
+  function getJwt() {
+    const value = $('jwt').value.trim();
+    if (!value) {
+      throw new Error('Paste the patient JWT first.');
+    }
+    return value;
+  }
+
+  async function api(path, options) {
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        Authorization: 'Bearer ' + getJwt(),
+        ...(options && options.headers ? options.headers : {})
+      }
+    });
+
+    const text = await response.text();
+    let body = null;
+    if (text) {
+      try { body = JSON.parse(text); } catch { body = text; }
+    }
+
+    if (!response.ok) {
+      const detail = body && typeof body === 'object'
+        ? [body.title, body.detail].filter(Boolean).join(' — ')
+        : String(body || response.statusText);
+      const error = new Error(detail || ('HTTP ' + response.status));
+      error.status = response.status;
+      error.body = body;
+      throw error;
+    }
+
+    return body;
+  }
+
+  function showResult(scan, token) {
+    state.scan = scan;
+    state.token = token;
+
+    $('rRequest').textContent = scan.accessRequestId;
+    $('rAppointment').textContent = scan.appointmentId;
+    $('rDoctor').textContent = scan.doctorName;
+    $('rSpecialty').textContent = scan.doctorSpecialty;
+    $('rClinic').textContent = scan.clinicName;
+    $('rAddress').textContent = scan.clinicAddress;
+    $('rStart').textContent = new Date(scan.appointmentStartsAtUtc).toLocaleString();
+    $('rExpires').textContent = new Date(scan.expiresAtUtc).toLocaleString();
+    $('result').classList.add('visible');
+  }
+
+  async function scanToken(token) {
+    clearStatus();
+    $('result').classList.remove('visible');
+    state.scan = null;
+    state.token = null;
+
+    try {
+      const scan = await api('/api/access-requests/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      showResult(scan, token);
+      setStatus('Token scanned. Review the details, then approve or reject.', 'ok');
+    } catch (error) {
+      setStatus(error.message, 'error');
+    }
+  }
+
+  async function scanImage(blob) {
+    clearStatus();
+    $('result').classList.remove('visible');
+    state.scan = null;
+    state.token = null;
+
+    const form = new FormData();
+    form.append('image', blob, 'camera.jpg');
+
+    try {
+      const scan = await api('/api/access-requests/scan-image', {
+        method: 'POST',
+        body: form
+      });
+      showResult(scan, null);
+      setStatus('QR scanned from the camera. Review the details, then approve or reject.', 'ok');
+    } catch (error) {
+      setStatus(error.message, 'error');
+    }
+  }
+
+  async function decide(approve) {
+    if (!state.scan) {
+      setStatus('Scan a token before deciding.', 'error');
+      return;
+    }
+
+    clearStatus();
+    $('approve').disabled = true;
+    $('reject').disabled = true;
+
+    try {
+      if (state.token) {
+        // Text scan: exercise the token decision routes.
+        const path = approve ? '/api/access-requests/token/approve' : '/api/access-requests/token/reject';
+        const result = await api(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: state.token })
+        });
+        setStatus(approve
+          ? 'Approved. Grant: ' + result.grantId + ' (expires ' + new Date(result.expiresAtUtc).toLocaleString() + ')'
+          : 'Rejected. No grant was created.', 'ok');
+      } else {
+        // Camera scan: the browser never sees the token, so answer the request by its id.
+        const suffix = approve ? 'approve' : 'reject';
+        const path = '/api/access-requests/' + state.scan.accessRequestId + '/' + suffix;
+        const result = await api(path, { method: 'POST' });
+        setStatus(approve
+          ? 'Approved. Grant: ' + result.grantId + ' (expires ' + new Date(result.expiresAtUtc).toLocaleString() + ')'
+          : 'Rejected. No grant was created.', 'ok');
+      }
+      $('result').classList.remove('visible');
+      state.scan = null;
+      state.token = null;
+    } catch (error) {
+      setStatus(error.message, 'error');
+      $('approve').disabled = false;
+      $('reject').disabled = false;
+    }
+  }
+
+  $('clearJwt').addEventListener('click', () => {
+    $('jwt').value = '';
+    setStatus('JWT cleared.', 'ok');
+  });
+
+  $('showQr').addEventListener('click', () => {
+    const value = $('qrDataUri').value.trim();
+    if (!value.startsWith('data:image/')) {
+      setStatus('Paste the qrCodeDataUri value from the start-visit response.', 'error');
+      return;
+    }
+
+    $('qrPreview').src = value;
+    $('qrPreview').classList.add('visible');
+    clearStatus();
+  });
+
+  $('startCamera').addEventListener('click', async () => {
+    clearStatus();
+    try {
+      state.stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false
+      });
+      $('preview').srcObject = state.stream;
+      setStatus('Camera started. Point it at the doctor\'s QR code.', 'ok');
+    } catch (error) {
+      setStatus('Camera unavailable: ' + error.message, 'error');
+    }
+  });
+
+  $('stopCamera').addEventListener('click', () => {
+    if (state.stream) {
+      state.stream.getTracks().forEach((track) => track.stop());
+      state.stream = null;
+      $('preview').srcObject = null;
+    }
+    clearStatus();
+  });
+
+  $('capture').addEventListener('click', () => {
+    const video = $('preview');
+    if (!video.videoWidth) {
+      setStatus('Start the camera and wait for the preview first.', 'error');
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        setStatus('Could not capture the camera frame.', 'error');
+        return;
+      }
+      scanImage(blob);
+    }, 'image/jpeg', 0.92);
+  });
+
+  $('scanToken').addEventListener('click', () => {
+    const token = $('token').value.trim();
+    if (!token) {
+      setStatus('Paste the QR token first.', 'error');
+      return;
+    }
+    scanToken(token);
+  });
+
+  $('approve').addEventListener('click', () => decide(true));
+  $('reject').addEventListener('click', () => decide(false));
+
+  window.addEventListener('beforeunload', () => {
+    if (state.stream) {
+      state.stream.getTracks().forEach((track) => track.stop());
+    }
+  });
+})();
+</script>
+</body>
+</html>

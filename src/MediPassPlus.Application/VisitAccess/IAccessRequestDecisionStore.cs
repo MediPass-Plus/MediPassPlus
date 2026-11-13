@@ -26,6 +26,17 @@ public interface IAccessRequestDecisionStore
         VisitAccessScope scope,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Loads the tracked credential, request, appointment and every credential for a presented token hash. The
+    /// patient is checked against the stored request and appointment by the caller.
+    /// </summary>
+    /// <param name="tokenHash">The SHA-256 hash of the presented QR token.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The tracked token decision state, or null when no QR credential has that hash.</returns>
+    Task<AccessRequestTokenContext?> FindByTokenHashAsync(
+        string tokenHash,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Stages the grant created by an approval.</summary>
     /// <param name="grant">The grant to add.</param>
     void AddGrant(AccessGrant grant);

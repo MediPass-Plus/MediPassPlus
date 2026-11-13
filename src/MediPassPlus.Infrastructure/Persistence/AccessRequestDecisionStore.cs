@@ -66,6 +66,55 @@ public sealed class AccessRequestDecisionStore : IAccessRequestDecisionStore
     }
 
     /// <inheritdoc />
+    public async Task<AccessRequestTokenContext?> FindByTokenHashAsync(
+        string tokenHash,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tokenHash);
+
+        // The QR hash index makes this a single-row lookup. The type filter keeps a numeric-code HMAC from ever
+        // matching a token path (ADR-0001, ADR-0002).
+        var credential = await _context.VisitAccessCredentials
+            .SingleOrDefaultAsync(
+                credential => credential.SecretHash == tokenHash
+                    && credential.Type == VisitCredentialType.QrToken,
+                cancellationToken);
+
+        if (credential is null)
+        {
+            return null;
+        }
+
+        var request = await _context.AccessRequests
+            .SingleOrDefaultAsync(
+                request => request.Id == credential.AccessRequestId,
+                cancellationToken);
+
+        if (request is null)
+        {
+            return null;
+        }
+
+        var appointment = await _context.Appointments
+            .SingleOrDefaultAsync(
+                appointment => appointment.Id == request.AppointmentId,
+                cancellationToken);
+
+        if (appointment is null)
+        {
+            return null;
+        }
+
+        var credentials = await _context.VisitAccessCredentials
+            .Where(item => item.AccessRequestId == request.Id)
+            .ToListAsync(cancellationToken);
+
+        return new AccessRequestTokenContext(
+            credential,
+            new AccessRequestDecisionContext(request, appointment, credentials));
+    }
+
+    /// <inheritdoc />
     public void AddGrant(AccessGrant grant)
     {
         ArgumentNullException.ThrowIfNull(grant);
