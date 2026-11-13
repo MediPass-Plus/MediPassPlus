@@ -1,5 +1,6 @@
 using MediPassPlus.Application.Audit;
 using MediPassPlus.Domain.Audit;
+using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.VisitAccess;
 
 namespace MediPassPlus.Application.VisitAccess;
@@ -8,7 +9,8 @@ namespace MediPassPlus.Application.VisitAccess;
 /// Answers a pending access request: verifies that the authenticated patient owns the appointment, consumes the
 /// request's credentials, and either creates the access grant (approval) or records the rejection. The request,
 /// credential and audit changes commit in one unit of work (FR-ACS-03, FR-ACS-04, FR-ACS-06, FR-PRV-02,
-/// ADR-0004, ADR-0011).
+/// ADR-0004, ADR-0011). The same decision can be reached from the request identifier or from the scanned QR token;
+/// the token path never reveals whether an unknown token exists and never echoes the token (MP-97).
 /// </summary>
 public sealed class AccessRequestDecisionService : IAccessRequestDecisionService
 {
@@ -54,6 +56,91 @@ public sealed class AccessRequestDecisionService : IAccessRequestDecisionService
             return AccessRequestDecisionResult.Denied(failure);
         }
 
+        // A completed or cancelled visit can no longer produce a grant, so a stale pending request is refused
+        // instead of approving access that the visit cannot use (UC-12, MP-97).
+        if (!IsVisitOpen(context.Appointment))
+        {
+            return AccessRequestDecisionResult.Denied(AccessRequestDecisionFailure.VisitNotOpen);
+        }
+
+        return await ApproveContextAsync(context, patientUserId, ipAddress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<AccessRequestDecisionResult> RejectAsync(
+        Guid requestId,
+        Guid patientUserId,
+        string ipAddress,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ipAddress);
+
+        var (context, failure) = await LoadForDecisionAsync(requestId, patientUserId, cancellationToken);
+        if (context is null)
+        {
+            return AccessRequestDecisionResult.Denied(failure);
+        }
+
+        return await RejectContextAsync(context, patientUserId, ipAddress, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<AccessRequestDecisionResult> ApproveByTokenAsync(
+        string token,
+        Guid patientUserId,
+        string ipAddress,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ipAddress);
+
+        var (context, failure) = await LoadForTokenDecisionAsync(token, patientUserId, cancellationToken);
+        if (context is null)
+        {
+            return AccessRequestDecisionResult.Denied(failure);
+        }
+
+        if (!IsVisitOpen(context.Decision.Appointment))
+        {
+            return AccessRequestDecisionResult.Denied(AccessRequestDecisionFailure.VisitNotOpen);
+        }
+
+        return await ApproveContextAsync(
+            context.Decision,
+            patientUserId,
+            ipAddress,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<AccessRequestDecisionResult> RejectByTokenAsync(
+        string token,
+        Guid patientUserId,
+        string ipAddress,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ipAddress);
+
+        var (context, failure) = await LoadForTokenDecisionAsync(token, patientUserId, cancellationToken);
+        if (context is null)
+        {
+            return AccessRequestDecisionResult.Denied(failure);
+        }
+
+        // Rejection creates no grant, so it stays available even after the visit closed. It only stops the
+        // credential from being reused (FR-ACS-06).
+        return await RejectContextAsync(
+            context.Decision,
+            patientUserId,
+            ipAddress,
+            cancellationToken);
+    }
+
+    private async Task<AccessRequestDecisionResult> ApproveContextAsync(
+        AccessRequestDecisionContext context,
+        Guid patientUserId,
+        string ipAddress,
+        CancellationToken cancellationToken)
+    {
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         ConsumeCredentials(context.Credentials, now);
         context.Request.Approve();
@@ -90,21 +177,12 @@ public sealed class AccessRequestDecisionService : IAccessRequestDecisionService
             grant.ExpiresAtUtc));
     }
 
-    /// <inheritdoc />
-    public async Task<AccessRequestDecisionResult> RejectAsync(
-        Guid requestId,
+    private async Task<AccessRequestDecisionResult> RejectContextAsync(
+        AccessRequestDecisionContext context,
         Guid patientUserId,
         string ipAddress,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(ipAddress);
-
-        var (context, failure) = await LoadForDecisionAsync(requestId, patientUserId, cancellationToken);
-        if (context is null)
-        {
-            return AccessRequestDecisionResult.Denied(failure);
-        }
-
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         RevokeCredentials(context.Credentials, now);
         context.Request.Reject();
@@ -167,6 +245,45 @@ public sealed class AccessRequestDecisionService : IAccessRequestDecisionService
 
         return (context, AccessRequestDecisionFailure.None);
     }
+
+    private async Task<(AccessRequestTokenContext? Context, AccessRequestDecisionFailure Failure)>
+        LoadForTokenDecisionAsync(
+            string token,
+            Guid patientUserId,
+            CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(token);
+
+        var context = await _store.FindByTokenHashAsync(QrTokenGenerator.Hash(token), cancellationToken);
+        if (context is null)
+        {
+            return (null, AccessRequestDecisionFailure.TokenNotFound);
+        }
+
+        // An unknown token and another patient's token must answer identically; otherwise the response would
+        // reveal that a token exists and who owns it (FR-ACS-06, NFR-PRI-01).
+        if (context.Decision.Request.PatientId != patientUserId
+            || context.Decision.Appointment.PatientId != patientUserId)
+        {
+            return (null, AccessRequestDecisionFailure.TokenNotFound);
+        }
+
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        if (!context.Credential.IsUsableAt(now))
+        {
+            return (null, AccessRequestDecisionFailure.TokenUnusable);
+        }
+
+        if (context.Decision.Request.Status != AccessRequestStatus.Pending)
+        {
+            return (null, AccessRequestDecisionFailure.TokenUnusable);
+        }
+
+        return (context, AccessRequestDecisionFailure.None);
+    }
+
+    private static bool IsVisitOpen(Appointment appointment) =>
+        appointment.Status is AppointmentStatus.CheckedIn or AppointmentStatus.InVisit;
 
     private static AccessRequestDecisionFailure MapScopeFailure(VisitAccessScopeFailure failure) =>
         failure switch

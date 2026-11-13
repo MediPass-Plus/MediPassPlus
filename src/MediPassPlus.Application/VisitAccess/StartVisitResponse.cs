@@ -7,9 +7,11 @@ namespace MediPassPlus.Application.VisitAccess;
 /// <param name="AppointmentId">The appointment that was started.</param>
 /// <param name="AccessRequestId">The pending access request the token proves.</param>
 /// <param name="QrToken">The plaintext Base64Url QR token. Only its SHA-256 hash is stored.</param>
+/// <param name="QrCodeDataUri">The same token rendered as a PNG data URI the doctor can display or print.</param>
 /// <param name="ExpiresAtUtc">When the token stops being valid, in UTC (two minutes after creation).</param>
 public sealed record StartVisitResponse(
     int AppointmentId,
     Guid AccessRequestId,
     string QrToken,
+    string QrCodeDataUri,
     DateTime ExpiresAtUtc);

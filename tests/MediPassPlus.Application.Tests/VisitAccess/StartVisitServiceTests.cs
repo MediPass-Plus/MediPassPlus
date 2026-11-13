@@ -18,7 +18,7 @@ public class StartVisitServiceTests
         var appointment = CreateAppointment();
         var doctor = CreateDoctor(appointment.DoctorId);
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor) };
-        var (service, auditWriter) = CreateService(appointment, doctor, store);
+        var (service, auditWriter, renderer) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -26,6 +26,8 @@ public class StartVisitServiceTests
         var response = Assert.IsType<StartVisitResponse>(result.Response);
         Assert.Equal(appointment.Id, response.AppointmentId);
         Assert.False(string.IsNullOrWhiteSpace(response.QrToken));
+        Assert.Equal(FakeQrCodeRenderer.DataUri, response.QrCodeDataUri);
+        Assert.Equal(response.QrToken, renderer.LastPayload);
         Assert.Equal(Now.UtcDateTime.AddMinutes(2), response.ExpiresAtUtc);
         Assert.Equal(AppointmentStatus.InVisit, appointment.Status);
         Assert.Equal(Now.UtcDateTime, appointment.InVisitAtUtc);
@@ -71,7 +73,7 @@ public class StartVisitServiceTests
             Now.UtcDateTime.AddMinutes(-1));
         var context = CreateContext(appointment, doctor, [pending], [oldCredential]);
         var store = new FakeVisitStartStore { Context = context };
-        var (service, auditWriter) = CreateService(appointment, doctor, store);
+        var (service, auditWriter, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -99,7 +101,7 @@ public class StartVisitServiceTests
             Now.UtcDateTime.AddMinutes(-5));
         var context = CreateContext(appointment, doctor, [pending], [expired]);
         var store = new FakeVisitStartStore { Context = context };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -118,7 +120,7 @@ public class StartVisitServiceTests
         var appointment = CreateAppointment(status: status);
         var doctor = CreateDoctor(appointment.DoctorId);
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor) };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -137,7 +139,7 @@ public class StartVisitServiceTests
         var appointment = CreateAppointment(slotStartUtc: Now.UtcDateTime.AddDays(dayOffset));
         var doctor = CreateDoctor(appointment.DoctorId);
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor) };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -156,7 +158,7 @@ public class StartVisitServiceTests
         var doctor = CreateDoctor(appointment.DoctorId);
         var pending = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-10));
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [pending]) };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -173,7 +175,7 @@ public class StartVisitServiceTests
         var appointment = CreateAppointment(slotStartUtc: Now.UtcDateTime.AddDays(1));
         var doctor = CreateDoctor(appointment.DoctorId);
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor) };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -192,7 +194,7 @@ public class StartVisitServiceTests
         var approved = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-10));
         approved.Approve();
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [approved]) };
-        var (service, auditWriter) = CreateService(appointment, doctor, store);
+        var (service, auditWriter, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -214,7 +216,7 @@ public class StartVisitServiceTests
         var rejected = AccessRequest.Create(appointment, doctor, Now.UtcDateTime.AddMinutes(-5));
         rejected.Reject();
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor, [rejected]) };
-        var (service, auditWriter) = CreateService(appointment, doctor, store);
+        var (service, auditWriter, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -237,7 +239,7 @@ public class StartVisitServiceTests
             Context = CreateContext(appointment, doctor),
             ConflictOnSaveNumber = 1
         };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -263,7 +265,7 @@ public class StartVisitServiceTests
             Context = CreateContext(appointment, doctor, [pending], [live]),
             ConflictOnSaveNumber = 2
         };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -280,7 +282,7 @@ public class StartVisitServiceTests
         var appointment = CreateAppointment();
         var doctor = CreateDoctor(appointment.DoctorId);
         var store = new FakeVisitStartStore { Context = CreateContext(appointment, doctor) };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -306,6 +308,7 @@ public class StartVisitServiceTests
         var service = new StartVisitService(
             scope,
             store,
+            new FakeQrCodeRenderer(),
             new FakeAuditWriter(),
             new CairoClinicTimeZone(),
             new FixedTimeProvider(Now));
@@ -328,6 +331,7 @@ public class StartVisitServiceTests
         var service = new StartVisitService(
             scope,
             store,
+            new FakeQrCodeRenderer(),
             new FakeAuditWriter(),
             new CairoClinicTimeZone(),
             new FixedTimeProvider(Now));
@@ -345,7 +349,7 @@ public class StartVisitServiceTests
         var appointment = CreateAppointment();
         var doctor = CreateDoctor(appointment.DoctorId);
         var store = new FakeVisitStartStore { Context = null };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -378,7 +382,7 @@ public class StartVisitServiceTests
             [newer, older],
             [olderCredential, newerCredential]);
         var store = new FakeVisitStartStore { Context = context };
-        var (service, _) = CreateService(appointment, doctor, store);
+        var (service, _, _) = CreateService(appointment, doctor, store);
 
         var result = await service.StartAsync(appointment.Id, doctor.UserId, IpAddress);
 
@@ -391,22 +395,26 @@ public class StartVisitServiceTests
         Assert.Equal(newer.Id, replacement.AccessRequestId);
     }
 
-    private static (StartVisitService Service, FakeAuditWriter AuditWriter) CreateService(
-        Appointment appointment,
-        Doctor doctor,
-        FakeVisitStartStore store)
+    private static (StartVisitService Service, FakeAuditWriter AuditWriter, FakeQrCodeRenderer Renderer)
+        CreateService(
+            Appointment appointment,
+            Doctor doctor,
+            FakeVisitStartStore store)
     {
         var auditWriter = new FakeAuditWriter();
+        var renderer = new FakeQrCodeRenderer();
 
         return (
             new StartVisitService(
                 FakeVisitAccessScopeService.Allowing(
                     new VisitAccessScope(appointment.Id, doctor.Id, appointment.PatientId)),
                 store,
+                renderer,
                 auditWriter,
                 new CairoClinicTimeZone(),
                 new FixedTimeProvider(Now)),
-            auditWriter);
+            auditWriter,
+            renderer);
     }
 
     private static StartVisitContext CreateContext(

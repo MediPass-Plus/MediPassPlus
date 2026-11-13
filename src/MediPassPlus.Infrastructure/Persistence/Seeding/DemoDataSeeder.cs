@@ -1,5 +1,6 @@
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
+using MediPassPlus.Domain.Records;
 using MediPassPlus.Domain.StaffAdmin;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +11,7 @@ namespace MediPassPlus.Infrastructure.Persistence.Seeding;
 
 /// <summary>
 /// Seeds the synthetic demo data used by the demo and by manual testing (MP-96): one clinic, two doctors, future
-/// slots and one admin, one staff and one patient account.
+/// slots and one admin, one staff and one patient account, plus the patient's permanent medical record.
 /// <para>
 /// It runs only from the Development startup path in <c>Program.cs</c>. It never falls back to a default password:
 /// when <c>Seed:DemoPassword</c> is missing it writes a warning and creates nothing. It is idempotent, so restarting
@@ -81,6 +82,7 @@ public sealed class DemoDataSeeder : ISeeder
 
         await EnsureStaffAsync(db, userIds[DemoSeedData.StaffEmailLocalPart], clinic.Id, ct);
         await EnsureAdminAsync(db, userIds[DemoSeedData.AdminEmailLocalPart], ct);
+        await EnsureMedicalRecordAsync(db, userIds[DemoSeedData.PatientEmailLocalPart], ct);
 
         foreach (var doctor in doctors.Values)
         {
@@ -113,7 +115,9 @@ public sealed class DemoDataSeeder : ISeeder
             FullName = account.FullName,
             Role = account.Role,
             PhoneNumber = DemoSeedData.PhoneNumber,
-            IsActive = true
+            IsActive = true,
+            // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
+            LockoutEnabled = true
         };
 
         EnsureSucceeded(await _users.CreateAsync(user, password), $"create the demo account '{account.Email}'");
@@ -203,6 +207,20 @@ public sealed class DemoDataSeeder : ISeeder
         }
 
         db.Admins.Add(new Admin { UserId = userId });
+        await db.SaveChangesAsync(ct);
+    }
+
+    private static async Task EnsureMedicalRecordAsync(MediPassDbContext db, Guid patientId, CancellationToken ct)
+    {
+        // Registration creates the record, but accounts that predate the Record module have none yet. The demo
+        // patient must own exactly one record for the later record endpoints (FR-REC-01, ADR-0005).
+        var exists = await db.MedicalRecords.AnyAsync(record => record.PatientId == patientId, ct);
+        if (exists)
+        {
+            return;
+        }
+
+        db.MedicalRecords.Add(MedicalRecord.Create(patientId, DateTime.UtcNow));
         await db.SaveChangesAsync(ct);
     }
 

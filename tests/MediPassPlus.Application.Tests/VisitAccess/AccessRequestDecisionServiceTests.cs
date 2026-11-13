@@ -346,6 +346,200 @@ public class AccessRequestDecisionServiceTests
             () => service.ApproveAsync(request.Id, PatientId, ipAddress!));
     }
 
+    [Fact]
+    public async Task ApproveByTokenAsync_WhenThePatientOwnsTheAppointment_CreatesTheGrantAndConsumesTheToken()
+    {
+        const string token = "known-qr-token";
+        var appointment = CreateAppointment();
+        var request = CreatePendingRequest(appointment);
+        var credential = CreateTokenCredential(request, token, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateTokenStore(appointment, request, credential);
+        var (service, auditWriter) = CreateService(appointment, store);
+
+        var result = await service.ApproveByTokenAsync(token, PatientId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        var grant = Assert.IsType<AccessGrantResponse>(result.Grant);
+        Assert.Equal(request.Id, grant.AccessRequestId);
+        Assert.Equal(appointment.Id, grant.AppointmentId);
+        Assert.Equal(Now.UtcDateTime, grant.GrantedAtUtc);
+
+        Assert.Equal(AccessRequestStatus.Approved, request.Status);
+        Assert.Equal(Now.UtcDateTime, credential.ConsumedAtUtc);
+        Assert.Null(credential.RevokedAtUtc);
+        Assert.Single(store.AddedGrants);
+        Assert.Equal(1, store.SaveCount);
+
+        // The lookup is by the stored hash, never by the plaintext token (ADR-0001).
+        Assert.Equal(QrTokenGenerator.Hash(token), store.LastTokenHash);
+
+        var audit = Assert.Single(auditWriter.AddedEntries);
+        Assert.Equal(AuditAction.AccessGrantCreated, audit.Action);
+        Assert.Equal(PatientId, audit.PatientId);
+    }
+
+    [Fact]
+    public async Task ApproveByTokenAsync_WhenNoTokenMatches_ReturnsTokenNotFoundWithoutSaving()
+    {
+        var appointment = CreateAppointment();
+        var store = new FakeAccessRequestDecisionStore();
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.ApproveByTokenAsync("unknown-token", PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessRequestDecisionFailure.TokenNotFound, result.Failure);
+        Assert.Equal(QrTokenGenerator.Hash("unknown-token"), store.LastTokenHash);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task ApproveByTokenAsync_WhenAnotherPatientOwnsTheAppointment_ReturnsTokenNotFound()
+    {
+        const string token = "another-patients-token";
+        var otherPatientId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        var appointment = CreateAppointment(patientId: otherPatientId);
+        var request = CreatePendingRequest(appointment);
+        var credential = CreateTokenCredential(request, token, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateTokenStore(appointment, request, credential);
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.ApproveByTokenAsync(token, PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessRequestDecisionFailure.TokenNotFound, result.Failure);
+        Assert.Equal(AccessRequestStatus.Pending, request.Status);
+        Assert.Null(credential.ConsumedAtUtc);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task ApproveByTokenAsync_WhenTheTokenExpired_ReturnsTokenUnusable()
+    {
+        const string token = "expired-token";
+        var appointment = CreateAppointment();
+        var request = CreatePendingRequest(appointment);
+        var credential = CreateTokenCredential(request, token, Now.UtcDateTime.AddMinutes(-5));
+        var store = CreateTokenStore(appointment, request, credential);
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.ApproveByTokenAsync(token, PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessRequestDecisionFailure.TokenUnusable, result.Failure);
+        Assert.Equal(AccessRequestStatus.Pending, request.Status);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task ApproveByTokenAsync_WhenTheTokenWasRevoked_ReturnsTokenUnusable()
+    {
+        const string token = "revoked-token";
+        var appointment = CreateAppointment();
+        var request = CreatePendingRequest(appointment);
+        var credential = CreateTokenCredential(request, token, Now.UtcDateTime.AddMinutes(-1));
+        credential.Revoke(Now.UtcDateTime.AddSeconds(-30));
+        var store = CreateTokenStore(appointment, request, credential);
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.ApproveByTokenAsync(token, PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessRequestDecisionFailure.TokenUnusable, result.Failure);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task ApproveByTokenAsync_WhenTheRequestWasAlreadyAnswered_ReturnsTokenUnusable()
+    {
+        const string token = "answered-token";
+        var appointment = CreateAppointment();
+        var request = CreatePendingRequest(appointment);
+        request.Reject();
+        var credential = CreateTokenCredential(request, token, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateTokenStore(appointment, request, credential);
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.ApproveByTokenAsync(token, PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessRequestDecisionFailure.TokenUnusable, result.Failure);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task ApproveByTokenAsync_WhenTheVisitIsCompleted_ReturnsVisitNotOpen()
+    {
+        const string token = "completed-visit-token";
+        var appointment = CreateAppointment(AppointmentStatus.Completed);
+        var request = CreatePendingRequest(appointment);
+        var credential = CreateTokenCredential(request, token, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateTokenStore(appointment, request, credential);
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.ApproveByTokenAsync(token, PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessRequestDecisionFailure.VisitNotOpen, result.Failure);
+        Assert.Equal(AccessRequestStatus.Pending, request.Status);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task RejectByTokenAsync_WhenTheVisitIsCompleted_StillRejectsAndRevokesTheToken()
+    {
+        const string token = "completed-visit-reject-token";
+        var appointment = CreateAppointment(AppointmentStatus.Completed);
+        var request = CreatePendingRequest(appointment);
+        var credential = CreateTokenCredential(request, token, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateTokenStore(appointment, request, credential);
+        var (service, auditWriter) = CreateService(appointment, store);
+
+        var result = await service.RejectByTokenAsync(token, PatientId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        Assert.Null(result.Grant);
+        Assert.Equal(AccessRequestStatus.Rejected, request.Status);
+        Assert.Equal(Now.UtcDateTime, credential.RevokedAtUtc);
+        Assert.Null(credential.ConsumedAtUtc);
+        Assert.Equal(1, store.SaveCount);
+
+        var audit = Assert.Single(auditWriter.AddedEntries);
+        Assert.Equal(AuditAction.AccessRequestRejected, audit.Action);
+    }
+
+    [Fact]
+    public async Task ApproveAsync_WhenTheVisitIsCompleted_ReturnsVisitNotOpen()
+    {
+        var appointment = CreateAppointment(AppointmentStatus.Completed);
+        var request = CreatePendingRequest(appointment);
+        var store = CreateStore(appointment, request, []);
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.ApproveAsync(request.Id, PatientId, IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(AccessRequestDecisionFailure.VisitNotOpen, result.Failure);
+        Assert.Equal(AccessRequestStatus.Pending, request.Status);
+        Assert.Equal(0, store.SaveCount);
+    }
+
+    [Fact]
+    public async Task RejectAsync_WhenTheVisitIsCompleted_StillRejects()
+    {
+        var appointment = CreateAppointment(AppointmentStatus.Completed);
+        var request = CreatePendingRequest(appointment);
+        var credential = CreateCredential(request, Now.UtcDateTime.AddMinutes(-1));
+        var store = CreateStore(appointment, request, [credential]);
+        var (service, _) = CreateService(appointment, store);
+
+        var result = await service.RejectAsync(request.Id, PatientId, IpAddress);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(AccessRequestStatus.Rejected, request.Status);
+        Assert.Equal(Now.UtcDateTime, credential.RevokedAtUtc);
+    }
+
     private static (AccessRequestDecisionService Service, FakeAuditWriter AuditWriter) CreateService(
         Appointment appointment,
         FakeAccessRequestDecisionStore store)
@@ -373,6 +567,36 @@ public class AccessRequestDecisionServiceTests
             Context = new AccessRequestDecisionContext(request, appointment, credentials)
         };
 
+    private static FakeAccessRequestDecisionStore CreateTokenStore(
+        Appointment appointment,
+        AccessRequest request,
+        VisitAccessCredential credential,
+        IReadOnlyList<VisitAccessCredential>? credentials = null) =>
+        new()
+        {
+            Request = request,
+            Context = new AccessRequestDecisionContext(
+                request,
+                appointment,
+                credentials ?? [credential]),
+            TokenContext = new AccessRequestTokenContext(
+                credential,
+                new AccessRequestDecisionContext(
+                    request,
+                    appointment,
+                    credentials ?? [credential]))
+        };
+
+    private static VisitAccessCredential CreateTokenCredential(
+        AccessRequest request,
+        string token,
+        DateTime createdAtUtc) =>
+        VisitAccessCredential.Create(
+            request.Id,
+            VisitCredentialType.QrToken,
+            QrTokenGenerator.Hash(token),
+            createdAtUtc);
+
     private static AccessRequest CreatePendingRequest(Appointment appointment) =>
         AccessRequest.Create(appointment, CreateDoctor(appointment.DoctorId), Now.UtcDateTime.AddMinutes(-5));
 
@@ -383,7 +607,9 @@ public class AccessRequestDecisionServiceTests
             Guid.NewGuid().ToString("N"),
             createdAtUtc);
 
-    private static Appointment CreateAppointment()
+    private static Appointment CreateAppointment(
+        AppointmentStatus status = AppointmentStatus.CheckedIn,
+        Guid? patientId = null)
     {
         var start = Now.UtcDateTime.Date.AddHours(9);
         var slot = new DoctorSlot
@@ -399,10 +625,10 @@ public class AccessRequestDecisionServiceTests
         {
             Id = 42,
             DoctorId = 7,
-            PatientId = PatientId,
+            PatientId = patientId ?? PatientId,
             DoctorSlotId = slot.Id,
             DoctorSlot = slot,
-            Status = AppointmentStatus.CheckedIn,
+            Status = status,
             CreatedAtUtc = Now.UtcDateTime.AddDays(-1)
         };
     }

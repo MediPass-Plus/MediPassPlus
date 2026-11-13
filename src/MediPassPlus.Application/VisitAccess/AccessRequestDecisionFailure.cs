@@ -1,8 +1,10 @@
 namespace MediPassPlus.Application.VisitAccess;
 
 /// <summary>
-/// Why a patient's approve or reject decision was refused. The API maps <see cref="RequestNotFound"/> to <c>404</c>,
-/// <see cref="PatientMismatch"/> to <c>403</c>, and the remaining failures to <c>409</c>.
+/// Why a patient's approve or reject decision was refused. The API maps <see cref="RequestNotFound"/> and
+/// <see cref="TokenNotFound"/> to <c>403</c> or <c>404</c> depending on the route, <see cref="PatientMismatch"/> to
+/// <c>403</c>, <see cref="TokenUnusable"/> and <see cref="VisitNotOpen"/> to <c>410</c> on the token path, and the
+/// remaining failures to <c>409</c>.
 /// </summary>
 public enum AccessRequestDecisionFailure
 {
@@ -19,5 +21,14 @@ public enum AccessRequestDecisionFailure
     AlreadyAnswered,
 
     /// <summary>Another decision won the race, or the appointment already has a grant.</summary>
-    RequestConflict
+    RequestConflict,
+
+    /// <summary>No QR credential matches, or it belongs to another patient's appointment.</summary>
+    TokenNotFound,
+
+    /// <summary>The QR token is expired, consumed, revoked or locked, or its request was already answered.</summary>
+    TokenUnusable,
+
+    /// <summary>The appointment is no longer in progress, so a new approval would be meaningless.</summary>
+    VisitNotOpen
 }

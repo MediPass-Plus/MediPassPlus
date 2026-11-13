@@ -87,6 +87,12 @@ public sealed class AccessGrant
         return new AccessGrant(Guid.CreateVersion7(), request, utcNow);
     }
 
+    /// <summary>
+    /// The instant access actually stops: the scheduled or actual end when one was written, otherwise the immutable
+    /// two-hour limit. The access-state read model reports the remaining seconds against this instant.
+    /// </summary>
+    public DateTime EffectiveEndUtc => EndedAtUtc ?? ExpiresAtUtc;
+
     /// <summary>True while the grant has not reached its effective end.</summary>
     /// <param name="utcNow">The current UTC time.</param>
     public bool IsActiveAt(DateTime utcNow) => utcNow < EffectiveEndUtc;
@@ -133,8 +139,6 @@ public sealed class AccessGrant
         EndedAtUtc = utcNow;
         EndReason = GrantEndReason.PatientEnded;
     }
-
-    private DateTime EffectiveEndUtc => EndedAtUtc ?? ExpiresAtUtc;
 
     private void EnsureActive(DateTime utcNow)
     {

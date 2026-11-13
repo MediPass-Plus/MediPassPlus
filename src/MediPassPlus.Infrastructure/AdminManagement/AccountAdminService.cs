@@ -87,7 +87,9 @@ public class AccountAdminService : IAccountAdminService
                 FullName = fullName.Trim(),
                 Role = role,
                 IsActive = true,
-                EmailConfirmed = true
+                EmailConfirmed = true,
+                // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
+                LockoutEnabled = true
             };
 
             // Step 1: the login account.

@@ -227,6 +227,13 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     }
 
     /// <summary>
+    /// The connection string of this run's isolated database. The server behind it is shared with the test database,
+    /// so a migration test can create its own scratch catalog on the same instance.
+    /// </summary>
+    public string ConnectionString => _connectionString;
+
+
+    /// <summary>
     /// Seeds a clinic, a doctor account and profile, a patient account, a slot for today and an appointment for them.
     /// With <paramref name="includePendingRequest"/>, it also creates the pending request and its live QR credential.
     /// With <paramref name="accessCode"/>, it also seeds the HMAC of that six-digit code for the request.
@@ -235,12 +242,16 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <param name="includePendingRequest">Whether to create the pending request and QR credential.</param>
     /// <param name="accessCode">An optional plaintext code to seed as its stored HMAC.</param>
     /// <param name="accessCodeCreatedAtUtc">When the code was generated; defaults to now.</param>
+    /// <param name="qrTokenCreatedAtUtc">
+    /// When the QR token was generated; defaults to now. A past value seeds an expired token (MP-97).
+    /// </param>
     /// <returns>The seeded graph.</returns>
     public async Task<VisitScenario> CreateVisitScenarioAsync(
         AppointmentStatus appointmentStatus = AppointmentStatus.CheckedIn,
         bool includePendingRequest = true,
         string? accessCode = null,
-        DateTime? accessCodeCreatedAtUtc = null)
+        DateTime? accessCodeCreatedAtUtc = null,
+        DateTime? qrTokenCreatedAtUtc = null)
     {
         var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
         var patientUser = await CreateUserAsync(DefaultRoles.Patient);
@@ -289,17 +300,20 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         AccessRequest? request = null;
         VisitAccessCredential? credential = null;
         VisitAccessCredential? codeCredential = null;
+        string? qrToken = null;
         if (includePendingRequest)
         {
             request = AccessRequest.Create(appointment, doctor, DateTime.UtcNow);
             db.AccessRequests.Add(request);
             await db.SaveChangesAsync();
 
+            var generatedToken = QrTokenGenerator.Generate();
+            qrToken = generatedToken.Value;
             credential = VisitAccessCredential.Create(
                 request.Id,
                 VisitCredentialType.QrToken,
-                QrTokenGenerator.Generate().Sha256Hash,
-                DateTime.UtcNow);
+                generatedToken.Sha256Hash,
+                qrTokenCreatedAtUtc ?? DateTime.UtcNow);
             db.VisitAccessCredentials.Add(credential);
             await db.SaveChangesAsync();
 
@@ -324,6 +338,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             appointment,
             request,
             credential,
+            qrToken,
             codeCredential);
     }
 

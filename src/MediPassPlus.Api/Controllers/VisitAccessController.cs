@@ -10,8 +10,8 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace MediPassPlus.Api.Controllers;
 
 /// <summary>
-/// Visit-access endpoints: the doctor's start-visit step, the patient's six-digit fallback generation, and the owning
-/// doctor's code verification.
+/// Visit-access endpoints: the doctor's start-visit step, the patient's six-digit fallback generation, the owning
+/// doctor's code verification, and the derived access state both parties can read.
 /// </summary>
 [ApiController]
 [Route("api/appointments")]
@@ -26,23 +26,28 @@ public class VisitAccessController : ControllerBase
     private readonly IStartVisitService _startVisitService;
     private readonly IAccessCodeGenerationService _accessCodeGenerationService;
     private readonly IAccessCodeVerificationService _accessCodeVerificationService;
+    private readonly IAccessStateService _accessStateService;
 
     /// <summary>Initializes a new instance of the <see cref="VisitAccessController"/> class.</summary>
     /// <param name="startVisitService">The start-visit application service.</param>
     /// <param name="accessCodeGenerationService">The patient's six-digit fallback generator.</param>
     /// <param name="accessCodeVerificationService">The owning doctor's six-digit code verifier.</param>
+    /// <param name="accessStateService">The derived access-state reader for the doctor and patient.</param>
     public VisitAccessController(
         IStartVisitService startVisitService,
         IAccessCodeGenerationService accessCodeGenerationService,
-        IAccessCodeVerificationService accessCodeVerificationService)
+        IAccessCodeVerificationService accessCodeVerificationService,
+        IAccessStateService accessStateService)
     {
         ArgumentNullException.ThrowIfNull(startVisitService);
         ArgumentNullException.ThrowIfNull(accessCodeGenerationService);
         ArgumentNullException.ThrowIfNull(accessCodeVerificationService);
+        ArgumentNullException.ThrowIfNull(accessStateService);
 
         _startVisitService = startVisitService;
         _accessCodeGenerationService = accessCodeGenerationService;
         _accessCodeVerificationService = accessCodeVerificationService;
+        _accessStateService = accessStateService;
     }
 
     /// <summary>
@@ -350,6 +355,91 @@ public class VisitAccessController : ControllerBase
                 "Another request for this visit changed the state first. Retry with the current state."),
             _ => throw new InvalidOperationException(
                 $"Unexpected access-code verification failure: {result.Failure}.")
+        };
+    }
+
+    /// <summary>
+    /// Reads the derived access state of one appointment for its owning doctor or its patient. Every status and the
+    /// remaining seconds are derived from the stored timestamps at read time; nothing is written (MP-97, ADR-0011).
+    /// </summary>
+    /// <param name="appointmentId">The appointment being inspected.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The newest request, the grant and the seconds of access that remain.</returns>
+    /// <response code="200">The access state is returned.</response>
+    /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
+    /// <response code="403">The caller is neither the appointment's doctor nor its patient.</response>
+    /// <response code="404">No appointment has the requested identifier.</response>
+    [Authorize(Roles = "Doctor,Patient")]
+    [HttpGet("{appointmentId:int}/access-state")]
+    [Produces("application/json")]
+    [ProducesResponseType(typeof(AccessStateResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetAccessState(
+        int appointmentId,
+        CancellationToken cancellationToken)
+    {
+        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdValue, out var userId) || userId == Guid.Empty)
+        {
+            return CreateProblem(
+                StatusCodes.Status401Unauthorized,
+                UnauthorizedType,
+                "Authentication required.",
+                "The access token does not identify a user.");
+        }
+
+        AccessStateResult result;
+        if (User.IsInRole("Doctor"))
+        {
+            result = await _accessStateService.GetForDoctorAsync(
+                appointmentId,
+                userId,
+                cancellationToken);
+        }
+        else if (User.IsInRole("Patient"))
+        {
+            result = await _accessStateService.GetForPatientAsync(
+                appointmentId,
+                userId,
+                cancellationToken);
+        }
+        else
+        {
+            return CreateProblem(
+                StatusCodes.Status403Forbidden,
+                ForbiddenType,
+                "You cannot read this access state.",
+                "Only the appointment's doctor or its patient can read its access state.");
+        }
+
+        if (result.IsSuccess)
+        {
+            if (result.Response is null)
+            {
+                throw new InvalidOperationException("A successful access-state read must contain a response.");
+            }
+
+            // Access-control state is personal data and must not be cached by a browser or a proxy.
+            Response.Headers["Cache-Control"] = "no-store";
+            return Ok(result.Response);
+        }
+
+        return result.Failure switch
+        {
+            AccessStateFailure.AppointmentNotFound => CreateProblem(
+                StatusCodes.Status404NotFound,
+                NotFoundType,
+                "Appointment not found.",
+                "No appointment has the requested identifier."),
+            AccessStateFailure.ActorMismatch => CreateProblem(
+                StatusCodes.Status403Forbidden,
+                ForbiddenType,
+                "You cannot read this access state.",
+                "Only the appointment's doctor or its patient can read its access state."),
+            _ => throw new InvalidOperationException(
+                $"Unexpected access-state failure: {result.Failure}.")
         };
     }
 

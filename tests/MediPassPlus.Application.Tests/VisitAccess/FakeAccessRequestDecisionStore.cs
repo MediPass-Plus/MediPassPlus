@@ -34,6 +34,18 @@ internal sealed class FakeAccessRequestDecisionStore : IAccessRequestDecisionSto
         return Task.FromResult(Context);
     }
 
+    public AccessRequestTokenContext? TokenContext { get; set; }
+
+    public string? LastTokenHash { get; private set; }
+
+    public Task<AccessRequestTokenContext?> FindByTokenHashAsync(
+        string tokenHash,
+        CancellationToken cancellationToken = default)
+    {
+        LastTokenHash = tokenHash;
+        return Task.FromResult(TokenContext);
+    }
+
     public void AddGrant(AccessGrant grant) => AddedGrants.Add(grant);
 
     public Task SaveChangesAsync(CancellationToken cancellationToken = default)

@@ -79,29 +79,50 @@ concurrent cannot overwrite each other: `AccessGrant.EndedAtUtc` is an EF concur
 the stale writer updates zero rows and answers `409` instead. A completion that loses the race does not extend the
 grant and writes no second audit; the doctor retries and the retry completes the visit against the already-ended
 grant. The token changes no column and needed no migration.
+MP-97 closes the QR loop. `POST api/appointments/{appointmentId}/start-visit` now also returns `qrCodeDataUri`, the
+same one-time token rendered as a PNG data URI by QRCoder; the plaintext is still never stored and only its SHA-256
+hash is. `POST api/access/scan` resolves a token presented as text and `POST
+api/access-requests/scan-image` decodes one from a camera frame in memory with ZXing.Net and ImageSharp (5 MB
+limit); neither consumes the token. `POST api/access-requests/token/approve` and `/token/reject` answer the request
+the token proves, and `GET api/appointments/{appointmentId}/access-state` returns the derived request and grant state
+to the appointment's doctor or patient. An unknown or foreign token answers `403`; an expired, consumed, revoked or
+already-answered token, or a visit that is no longer checked in/in visit, answers `410` on the token paths, while the
+request-id approve path keeps its `409` for a closed visit. A decision race answers `409`, and every scan and token
+decision shares the per-patient `QrApprove` limit. No new audit action was added: scanning is read-only and the
+decisions reuse `AccessGrantCreated`/`AccessRequestRejected`. Swagger UI links to a development-only camera helper at
+`/visit-access-tool.html` (served only when the API reference is exposed). No migration was needed.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
-calendar while every stored timestamp stays UTC. Eleven migrations live in
+calendar while every stored timestamp stays UTC. Twelve migrations live in
 `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin`, `AddAuditLog`,
-`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot` and `AddAppointmentStatusTimestamps`.
-The audit store (`AuditLog`, `IAuditWriter` and an append-only EF interceptor) now exists. HTTP integration tests live
+`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot`, `AddAppointmentStatusTimestamps` and
+`AddMedicalRecordSchema`. MP-28 adds the `records` schema (`MedicalRecords`, `Diagnoses`, `Prescriptions`, `Reports`):
+one record per patient, diagnoses always scoped to a visit, prescriptions inside a diagnosis, record-level reports
+with an explicit uploader, append-only rows linked by `SupersedesDiagnosisId` / `SupersedesPrescriptionId` for
+corrections, ciphertext columns for diagnosis and prescription text, required owning foreign keys with `Restrict` and
+no cascade path, plus an EF interceptor that refuses updates and deletes. Patient registration creates the record in
+the same transaction and the migration backfills every existing patient. The audit store (`AuditLog`, `IAuditWriter`
+and an append-only EF interceptor) now exists. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
 server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
 (including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-34 check-in/complete
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
-boundary), and the MP-36 code generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate
-limits, and the HMAC-only storage proof). The MP-37 tests add the completion grant-end/cap/already-ended matrix, the
-patient-end `401`/`403`/`404`/`409` matrix, both audit proofs, a two-context persistence test proving a stale
-completion cannot overwrite a patient end, and a test-only `[RequireActiveGrant]` controller that
-shows the doctor's next gated request returns `403` after the patient ends the grant. There is still no record-read
-endpoint, no QR-verification endpoint,
-no medical-record module and no audit endpoint, and the
-frontend is the untouched Angular welcome page. Everything the README, planning document or an ADR describes
+boundary), the MP-28 registration record matrix and the applied record migration, the MP-36 code
+generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate limits, and the HMAC-only storage
+proof), and the MP-37 completion grant-end/cap/already-ended matrix, the patient-end `401`/`403`/`404`/`409` matrix,
+both audit proofs, a two-context persistence test proving a stale completion cannot overwrite a patient end, and a
+test-only `[RequireActiveGrant]` controller that shows the doctor's next gated request returns `403` after the
+patient ends the grant. The MP-97 tests add the rendered-QR round trip, scan as text and as a camera image, the
+token approve/reject matrix, the closed-visit `410`/`409` split, the wrong-patient `403`, the `415` upload, the
+shared `QrApprove` `429`, and the doctor/patient access-state authorization matrix. There is still no record-read
+endpoint, no medical-record module and no audit endpoint, and the frontend is the untouched Angular welcome page.
+Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline
-(ADR-0010); Swashbuckle generates the Swagger document and UI (ADR-0012). Serilog is not installed.
+(ADR-0010); Swashbuckle generates the Swagger document and UI (ADR-0012). MP-97 adds QRCoder, ZXing.Net,
+ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed.
 
 This section is a snapshot, not a permanent fact: update it in the same PR that changes the status. Once a capability
 exists, the sentence that says it does not is a bug, and an agent that trusts it will make wrong assumptions.
@@ -191,16 +212,23 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   `POST api/appointments/{appointmentId}/check-in` (Staff), `POST api/appointments/{appointmentId}/complete`
   (Doctor), `GET api/doctors/me/schedule?date=` (Doctor),
   `POST api/access-requests/{requestId}/approve` / `/reject` (Patient),
+  `POST api/access/scan` / `/scan-image` (Patient),
+  `POST api/access-requests/token/approve` / `/token/reject` (Patient),
+  `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
   `POST api/access-grants/{grantId}/end` (Patient), and the booking actions
   `POST api/appointments` / `{appointmentId}/cancel` / `{appointmentId}/reschedule` (Patient). Start-visit exercises
-  the scope check and issues a one-time QR credential; check-in and completion enforce the appointment state machine
+  the scope check and issues a one-time QR credential plus its rendered `qrCodeDataUri`; the scan endpoints resolve
+  that token as text or as a camera image without consuming it, and the token decision endpoints approve or reject
+  the request it proves; check-in and completion enforce the appointment state machine
   and the staff-clinic or doctor-ownership scope; the doctor schedule reads one Cairo-local day; the patient
   endpoints answer a request by ID, consume or revoke its credentials, and return `429` with `Retry-After` after the
   per-patient `QrApprove` limit. The access-code endpoints are patient generation and owning-doctor verification,
   with their own `CodeGeneration`/`CodeVerification` limits and the FR-ACS-05 lockout. Completion also ends the
   visit's active grant after the 15-minute grace, capped by the two-hour limit, and the patient end takes effect
-  immediately. The booking actions stay inside the authenticated patient's scope and return `400`/`404`/`409`
-  `ProblemDetails` for every refused rule. No endpoint yet verifies a presented QR, and there is still no
+  immediately. The access-state endpoint derives the request/grant status and remaining seconds from the stored
+  timestamps for the appointment's doctor or patient. The booking actions stay inside the authenticated patient's
+  scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. Swagger UI adds a topbar link to
+  `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
   medical-record endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.

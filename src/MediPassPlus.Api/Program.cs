@@ -153,7 +153,12 @@ var exposeApiReference = app.Environment.IsDevelopment()
 if (exposeApiReference)
 {
     app.UseSwagger();
-    app.UseSwaggerUI();
+    // The static Swagger helper page is exposed exactly when the API reference is (ADR-0008, MP-97).
+    app.UseStaticFiles();
+    app.UseSwaggerUI(options =>
+    {
+        options.HeadContent = "<script src=\"/swagger-visit-access-tool.js\" defer></script>";
+    });
 }
 
 app.UseHttpsRedirection();
