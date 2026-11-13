@@ -36,7 +36,6 @@ be resolved by the team, not silently.
 
 - User model shape: TPH subclasses of `ApplicationUser` vs profile tables (ADR-0003, open).
 - Refresh-token storage and rotation (ADR-0003, open).
-- Lockout duration, since the requirements only say "for a period" (ADR-0003, assumption: 15 minutes).
 
 Resolved on 2026-10-29: code verification is doctor-only (ADR-0002); `Diagnosis.AppointmentId` is required
 (ADR-0005 revision); Swagger UI is a Development tool and the document is off in Production by default (ADR-0008).
@@ -44,5 +43,6 @@ Resolved on 2026-11-05: the baseline is closed and migrations are serialized (AD
 (ADR-0010) and the access-grant lifecycle (ADR-0011) are accepted. Resolved on 2026-11-09: HTTP integration tests use
 Testcontainers SQL Server (ADR-0006). Resolved on 2026-11-11: ADR-0005 is accepted with the review amendments
 (prescription cardinality 0..*, supersedes links, report uploader attribution, diagnosis and prescription encryption,
-write invariants); Swashbuckle is the single Swagger document generator (ADR-0012). ADR-0003 remains open on the
-implementation gaps listed in that file.
+write invariants); Swashbuckle is the single Swagger document generator (ADR-0012). Resolved on 2026-11-13: the
+password policy keeps the stricter upper/lower/digit/symbol rule and the lockout lasts 15 minutes (ADR-0003, amended
+that day); ADR-0003 remains open only on the user-model shape and the refresh-token design.

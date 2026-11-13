@@ -26,8 +26,9 @@ internal static class IdentityServiceExtensions
             options.Password.RequireUppercase = true;
             options.Password.RequireNonAlphanumeric = true;
 
-            // FR-ACC-05: five wrong passwords lock the account. The 15-minute duration is the assumption
-            // ADR-0003 records; it is not an approved requirement value (ADR-0003 is still Proposed).
+            // FR-ACC-05: five wrong passwords lock the account for 15 minutes. The duration is confirmed
+            // by the Accounts module owner (2026-11-13); ADR-0003 still records it as an assumption and
+            // stays Proposed, so its wording is a follow-up, not the value the code runs with.
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             options.Lockout.AllowedForNewUsers = true;
