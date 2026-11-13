@@ -6,6 +6,7 @@ using MediPassPlus.Domain.Identity;
 using MediPassPlus.Domain.VisitAccess;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
+using MediPassPlus.Infrastructure.VisitAccess;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -37,6 +38,7 @@ public class StartVisitAuditTests
         var service = new StartVisitService(
             new VisitAccessScopeService(new VisitAccessScopeStore(db)),
             new StartVisitStore(db),
+            new QrCodeRenderer(),
             new AuditWriter(db, timeProvider),
             new CairoClinicTimeZone(),
             timeProvider);

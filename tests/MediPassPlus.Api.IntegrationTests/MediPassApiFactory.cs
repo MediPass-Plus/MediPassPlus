@@ -242,12 +242,16 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <param name="includePendingRequest">Whether to create the pending request and QR credential.</param>
     /// <param name="accessCode">An optional plaintext code to seed as its stored HMAC.</param>
     /// <param name="accessCodeCreatedAtUtc">When the code was generated; defaults to now.</param>
+    /// <param name="qrTokenCreatedAtUtc">
+    /// When the QR token was generated; defaults to now. A past value seeds an expired token (MP-97).
+    /// </param>
     /// <returns>The seeded graph.</returns>
     public async Task<VisitScenario> CreateVisitScenarioAsync(
         AppointmentStatus appointmentStatus = AppointmentStatus.CheckedIn,
         bool includePendingRequest = true,
         string? accessCode = null,
-        DateTime? accessCodeCreatedAtUtc = null)
+        DateTime? accessCodeCreatedAtUtc = null,
+        DateTime? qrTokenCreatedAtUtc = null)
     {
         var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
         var patientUser = await CreateUserAsync(DefaultRoles.Patient);
@@ -296,17 +300,20 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         AccessRequest? request = null;
         VisitAccessCredential? credential = null;
         VisitAccessCredential? codeCredential = null;
+        string? qrToken = null;
         if (includePendingRequest)
         {
             request = AccessRequest.Create(appointment, doctor, DateTime.UtcNow);
             db.AccessRequests.Add(request);
             await db.SaveChangesAsync();
 
+            var generatedToken = QrTokenGenerator.Generate();
+            qrToken = generatedToken.Value;
             credential = VisitAccessCredential.Create(
                 request.Id,
                 VisitCredentialType.QrToken,
-                QrTokenGenerator.Generate().Sha256Hash,
-                DateTime.UtcNow);
+                generatedToken.Sha256Hash,
+                qrTokenCreatedAtUtc ?? DateTime.UtcNow);
             db.VisitAccessCredentials.Add(credential);
             await db.SaveChangesAsync();
 
@@ -331,6 +338,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             appointment,
             request,
             credential,
+            qrToken,
             codeCredential);
     }
 

@@ -19,6 +19,7 @@ public sealed class StartVisitService : IStartVisitService
 {
     private readonly IVisitAccessScopeService _scopeService;
     private readonly IVisitStartStore _store;
+    private readonly IQrCodeRenderer _qrCodeRenderer;
     private readonly IAuditWriter _auditWriter;
     private readonly IClinicTimeZone _clinicTimeZone;
     private readonly TimeProvider _timeProvider;
@@ -26,24 +27,28 @@ public sealed class StartVisitService : IStartVisitService
     /// <summary>Initializes a new instance of the <see cref="StartVisitService"/> class.</summary>
     /// <param name="scopeService">Verifies that the authenticated doctor owns the appointment.</param>
     /// <param name="store">The unit of work that loads and stages the visit-access state.</param>
+    /// <param name="qrCodeRenderer">Renders the one-time token as a QR image for the doctor.</param>
     /// <param name="auditWriter">Stages the request-creation audit row in the same unit of work.</param>
     /// <param name="clinicTimeZone">The clinic calendar used for the "today" check.</param>
     /// <param name="timeProvider">The clock used for the QR lifetime and the status timestamp.</param>
     public StartVisitService(
         IVisitAccessScopeService scopeService,
         IVisitStartStore store,
+        IQrCodeRenderer qrCodeRenderer,
         IAuditWriter auditWriter,
         IClinicTimeZone clinicTimeZone,
         TimeProvider timeProvider)
     {
         ArgumentNullException.ThrowIfNull(scopeService);
         ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(qrCodeRenderer);
         ArgumentNullException.ThrowIfNull(auditWriter);
         ArgumentNullException.ThrowIfNull(clinicTimeZone);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
         _scopeService = scopeService;
         _store = store;
+        _qrCodeRenderer = qrCodeRenderer;
         _auditWriter = auditWriter;
         _clinicTimeZone = clinicTimeZone;
         _timeProvider = timeProvider;
@@ -176,6 +181,7 @@ public sealed class StartVisitService : IStartVisitService
             context.Appointment.Id,
             request.Id,
             qrToken.Value,
+            _qrCodeRenderer.RenderDataUri(qrToken.Value),
             credential.ExpiresAtUtc));
     }
 

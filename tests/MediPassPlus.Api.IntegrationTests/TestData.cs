@@ -18,6 +18,10 @@ public sealed record TestUser(Guid Id, string Email, string Token);
 /// <param name="Appointment">The appointment being answered.</param>
 /// <param name="Request">The pending access request, or null when the scenario starts before start-visit.</param>
 /// <param name="Credential">The live QR credential, or null when the scenario starts before start-visit.</param>
+/// <param name="QrToken">
+/// The plaintext QR token whose SHA-256 hash is stored, or null when the scenario starts before start-visit. It is
+/// never persisted and exists only so an HTTP test can present it (MP-97).
+/// </param>
 /// <param name="CodeCredential">
 /// The live numeric-code credential when the scenario seeded a code, or null.
 /// </param>
@@ -30,6 +34,7 @@ public sealed record VisitScenario(
     Appointment Appointment,
     AccessRequest? Request,
     VisitAccessCredential? Credential,
+    string? QrToken,
     VisitAccessCredential? CodeCredential = null);
 
 /// <summary>
