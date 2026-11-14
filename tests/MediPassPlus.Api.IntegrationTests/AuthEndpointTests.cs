@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using MediPassPlus.Domain.Identity;
+using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -192,6 +193,126 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The Admin branch cannot be bypassed by casing. Identity resolves a role name case-insensitively,
+    /// so <c>admin</c> and <c>ADMIN</c> are the same role and must be refused exactly like <c>Admin</c>,
+    /// and a refused registration creates no account (FR-ACC-09).
+    /// </summary>
+    /// <param name="role">The requested role, in a casing that must be resolved to the Admin role.</param>
+    [Theory]
+    [InlineData("Admin")]
+    [InlineData("admin")]
+    [InlineData("ADMIN")]
+    public async Task Register_WithAdminRoleInAnyCasing_RefusesSelfAssignment(string role)
+    {
+        var email = NewEmail("register.admin");
+
+        var response = await RegisterAsync(email, role: role);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var refusal = await response.Content.ReadFromJsonAsync<RegisterRefusal>();
+        Assert.NotNull(refusal);
+        Assert.Equal("This role cannot be self-assigned", refusal!.Message);
+
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        Assert.Null(await userManager.FindByEmailAsync(email));
+    }
+
+    /// <summary>
+    /// A doctor self-registers in any casing and the account waits for an admin to activate it, so the
+    /// casing can never widen what the caller gets (FR-ACC-03).
+    /// </summary>
+    /// <param name="role">The requested role, in a casing that must be resolved to the Doctor role.</param>
+    [Theory]
+    [InlineData("Doctor")]
+    [InlineData("doctor")]
+    [InlineData("DOCTOR")]
+    public async Task Register_WithDoctorRoleInAnyCasing_LeavesTheAccountInactive(string role)
+    {
+        var email = NewEmail("register.doctor");
+
+        var response = await RegisterAsync(email, role: role);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await userManager.FindByEmailAsync(email);
+
+        Assert.NotNull(user);
+        Assert.False(user!.IsActive);
+        Assert.True(await userManager.IsInRoleAsync(user, DefaultRoles.Doctor));
+    }
+
+    /// <summary>
+    /// A staff account self-registers in any casing and likewise waits for an admin to activate it
+    /// (FR-ACC-03).
+    /// </summary>
+    /// <param name="role">The requested role, in a casing that must be resolved to the Staff role.</param>
+    [Theory]
+    [InlineData("Staff")]
+    [InlineData("staff")]
+    [InlineData("STAFF")]
+    public async Task Register_WithStaffRoleInAnyCasing_LeavesTheAccountInactive(string role)
+    {
+        var email = NewEmail("register.staff");
+
+        var response = await RegisterAsync(email, role: role);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await userManager.FindByEmailAsync(email);
+
+        Assert.NotNull(user);
+        Assert.False(user!.IsActive);
+        Assert.True(await userManager.IsInRoleAsync(user, DefaultRoles.Staff));
+    }
+
+    /// <summary>
+    /// A patient stays the only role that is active on self-registration, in every casing, so the
+    /// casing fix does not change what a patient gets.
+    /// </summary>
+    /// <param name="role">The requested role, in a casing that must be resolved to the Patient role.</param>
+    [Theory]
+    [InlineData("Patient")]
+    [InlineData("patient")]
+    [InlineData("PATIENT")]
+    public async Task Register_WithPatientRoleInAnyCasing_CreatesAnActiveAccount(string role)
+    {
+        var email = NewEmail("register.patient");
+
+        var response = await RegisterAsync(email, role: role);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await userManager.FindByEmailAsync(email);
+
+        Assert.NotNull(user);
+        Assert.True(user!.IsActive);
+        Assert.True(await userManager.IsInRoleAsync(user, DefaultRoles.Patient));
+    }
+
+    /// <summary>An unknown role is still refused before any account is created.</summary>
+    [Fact]
+    public async Task Register_WithAnUnknownRole_Returns400()
+    {
+        var email = NewEmail("register.unknown");
+
+        var response = await RegisterAsync(email, role: "Wizard");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var refusal = await response.Content.ReadFromJsonAsync<RegisterRefusal>();
+        Assert.NotNull(refusal);
+        Assert.Equal("Role 'Wizard' does not exist", refusal!.Message);
+    }
+
+    /// <summary>
     /// Proving control of the mailbox clears the lockout: a reset on a locked account lets the owner
     /// sign in immediately with the new password (FR-ACC-05).
     /// </summary>
@@ -267,6 +388,9 @@ public sealed class AuthEndpointTests : IAsyncLifetime
 
     /// <summary>The fields every refusal must share. <c>traceId</c> is per request and is not compared.</summary>
     private readonly record struct AuthProblem(int? Status, string? Title, string? Detail);
+
+    /// <summary>The refusal body the register endpoint returns for an unknown or non-self-assignable role.</summary>
+    private sealed record RegisterRefusal(string? Message);
 
     private sealed record LoginResponse(string AccessToken, string[]? Roles);
 }

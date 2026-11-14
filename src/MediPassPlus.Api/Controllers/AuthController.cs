@@ -45,8 +45,13 @@ public class AuthController : ControllerBase
         if (!ModelState.IsValid)
             return BadRequest("Invalid registration data.");
 
-        // Check if the requested role exists
-        if (!await _roleManager.RoleExistsAsync(request.Role))
+        // Identity resolves a role name case-insensitively through NormalizedName, so "admin", "Admin"
+        // and "ADMIN" are the same role and must reach the same branch. Resolve the canonical role first
+        // and switch on that; switching on the raw request value let any casing that missed the literal
+        // fall into the default branch and create an active account with the Admin role (FR-ACC-09).
+        var role = await _roleManager.FindByNameAsync(request.Role);
+
+        if (role is null)
             return BadRequest(new
             {
                 message = $"Role '{request.Role}' does not exist"
@@ -63,16 +68,16 @@ public class AuthController : ControllerBase
         };
 
         // Restrict the user from self-assigning the Admin role
-        switch (request.Role)
+        switch (role.NormalizedName)
         {
-            case "Admin":
+            case "ADMIN":
                 return BadRequest(new
                 {
                     message = "This role cannot be self-assigned"
                 });
 
-            case "Doctor":
-            case "Staff":
+            case "DOCTOR":
+            case "STAFF":
                 user.IsActive = false;
                 break;
 
@@ -343,90 +348,6 @@ public class AuthController : ControllerBase
     }
 
 
-    [HttpPost("register-Development Version")]
-    public async Task<IActionResult> RegisterDevelopment(RegisterDto request)
-    {
-        // Validate registration data
-        if (!ModelState.IsValid)
-            return BadRequest("Invalid registration data.");
-
-        // Check if the requested role exists
-        if (!await _roleManager.RoleExistsAsync(request.Role))
-            return BadRequest(new
-            {
-                message = $"Role '{request.Role}' does not exist"
-            });
-
-        // Create the user
-        var user = new ApplicationUser
-        {
-            UserName = request.Email,
-            Email = request.Email,
-            FullName = request.FullName,
-            Role = request.Role,
-
-            // Enable all accounts during development
-            IsActive = true,
-
-            EmailConfirmed = true,
-
-            // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
-            LockoutEnabled = true
-        };
-
-        // Start a database transaction
-        await using var transaction =
-            await _context.Database.BeginTransactionAsync();
-
-        try
-        {
-            // Step 1 Create the user in the Users table
-            var result = await _userManager.CreateAsync(
-                user, request.Password);
-
-            if (!result.Succeeded)
-            {
-                await transaction.RollbackAsync();
-
-                return BadRequest(
-                    result.Errors.Select(e => e.Description));
-            }
-
-            // Step 2 Assign the requested role in the UserRoles table
-            var roleResult = await _userManager.AddToRoleAsync(
-                user, request.Role);
-
-            if (!roleResult.Succeeded)
-            {
-                await transaction.RollbackAsync();
-
-                return BadRequest(new
-                {
-                    message = "Failed to assign role. Registration was cancelled.",
-                    errors = roleResult.Errors.Select(e => e.Description)
-                });
-            }
-
-            await AddMedicalRecordIfPatientAsync(user);
-
-            // Both operations succeeded, commit the transaction
-            await transaction.CommitAsync();
-
-            return Ok(new
-            {
-                message = "Registered successfully",
-                userId = user.Id,
-                role = request.Role,
-                isActive = user.IsActive
-            });
-        }
-        catch
-        {
-            // Rollback if any unexpected exception occurs
-            await transaction.RollbackAsync();
-            throw;
-        }
-    }
 
     /// <summary>
     /// Creates the patient's permanent medical record in the same unit of work as registration (FR-REC-01,
@@ -447,4 +368,96 @@ public class AuthController : ControllerBase
         _context.MedicalRecords.Add(MedicalRecord.Create(user.Id, DateTime.UtcNow));
         await _context.SaveChangesAsync();
     }
+
+
+
+
+
+
+    //[HttpPost("register-Development Version")]
+    //public async Task<IActionResult> RegisterDevelopment(RegisterDto request)
+    //{
+    //    // Validate registration data
+    //    if (!ModelState.IsValid)
+    //        return BadRequest("Invalid registration data.");
+
+    //    // Check if the requested role exists
+    //    if (!await _roleManager.RoleExistsAsync(request.Role))
+    //        return BadRequest(new
+    //        {
+    //            message = $"Role '{request.Role}' does not exist"
+    //        });
+
+    //    // Create the user
+    //    var user = new ApplicationUser
+    //    {
+    //        UserName = request.Email,
+    //        Email = request.Email,
+    //        FullName = request.FullName,
+    //        Role = request.Role,
+
+    //        // Enable all accounts during development
+    //        IsActive = true,
+
+    //        EmailConfirmed = true,
+
+    //        // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
+    //        LockoutEnabled = true
+    //    };
+
+    //    // Start a database transaction
+    //    await using var transaction =
+    //        await _context.Database.BeginTransactionAsync();
+
+    //    try
+    //    {
+    //        // Step 1 Create the user in the Users table
+    //        var result = await _userManager.CreateAsync(
+    //            user, request.Password);
+
+    //        if (!result.Succeeded)
+    //        {
+    //            await transaction.RollbackAsync();
+
+    //            return BadRequest(
+    //                result.Errors.Select(e => e.Description));
+    //        }
+
+    //        // Step 2 Assign the requested role in the UserRoles table
+    //        var roleResult = await _userManager.AddToRoleAsync(
+    //            user, request.Role);
+
+    //        if (!roleResult.Succeeded)
+    //        {
+    //            await transaction.RollbackAsync();
+
+    //            return BadRequest(new
+    //            {
+    //                message = "Failed to assign role. Registration was cancelled.",
+    //                errors = roleResult.Errors.Select(e => e.Description)
+    //            });
+    //        }
+
+    //        await AddMedicalRecordIfPatientAsync(user);
+
+    //        // Both operations succeeded, commit the transaction
+    //        await transaction.CommitAsync();
+
+    //        return Ok(new
+    //        {
+    //            message = "Registered successfully",
+    //            userId = user.Id,
+    //            role = request.Role,
+    //            isActive = user.IsActive
+    //        });
+    //    }
+    //    catch
+    //    {
+    //        // Rollback if any unexpected exception occurs
+    //        await transaction.RollbackAsync();
+    //        throw;
+    //    }
+    //}
+
+
 }
