@@ -34,6 +34,10 @@ with its own unique name.
 
 ## Notes
 
+- `SmokeTests` calls the test-only `GET api/test/probe` endpoint (`ProbeTestController`) to prove 401 without a token
+  and 200 for Patient, Doctor, Staff and Admin. `IsolationFirstClassTests` and `IsolationSecondClassTests` prove that
+  a class cannot read an appointment created by another class even though both share this database.
+- Test-only controllers live in this assembly only and are excluded from the generated Swagger document.
 - The JWT signing key is generated at runtime; no secret is committed (NFR-SEC-08).
 - The host runs as the `Testing` environment, so the development demo seeder never runs. Default roles are still seeded
   for every environment, and each test creates only the accounts it needs.
