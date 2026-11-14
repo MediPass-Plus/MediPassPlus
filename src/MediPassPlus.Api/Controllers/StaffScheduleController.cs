@@ -27,11 +27,13 @@ public class StaffScheduleController : ControllerBase
     /// <param name="date">The day, for example 2026-11-10.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <response code="200">The day's appointments with patient name, phone, time and status only.</response>
+    /// <response code="400">The date is missing or not a valid date (yyyy-MM-dd).</response>
     /// <response code="401">The access token does not identify a user.</response>
     /// <response code="403">The caller has no clinic staff profile.</response>
     [HttpGet]
     [Produces("application/json")]
     [ProducesResponseType(typeof(IReadOnlyList<StaffScheduleItemDto>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Get([FromQuery] DateOnly date, CancellationToken cancellationToken)

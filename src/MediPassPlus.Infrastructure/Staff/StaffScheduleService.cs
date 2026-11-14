@@ -1,4 +1,6 @@
+using MediPassPlus.Application.Common;
 using MediPassPlus.Application.Staff;
+using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,10 +9,12 @@ namespace MediPassPlus.Infrastructure.Staff;
 public class StaffScheduleService : IStaffScheduleService
 {
     private readonly MediPassDbContext _db;
+    private readonly IClinicTimeZone _clinicTimeZone;
 
-    public StaffScheduleService(MediPassDbContext db)
+    public StaffScheduleService(MediPassDbContext db, IClinicTimeZone clinicTimeZone)
     {
         _db = db;
+        _clinicTimeZone = clinicTimeZone;
     }
 
     public async Task<StaffScheduleResult> GetScheduleAsync(
@@ -30,28 +34,27 @@ public class StaffScheduleService : IStaffScheduleService
             return new StaffScheduleResult([], StaffScheduleFailure.StaffProfileNotFound);
         }
 
-        var dayStart = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-        var dayEnd = dayStart.AddDays(1);
+        // The requested date is a clinic-local (Africa/Cairo) day, converted to UTC boundaries.
+        var dayStart = _clinicTimeZone.GetStartOfDayUtc(date);
+        var dayEnd = _clinicTimeZone.GetStartOfNextDayUtc(date);
 
-        // The clinic filter is part of the query itself, and only reception fields are selected.
+        // The clinic filter is part of the query. Cancelled appointments are hidden, like the doctor schedule.
         var items = await (
             from a in _db.Appointments.AsNoTracking()
             join slot in _db.DoctorSlots on a.DoctorSlotId equals slot.Id
             join d in _db.Doctors on a.DoctorId equals d.Id
-            join doctorUser in _db.Users on d.UserId equals doctorUser.Id
             join patient in _db.Users on a.PatientId equals patient.Id
             where d.ClinicId == clinicId
+                && a.Status != AppointmentStatus.Cancelled
                 && slot.StartTimeUtc >= dayStart
                 && slot.StartTimeUtc < dayEnd
-            orderby slot.StartTimeUtc
+            orderby slot.StartTimeUtc, a.Id
             select new
             {
                 a.Id,
                 patient.FullName,
                 patient.PhoneNumber,
                 slot.StartTimeUtc,
-                slot.EndTimeUtc,
-                DoctorName = doctorUser.FullName,
                 a.Status
             })
             .ToListAsync(cancellationToken);
@@ -62,8 +65,6 @@ public class StaffScheduleService : IStaffScheduleService
                 i.FullName,
                 i.PhoneNumber,
                 i.StartTimeUtc,
-                i.EndTimeUtc,
-                i.DoctorName,
                 i.Status.ToString()))
             .ToList();
 
