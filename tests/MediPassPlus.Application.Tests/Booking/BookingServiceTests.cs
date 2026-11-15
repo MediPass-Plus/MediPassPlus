@@ -1,4 +1,5 @@
 using MediPassPlus.Application.Booking;
+using MediPassPlus.Application.Common;
 using MediPassPlus.Application.Tests.VisitAccess;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
@@ -781,6 +782,55 @@ public class BookingServiceTests
         Assert.Equal(1, store.SaveCount);
     }
 
+    [Fact]
+    public async Task GetMyAppointmentsAsync_ReturnsThePatientsPageAndMapsTheRows()
+    {
+        var row = CreateRow(status: AppointmentStatus.CheckedIn);
+        var store = new FakeBookingStore
+        {
+            AppointmentsPage = new PatientAppointmentsPage([row], TotalCount: 7)
+        };
+        var service = CreateService(store);
+        var page = new PageRequest { Page = 2, PageSize = 20 };
+
+        var result = await service.GetMyAppointmentsAsync(PatientId, page);
+
+        Assert.Equal(PatientId, store.ListedPatientUserId);
+        Assert.Equal(20, store.ListedSkip);
+        Assert.Equal(20, store.ListedTake);
+        Assert.Equal(7, result.TotalCount);
+        Assert.Equal(2, result.Page);
+        Assert.Equal(20, result.PageSize);
+
+        var appointment = Assert.Single(result.Items);
+        Assert.Equal(row.Id, appointment.Id);
+        Assert.Equal(row.DoctorId, appointment.DoctorId);
+        Assert.Equal(row.DoctorName, appointment.DoctorName);
+        Assert.Equal(row.ClinicId, appointment.ClinicId);
+        Assert.Equal(row.ClinicName, appointment.ClinicName);
+        Assert.Equal(row.DoctorSlotId, appointment.DoctorSlotId);
+        Assert.Equal(row.StartTimeUtc, appointment.StartTimeUtc);
+        Assert.Equal(row.EndTimeUtc, appointment.EndTimeUtc);
+        Assert.Equal(nameof(AppointmentStatus.CheckedIn), appointment.Status);
+        Assert.Equal(row.CreatedAtUtc, appointment.CreatedAtUtc);
+    }
+
+    [Fact]
+    public async Task GetMyAppointmentsAsync_UsesTheDefaultPageWhenNoneIsRequested()
+    {
+        var store = new FakeBookingStore();
+        var service = CreateService(store);
+
+        var result = await service.GetMyAppointmentsAsync(PatientId, new PageRequest());
+
+        Assert.Equal(0, store.ListedSkip);
+        Assert.Equal(PageRequest.DefaultPageSize, store.ListedTake);
+        Assert.Equal(PageRequest.DefaultPage, result.Page);
+        Assert.Equal(PageRequest.DefaultPageSize, result.PageSize);
+        Assert.Empty(result.Items);
+        Assert.Equal(0, result.TotalCount);
+    }
+
     private static BookingService CreateService(FakeBookingStore store) =>
         new(store, new FixedTimeProvider(Now));
 
@@ -815,6 +865,21 @@ public class BookingServiceTests
             Status = status,
             CreatedAtUtc = Now.UtcDateTime.AddDays(-1)
         };
+
+    private static PatientAppointmentRow CreateRow(
+        int id = 42,
+        AppointmentStatus status = AppointmentStatus.Booked) =>
+        new(
+            id,
+            DoctorId: 7,
+            DoctorName: "Doctor User",
+            ClinicId: 1,
+            ClinicName: "Booking Clinic",
+            DoctorSlotId: 3,
+            StartTimeUtc: Now.UtcDateTime.AddHours(1),
+            EndTimeUtc: Now.UtcDateTime.AddHours(1).AddMinutes(30),
+            Status: status,
+            CreatedAtUtc: Now.UtcDateTime.AddDays(-1));
 
     private static Doctor CreateDoctor(int id = 7) =>
         new()

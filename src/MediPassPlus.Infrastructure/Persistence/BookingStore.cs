@@ -106,6 +106,59 @@ public sealed class BookingStore : IBookingStore
     }
 
     /// <inheritdoc />
+    public async Task<PatientAppointmentsPage> ListAppointmentsAsync(
+        Guid patientUserId,
+        int skip,
+        int take,
+        CancellationToken cancellationToken = default)
+    {
+        // The patient id is part of the query, so the list can never widen to another patient's rows (FR-BKG-06).
+        var query =
+            from appointment in _context.Appointments.AsNoTracking()
+            join slot in _context.DoctorSlots.AsNoTracking()
+                on appointment.DoctorSlotId equals slot.Id
+            join doctor in _context.Doctors.AsNoTracking()
+                on appointment.DoctorId equals doctor.Id
+            join doctorUser in _context.Users.AsNoTracking()
+                on doctor.UserId equals doctorUser.Id
+            join clinic in _context.Clinics.AsNoTracking()
+                on doctor.ClinicId equals clinic.Id
+            where appointment.PatientId == patientUserId
+            select new
+            {
+                Appointment = appointment,
+                Slot = slot,
+                Doctor = doctor,
+                DoctorUser = doctorUser,
+                Clinic = clinic
+            };
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        // The ordering is applied to the joined columns before the row record is projected: ordering by a member of
+        // a record projection is not translated by EF Core.
+        var items = await query
+            .OrderByDescending(row => row.Slot.StartTimeUtc)
+            .ThenByDescending(row => row.Appointment.Id)
+            .Skip(skip)
+            .Take(take)
+            .Select(row => new PatientAppointmentRow(
+                row.Appointment.Id,
+                row.Doctor.Id,
+                row.DoctorUser.FullName,
+                row.Clinic.Id,
+                row.Clinic.Name,
+                row.Slot.Id,
+                row.Slot.StartTimeUtc,
+                row.Slot.EndTimeUtc,
+                row.Appointment.Status,
+                row.Appointment.CreatedAtUtc))
+            .ToListAsync(cancellationToken);
+
+        return new PatientAppointmentsPage(items, totalCount);
+    }
+
+    /// <inheritdoc />
     public void AddAppointment(Appointment appointment)
     {
         ArgumentNullException.ThrowIfNull(appointment);
