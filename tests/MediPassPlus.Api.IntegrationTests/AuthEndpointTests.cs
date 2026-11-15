@@ -19,7 +19,7 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// registers its own account so a lockout never leaks into another test.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class AuthEndpointTests : IAsyncLifetime
+public sealed class AuthEndpointTests : IAsyncLifetime, IClassFixture<MediPassApiFactory>
 {
     private const string CompliantPassword = "Str0ng!Pass1";
     private const string NewCompliantPassword = "Str0ng!Pass2";
@@ -28,8 +28,8 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     private readonly MediPassApiFactory _factory;
     private HttpClient _client = null!;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public AuthEndpointTests(MediPassApiFactory factory)
     {
         _factory = factory;

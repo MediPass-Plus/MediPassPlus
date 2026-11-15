@@ -18,7 +18,7 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// medical endpoints when that module lands.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class AdminEndpointsAuthorizationTests : IAsyncLifetime
+public sealed class AdminEndpointsAuthorizationTests : IAsyncLifetime, IClassFixture<MediPassApiFactory>
 {
     private static readonly Guid TargetUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
@@ -45,8 +45,8 @@ public sealed class AdminEndpointsAuthorizationTests : IAsyncLifetime
     private readonly Dictionary<string, string> _tokens = new(StringComparer.Ordinal);
     private HttpClient _client = null!;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public AdminEndpointsAuthorizationTests(MediPassApiFactory factory)
     {
         _factory = factory;

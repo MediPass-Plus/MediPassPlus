@@ -9,12 +9,12 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// bare <c>ClinicDto</c> schema id.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class SwaggerDocumentTests
+public sealed class SwaggerDocumentTests : IClassFixture<MediPassApiFactory>
 {
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Creates the test class over the shared API host.</summary>
-    /// <param name="factory">The collection fixture that boots the real pipeline.</param>
+    /// <summary>Creates the test class over its own API host and database.</summary>
+    /// <param name="factory">The class fixture that boots the real pipeline.</param>
     public SwaggerDocumentTests(MediPassApiFactory factory)
     {
         ArgumentNullException.ThrowIfNull(factory);

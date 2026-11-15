@@ -17,12 +17,12 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// request is refused (FR-ACS-09, FR-ACS-11, NFR-SEC-10, NFR-PRI-02).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class AccessGrantEndEndpointTests
+public sealed class AccessGrantEndEndpointTests : IClassFixture<MediPassApiFactory>
 {
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public AccessGrantEndEndpointTests(MediPassApiFactory factory)
     {
         _factory = factory;

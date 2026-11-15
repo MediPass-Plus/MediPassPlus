@@ -10,12 +10,12 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// ADR-0006).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class SmokeTests
+public sealed class SmokeTests : IClassFixture<MediPassApiFactory>
 {
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the smoke tests with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the smoke tests with their own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public SmokeTests(MediPassApiFactory factory)
     {
         _factory = factory;
