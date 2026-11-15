@@ -13,7 +13,7 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// response shape (no medical fields) (FR-STF-01..05, FR-PRV-06).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class StaffEndpointsTests
+public sealed class StaffEndpointsTests : IClassFixture<MediPassApiFactory>
 {
     private static readonly string[] ForbiddenFieldWords =
         ["diagnos", "prescription", "report", "medical", "history"];

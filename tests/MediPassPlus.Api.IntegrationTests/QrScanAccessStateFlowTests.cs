@@ -19,14 +19,14 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// the shared per-patient rate limit (NFR-SEC-10, FR-ACS-02, FR-ACS-06, FR-ACS-07, ADR-0001, ADR-0007).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class QrScanAccessStateFlowTests
+public sealed class QrScanAccessStateFlowTests : IClassFixture<MediPassApiFactory>
 {
     private const int PermitLimit = 5;
 
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public QrScanAccessStateFlowTests(MediPassApiFactory factory)
     {
         _factory = factory;

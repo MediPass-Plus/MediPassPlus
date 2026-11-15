@@ -14,12 +14,12 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// then the patient approves the resulting request (FR-ACS-01, FR-ACS-02, FR-ACS-04).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class StartVisitApproveFlowTests
+public sealed class StartVisitApproveFlowTests : IClassFixture<MediPassApiFactory>
 {
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public StartVisitApproveFlowTests(MediPassApiFactory factory)
     {
         _factory = factory;

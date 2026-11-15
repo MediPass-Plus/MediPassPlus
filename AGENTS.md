@@ -117,7 +117,9 @@ no cascade path, plus an EF interceptor that refuses updates and deletes. Patien
 the same transaction and the migration backfills every existing patient. The audit store (`AuditLog`, `IAuditWriter`
 and an append-only EF interceptor) now exists. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
-server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
+server through `MEDIPASS_TEST_SQLSERVER`) and give every test class its own database through a `MediPassApiFactory`
+class fixture (ADR-0006 decision 3), with a test-only probe endpoint, smoke tests for the four roles, and isolation
+tests that prove two classes never share a catalog. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
 (including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-40 staff matrix (clinic scope, Cairo schedule day, slot overlap including a concurrent create, delete conflicts, booking and check-in, and the schedule response shape), the MP-34 check-in/complete
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule

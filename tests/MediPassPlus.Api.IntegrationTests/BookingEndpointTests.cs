@@ -14,12 +14,12 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// FR-BKG-09, NFR-SEC-10, NFR-REL-03).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class BookingEndpointTests
+public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
 {
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public BookingEndpointTests(MediPassApiFactory factory)
     {
         _factory = factory;
