@@ -1,4 +1,5 @@
 using MediPassPlus.Domain.Clinical;
+using MediPassPlus.Domain.Records;
 using MediPassPlus.Domain.VisitAccess;
 
 namespace MediPassPlus.Api.IntegrationTests;
@@ -36,6 +37,20 @@ public sealed record VisitScenario(
     VisitAccessCredential? Credential,
     string? QrToken,
     VisitAccessCredential? CodeCredential = null);
+
+/// <summary>
+/// The seeded graph a diagnosis or prescription write test needs: the visit, its access grant when one was seeded,
+/// the patient's permanent record and one stored diagnosis to add prescriptions to (FR-REC-03, FR-REC-04, ADR-0005).
+/// </summary>
+/// <param name="Visit">The visit graph, including the doctor and patient accounts and their tokens.</param>
+/// <param name="Grant">The seeded access grant, or null when the test starts without one.</param>
+/// <param name="Record">The patient's permanent record.</param>
+/// <param name="Diagnosis">An existing diagnosis of the visit, stored with placeholder ciphertext.</param>
+public sealed record DiagnosisWriteScenario(
+    VisitScenario Visit,
+    AccessGrant? Grant,
+    MedicalRecord Record,
+    Diagnosis Diagnosis);
 
 /// <summary>
 /// The seeded graph a booking test needs: a free future slot, an appointment on its own slot, a second free slot

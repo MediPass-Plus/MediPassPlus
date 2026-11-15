@@ -2,9 +2,11 @@ using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using MediPassPlus.Application.Common;
+using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
+using MediPassPlus.Domain.Records;
 using MediPassPlus.Domain.StaffAdmin;
 using MediPassPlus.Domain.VisitAccess;
 using MediPassPlus.Infrastructure.Extensions;
@@ -34,6 +36,10 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     private const string JwtAudience = "MediPassPlus.Client";
     private const string TestPassword = "Integration1!";
     private const string DataProtectionApplicationName = "MediPassPlus.IntegrationTests";
+
+    // A placeholder ciphertext for seeded rows. Integration tests never store plain medical text, and encryption
+    // itself is owned by MP-50, so a seeded row only has to look like the stored shape (ADR-0007 decision 5).
+    private const string SeededDiagnosisCiphertext = "seeded-ciphertext-not-plain-medical-text";
 
     private static readonly IClinicTimeZone ClinicTimeZone = new CairoClinicTimeZone();
 
@@ -404,6 +410,49 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     }
 
     /// <summary>
+    /// Seeds the graph the doctor write endpoints need: a visit, optionally its access grant, the patient's permanent
+    /// record and one already-stored diagnosis. The diagnosis row carries placeholder ciphertext, because the
+    /// encryption implementation is owned by MP-50 (ADR-0007); these tests assert the grant and role boundaries, which
+    /// are enforced before any text is protected.
+    /// </summary>
+    /// <param name="appointmentStatus">The status of the appointment the visit belongs to.</param>
+    /// <param name="includeActiveGrant">Whether an access grant is seeded for the appointment.</param>
+    /// <param name="grantedAtUtc">
+    /// When the patient approved; defaults to now. A past value seeds a grant that has already reached its
+    /// two-hour limit (FR-ACS-07, UC-24).
+    /// </param>
+    /// <returns>The seeded record-write graph.</returns>
+    public async Task<DiagnosisWriteScenario> CreateDiagnosisWriteScenarioAsync(
+        AppointmentStatus appointmentStatus = AppointmentStatus.InVisit,
+        bool includeActiveGrant = true,
+        DateTime? grantedAtUtc = null)
+    {
+        var visit = await CreateVisitScenarioAsync(appointmentStatus);
+
+        AccessGrant? grant = null;
+        if (includeActiveGrant)
+        {
+            grant = await CreateGrantAsync(visit.Appointment.Id, grantedAtUtc);
+        }
+
+        await using var db = CreateDbContext();
+
+        var record = MedicalRecord.Create(visit.PatientUser.Id, DateTime.UtcNow);
+        db.MedicalRecords.Add(record);
+        await db.SaveChangesAsync();
+
+        var diagnosis = Diagnosis.Create(
+            record.Id,
+            visit.Appointment.Id,
+            SeededDiagnosisCiphertext,
+            DateTime.UtcNow);
+        db.Diagnoses.Add(diagnosis);
+        await db.SaveChangesAsync();
+
+        return new DiagnosisWriteScenario(visit, grant, record, diagnosis);
+    }
+
+    /// <summary>
     /// Seeds a clinic, two doctor accounts with profiles, a patient account, a free future slot, an appointment on
     /// its own slot, a second free slot for rescheduling and a slot owned by the second doctor.
     /// </summary>
@@ -684,6 +733,12 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             services.AddDataProtection()
                 .SetApplicationName(DataProtectionApplicationName)
                 .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysPath));
+
+            // MP-50 owns the real IClinicalTextProtector, its key-ring path and its startup check. Until that ticket
+            // lands, the API registers no implementation, and MVC fails while activating a record-write controller
+            // even when the request is about to be refused. This stand-in keeps the refusal paths observable in HTTP;
+            // it is defined in this test project only and nothing in src references it.
+            services.AddSingleton<IClinicalTextProtector, TestOnlyClinicalTextProtector>();
         });
     }
 
