@@ -91,6 +91,19 @@ request-id approve path keeps its `409` for a closed visit. A decision race answ
 decision shares the per-patient `QrApprove` limit. No new audit action was added: scanning is read-only and the
 decisions reuse `AccessGrantCreated`/`AccessRequestRejected`. Swagger UI links to a development-only camera helper at
 `/visit-access-tool.html` (served only when the API reference is exposed). No migration was needed.
+MP-40 adds the clinic staff workflow (FR-STF-01..05, FR-PRV-06), all under `[Authorize(Roles = "Staff")]` and scoped to
+the staff member's own clinic, which is read from the `ClinicStaff` row of the token's user and applied inside every
+query, never taken from the request. `GET api/staff/schedule?date=` returns the clinic's non-cancelled appointments for
+one Africa/Cairo day, ordered by start then id, with only the appointment id, patient name, phone, start time and
+status. `POST api/staff/doctors/{doctorId}/slots` adds a slot for a doctor of the clinic and `DELETE
+api/staff/doctors/{doctorId}/slots/{slotId}` removes one; the overlap check and the insert run in one Serializable
+transaction, so concurrent creates cannot overlap (`409`), and any appointment that references a slot, even a
+cancelled one, blocks its deletion (`409`). `POST api/staff/appointments` books a free future slot for a patient
+identified by email, resolved on the server and required to have the Patient role, and delegates every booking rule to
+`IBookingService`. `POST api/staff/appointments/{appointmentId}/check-in` checks in a booked appointment of today in
+the clinic through `IAppointmentStatusService.CheckInAsync`, the same transition as `api/appointments/{id}/check-in`.
+A doctor, slot or appointment outside the clinic answers `404`, a staff account without a profile answers `403`, and
+no staff response carries diagnosis, prescription or report data. No migration was needed.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
 calendar while every stored timestamp stays UTC. Twelve migrations live in
@@ -106,7 +119,7 @@ and an append-only EF interceptor) now exists. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
 server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
-(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-34 check-in/complete
+(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-40 staff matrix (clinic scope, Cairo schedule day, slot overlap including a concurrent create, delete conflicts, booking and check-in, and the schedule response shape), the MP-34 check-in/complete
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
 boundary), the MP-28 registration record matrix and the applied record migration, the MP-36 code
 generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate limits, and the HMAC-only storage
