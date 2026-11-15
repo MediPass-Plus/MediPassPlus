@@ -12,5 +12,6 @@ public class LoginDtoValidator : AbstractValidator<LoginDto>
     {
         RuleFor(x => x.Email).NotEmpty().EmailAddress();
         RuleFor(x => x.Password).NotEmpty();
+        RuleFor(x => x.DeviceId).MaximumLength(128).When(x => x.DeviceId is not null);
     }
 }

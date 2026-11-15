@@ -15,5 +15,8 @@ public class JwtSettings
     public string SecretKey { get; set; } = string.Empty;  //32-character secret key for HMACSHA256(16-164)
     public int AccessTokenMinutes { get; set; } = 15;    // Access token expiration time in minutes
     public int RefreshTokenDays { get; set; } = 7;  // Refresh token expiration time in days( (7 days) )
+    // Absolute cap of a whole session, counted from the first login, so an unlimited number of rotations
+    // cannot keep a session alive for ever (FR-ACC-06).
+    public int SessionDays { get; set; } = 30;
     public char[] Key { get; internal set; }
 }

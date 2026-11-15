@@ -21,6 +21,12 @@ public class MediPassDbContext : IdentityDbContext<ApplicationUser, IdentityRole
         public DbSet<ClinicStaff> ClinicStaff => Set<ClinicStaff>();
     public DbSet<Admin> Admins => Set<Admin>();
     public DbSet<VisitAccessCredential> VisitAccessCredentials => Set<VisitAccessCredential>();
+
+    /// <summary>
+    /// The single-use refresh tokens of every session (FR-ACC-06). Only the hash is stored, never the token.
+    /// </summary>
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
     /// <summary>The append-only audit entries written for medical and access-control events (ADR-0004).</summary>
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 

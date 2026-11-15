@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Text;
 using MediPassPlus.Application.AppointmentStatusFlow;
 using MediPassPlus.Application.Audit;
+using MediPassPlus.Application.Auth;
 using MediPassPlus.Application.Booking;
 using MediPassPlus.Application.Common;
 using MediPassPlus.Application.DoctorSchedule;
 using MediPassPlus.Application.Email;
 using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
+using MediPassPlus.Infrastructure.Auth;
 using MediPassPlus.Infrastructure.Email;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
@@ -33,6 +35,10 @@ public static class ServiceCollectionExtensions
           // Authentication & JWT
      services.AddJwtAuthentication(configuration);
         services.AddScoped<JwtTokenService>();
+
+        // Refresh-token lifecycle: single-use hashed rows, rotation on every refresh and revoke-all on a replay
+        // (FR-ACC-04, FR-ACC-06, NFR-SEC-03).
+        services.AddScoped<IAuthTokenService, AuthTokenService>();
 
         // Audit writes are append-only and timestamped by the server (FR-PRV-02, ADR-0004).
         services.AddSingleton(TimeProvider.System);

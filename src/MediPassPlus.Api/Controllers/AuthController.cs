@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using MediPassPlus.Application.Auth;
 using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Application.Email;
 using MediPassPlus.Domain.Identity;
@@ -21,17 +22,17 @@ public class AuthController : ControllerBase
     private readonly MediPassDbContext _context;
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
-     private readonly JwtTokenService _jwt;
+    private readonly IAuthTokenService _authTokens;
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
      private readonly IEmailSender _emailSender;
     private readonly IConfiguration _configuration;
 
-    public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, RoleManager<IdentityRole<Guid>> roleManager, JwtTokenService jwt, MediPassDbContext context, IEmailSender emailSender, IConfiguration configuration)
+    public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, IAuthTokenService authTokens, RoleManager<IdentityRole<Guid>> roleManager, MediPassDbContext context, IEmailSender emailSender, IConfiguration configuration)
     {
         _userManager = userManager;
         _signInManager = signInManager;
+        _authTokens = authTokens;
         _roleManager = roleManager;
-        _jwt = jwt;
      
         _context = context;
         _emailSender = emailSender;
@@ -133,18 +134,23 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Signs a user in and issues a JWT access token.
+    /// Signs a user in, issues a JWT access token and opens a refresh-token session.
     /// </summary>
-    /// <param name="request">The account email and password.</param>
-    /// <returns>The access token and the account's roles, or a generic <c>401</c>.</returns>
-    /// <response code="200">The credentials were valid and the account is active.</response>
+    /// <param name="request">The account email and password, plus an optional device label.</param>
+    /// <returns>
+    /// The access token, the single-use refresh token and their lifetimes, or a generic <c>401</c>.
+    /// </returns>
+    /// <response code="200">
+    /// The credentials were valid and the account is active. The refresh token is returned exactly once and must be
+    /// kept by the client; the server stores only its hash.
+    /// </response>
     /// <response code="401">
     /// The email is unknown, the password is wrong, the account is locked out or the account is deactivated.
     /// Every one of those answers with the same body on purpose, so the endpoint never confirms which
     /// addresses or accounts exist.
     /// </response>
     [HttpPost("login")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AuthTokensResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Login(LoginDto request)
     {
@@ -167,11 +173,58 @@ public class AuthController : ControllerBase
             return InvalidCredentials();
         }
 
-        var roles = await _userManager.GetRolesAsync(user);
-        var token = _jwt.CreateAccessToken(user, roles);
-
-        return Ok(new { accessToken = token, roles });
+        return Ok(await _authTokens.IssueAsync(user, request.DeviceId, HttpContext.RequestAborted));
     }
+
+    /// <summary>
+    /// Exchanges a refresh token for a new access token and a new refresh token (FR-ACC-04, FR-ACC-06).
+    ///
+    /// The presented token is single use: it is revoked here and replaced. Presenting a value that was already
+    /// rotated is treated as a stolen token and ends every live session of the account, so a copy that leaked
+    /// cannot keep a session alive.
+    /// </summary>
+    /// <param name="request">The refresh token from the previous login or refresh, plus an optional device label.</param>
+    /// <param name="cancellationToken">Cancels the database work when the client disconnects.</param>
+    /// <returns>The new pair, or a generic <c>401</c>.</returns>
+    /// <response code="200">The token was valid, still inside its lifetime and inside the session cap.</response>
+    /// <response code="400">The body is missing the token.</response>
+    /// <response code="401">
+    /// The token is unknown, revoked, already rotated, expired, past the session cap, or belongs to a deactivated
+    /// account. Every one of those answers with the same body on purpose.
+    /// </response>
+    [HttpPost("refresh")]
+    [ProducesResponseType(typeof(AuthTokensResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Refresh(RefreshTokenRequest request, CancellationToken cancellationToken)
+    {
+        var tokens = await _authTokens.RotateAsync(
+            request.RefreshToken, request.DeviceId, cancellationToken);
+
+        return tokens is null ? InvalidRefreshToken() : Ok(tokens);
+    }
+
+    /// <summary>
+    /// Revokes the presented refresh token, ending its session (FR-ACC-06).
+    /// </summary>
+    /// <param name="request">The refresh token to revoke.</param>
+    /// <param name="cancellationToken">Cancels the database work when the client disconnects.</param>
+    /// <returns><c>204</c>, including when the token is unknown or was already revoked.</returns>
+    /// <response code="204">
+    /// The session is over. The answer is the same for an unknown or already-revoked token, so the endpoint cannot be
+    /// used to discover which tokens exist.
+    /// </response>
+    /// <response code="400">The body is missing the token.</response>
+    [HttpPost("logout")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Logout(RefreshTokenRequest request, CancellationToken cancellationToken)
+    {
+        await _authTokens.RevokeAsync(request.RefreshToken, cancellationToken);
+
+        return NoContent();
+    }
+
     [HttpPost("forgot-password")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -239,6 +292,26 @@ public class AuthController : ControllerBase
             Status = StatusCodes.Status401Unauthorized,
             Title = "Invalid email or password.",
             Detail = "Check your credentials and try again."
+        };
+
+        problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+        return Unauthorized(problem);
+    }
+
+    /// <summary>
+    /// Builds the single <c>401</c> answer used when a refresh token cannot be exchanged: unknown, already rotated,
+    /// revoked, expired, past the session cap or owned by a deactivated account (ADR-0010, NFR-SEC-10). The body
+    /// must stay identical in all of those cases.
+    /// </summary>
+    /// <returns>The <c>401</c> result.</returns>
+    private ObjectResult InvalidRefreshToken()
+    {
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status401Unauthorized,
+            Title = "Invalid or expired refresh token.",
+            Detail = "Sign in again to start a new session."
         };
 
         problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
