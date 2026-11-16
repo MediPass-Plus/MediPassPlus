@@ -148,6 +148,15 @@ endpoint, no medical-record module and no audit endpoint, and the frontend is th
 Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
+MP-50 configures the Data Protection key ring from `DataProtection:KeysPath`: the directory must be absolute and
+outside the repository, Development and Testing fall back to a directory under the operating system's temporary path,
+and Production refuses to start without it (ADR-0007 decision 5). It also adds `IDiagnosisProtector`, the only
+component allowed to encrypt diagnosis text, under the versioned purpose `MediPass.Diagnosis.v1` (FR-PRV-04,
+NFR-SEC-05, ADR-0005); no record-write endpoint consumes it yet. The three secrets — the key ring, `Jwt:SecretKey` and
+`AccessCode:HmacKey` — are documented in `docs/operations/deployment-keys.md`, and
+`DiagnosisProtectorTests`, `DataProtectionOptionsValidatorTests` and `DataProtectionRegistrationTests` cover the
+round trip, the outside-repository rule and the Production startup failure. No migration was needed.
+
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline
 (ADR-0010); Swashbuckle generates the Swagger document and UI (ADR-0012). MP-97 adds QRCoder, ZXing.Net,
 ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed.
