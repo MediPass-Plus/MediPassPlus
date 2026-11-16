@@ -1,3 +1,4 @@
+using MediPassPlus.Application.Common;
 using MediPassPlus.Domain.Clinical;
 
 namespace MediPassPlus.Application.Booking;
@@ -5,9 +6,10 @@ namespace MediPassPlus.Application.Booking;
 /// <summary>
 /// Applies the booking rules in one place: a slot must exist, belong to the requested doctor, start in the future and
 /// be free; the doctor and patient must be active; and an appointment can be cancelled or rescheduled only while it is
-/// <see cref="AppointmentStatus.Booked"/> and has not started. The store commits the appointment and slot changes in
-/// one transaction, and a filtered unique index makes a concurrent double booking impossible (FR-BKG-03,
-/// FR-BKG-04, FR-BKG-05, FR-BKG-09, NFR-REL-03).
+/// <see cref="AppointmentStatus.Booked"/> and has not started. The same service reads the authenticated patient's own
+/// appointments one page at a time. The store commits the appointment and slot changes in one transaction, and a
+/// filtered unique index makes a concurrent double booking impossible (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-06,
+/// FR-BKG-09, NFR-REL-03).
 /// </summary>
 public sealed class BookingService : IBookingService
 {
@@ -251,6 +253,41 @@ public sealed class BookingService : IBookingService
         }
 
         return BookingResult.Success(ToDto(appointment, target.Slot));
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedResult<PatientAppointmentDto>> GetMyAppointmentsAsync(
+        Guid patientUserId,
+        PageRequest page,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+
+        var result = await _store.ListAppointmentsAsync(
+            patientUserId,
+            page.GetSkip(),
+            page.GetPageSize(),
+            cancellationToken);
+
+        return new PagedResult<PatientAppointmentDto>
+        {
+            Items = result.Items
+                .Select(row => new PatientAppointmentDto(
+                    row.Id,
+                    row.DoctorId,
+                    row.DoctorName,
+                    row.ClinicId,
+                    row.ClinicName,
+                    row.DoctorSlotId,
+                    row.StartTimeUtc,
+                    row.EndTimeUtc,
+                    row.Status.ToString(),
+                    row.CreatedAtUtc))
+                .ToList(),
+            TotalCount = result.TotalCount,
+            Page = page.Page,
+            PageSize = page.GetPageSize()
+        };
     }
 
     private static AppointmentDto ToDto(Appointment appointment, DoctorSlot slot) =>

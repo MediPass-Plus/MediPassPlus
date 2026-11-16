@@ -11,6 +11,15 @@ internal sealed class FakeBookingStore : IBookingStore
 
     public TargetSlotContext? TargetSlotContext { get; set; }
 
+    public PatientAppointmentsPage AppointmentsPage { get; set; } =
+        new(Array.Empty<PatientAppointmentRow>(), 0);
+
+    public Guid? ListedPatientUserId { get; private set; }
+
+    public int? ListedSkip { get; private set; }
+
+    public int? ListedTake { get; private set; }
+
     public bool ConflictOnSave { get; set; }
 
     public int SaveCount { get; private set; }
@@ -48,6 +57,19 @@ internal sealed class FakeBookingStore : IBookingStore
     {
         TargetSlotLoaded = true;
         return Task.FromResult(TargetSlotContext);
+    }
+
+    public Task<PatientAppointmentsPage> ListAppointmentsAsync(
+        Guid patientUserId,
+        int skip,
+        int take,
+        CancellationToken cancellationToken = default)
+    {
+        ListedPatientUserId = patientUserId;
+        ListedSkip = skip;
+        ListedTake = take;
+
+        return Task.FromResult(AppointmentsPage);
     }
 
     public void AddAppointment(Appointment appointment) => AddedAppointment = appointment;

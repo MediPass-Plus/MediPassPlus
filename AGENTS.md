@@ -30,9 +30,12 @@ the projects.
 This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
 register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
 `DoctorSlot` and `Appointment` (CLB-01); B1 exposes read-only clinic search, clinic-doctor search and doctor-slot
-listing endpoints. MP-27 adds the patient booking slice: `POST api/appointments` books a free future slot for the
-authenticated patient, `POST api/appointments/{appointmentId}/cancel` cancels a booked appointment, and
-`POST api/appointments/{appointmentId}/reschedule` moves it to another free slot of the same doctor. Every refusal is
+listing endpoints. MP-27 adds the patient booking rules, and MP-35 exposes them on the patient surface:
+`POST api/me/appointments` books a free future slot for the authenticated patient,
+`PUT api/me/appointments/{appointmentId}/cancel` cancels a booked appointment,
+`PUT api/me/appointments/{appointmentId}/reschedule` moves it to another free slot of the same doctor, and
+`GET api/me/appointments?page=&pageSize=` returns the authenticated patient's own upcoming, past and cancelled
+appointments, newest slot first, 20 per page by default and at most 50 (FR-BKG-06, NFR-PRF-04). Every refusal is
 the shared `ProblemDetails` envelope (`400` invalid state, `404` out of the patient's scope, `409` slot/state
 conflict), and a filtered unique index (`IX_Appointments_DoctorSlotId_Active`) plus slot and appointment concurrency
 tokens make a concurrent double booking impossible. Clinic and doctor searches default to 20 results per page,
@@ -230,8 +233,9 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   `POST api/access/scan` / `/scan-image` (Patient),
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
-  `POST api/access-grants/{grantId}/end` (Patient), and the booking actions
-  `POST api/appointments` / `{appointmentId}/cancel` / `{appointmentId}/reschedule` (Patient). Start-visit exercises
+  `POST api/access-grants/{grantId}/end` (Patient), and the patient appointment actions
+  `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
+  `PUT {appointmentId}/reschedule` (Patient). Start-visit exercises
   the scope check and issues a one-time QR credential plus its rendered `qrCodeDataUri`; the scan endpoints resolve
   that token as text or as a camera image without consuming it, and the token decision endpoints approve or reject
   the request it proves; check-in and completion enforce the appointment state machine

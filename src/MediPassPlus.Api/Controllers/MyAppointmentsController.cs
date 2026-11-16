@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using MediPassPlus.Application.Booking;
+using MediPassPlus.Application.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -7,14 +8,16 @@ using Microsoft.AspNetCore.Mvc;
 namespace MediPassPlus.Api.Controllers;
 
 /// <summary>
-/// Patient booking endpoints: book a free doctor slot, cancel a booked appointment and reschedule it to another
-/// free slot of the same doctor (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-09). Every action is scoped to the authenticated patient, and every
-/// refusal is returned as the shared <see cref="ProblemDetails"/> envelope (ADR-0010).
+/// The patient-facing appointment surface: list the authenticated patient's own appointments, book a free doctor
+/// slot, cancel a booked appointment and reschedule it to another free slot of the same doctor (FR-BKG-03, FR-BKG-04,
+/// FR-BKG-05, FR-BKG-06, FR-BKG-09). Every action is scoped to the authenticated patient and resolves that patient
+/// from the token, never from the request body or query string, so one patient can never reach another patient's
+/// appointment. Every refusal is returned as the shared <see cref="ProblemDetails"/> envelope (ADR-0010).
 /// </summary>
 [ApiController]
-[Route("api/appointments")]
+[Route("api/me/appointments")]
 [Authorize(Roles = "Patient")]
-public class AppointmentsController : ControllerBase
+public class MyAppointmentsController : ControllerBase
 {
     private const string BadRequestType = "https://tools.ietf.org/html/rfc9110#section-15.5.1";
     private const string UnauthorizedType = "https://tools.ietf.org/html/rfc9110#section-15.5.2";
@@ -23,18 +26,57 @@ public class AppointmentsController : ControllerBase
 
     private readonly IBookingService _bookingService;
 
-    /// <summary>Initializes a new instance of the <see cref="AppointmentsController"/> class.</summary>
+    /// <summary>Initializes a new instance of the <see cref="MyAppointmentsController"/> class.</summary>
     /// <param name="bookingService">The booking application service.</param>
-    public AppointmentsController(IBookingService bookingService)
+    public MyAppointmentsController(IBookingService bookingService)
     {
         ArgumentNullException.ThrowIfNull(bookingService);
         _bookingService = bookingService;
     }
 
     /// <summary>
-    /// Books a free, future slot of the requested doctor for the authenticated patient. The slot and the new
-    /// appointment are written in one unit of work, and a concurrent booking of the same slot is refused with
-    /// <c>409</c> (FR-BKG-03).
+    /// Returns one page of the authenticated patient's own appointments, newest slot first, with the total count.
+    /// The list includes past, upcoming and cancelled appointments so the patient sees their full visit history
+    /// (FR-BKG-06, US-09, NFR-PRF-04).
+    /// </summary>
+    /// <param name="query">The page and page size. The defaults are 1 and 20; the maximum page size is 50.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A page of the patient's appointments.</returns>
+    /// <response code="200">The requested page of the patient's appointments.</response>
+    /// <response code="400">The page or page size is not valid.</response>
+    /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
+    /// <response code="403">The caller is not a patient.</response>
+    [HttpGet]
+    [Produces("application/json")]
+    [ProducesResponseType(typeof(PagedResult<PatientAppointmentDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Get(
+        [FromQuery] MyAppointmentsQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetPatientUserId(out var patientUserId))
+        {
+            return CreateProblem(
+                StatusCodes.Status401Unauthorized,
+                UnauthorizedType,
+                "Authentication required.",
+                "The access token does not identify a user.");
+        }
+
+        var appointments = await _bookingService.GetMyAppointmentsAsync(
+            patientUserId,
+            query,
+            cancellationToken);
+
+        return Ok(appointments);
+    }
+
+    /// <summary>
+    /// Books a free, future slot of the requested doctor for the authenticated patient. The patient is resolved from
+    /// the token and is never accepted from the body, the slot and the new appointment are written in one unit of work,
+    /// and a concurrent booking of the same slot is refused with <c>409</c> (FR-BKG-03).
     /// </summary>
     /// <param name="request">The doctor and slot to book.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -80,7 +122,7 @@ public class AppointmentsController : ControllerBase
             var appointment = result.Appointment
                 ?? throw new InvalidOperationException("A successful booking must contain an appointment.");
 
-            return Created($"/api/appointments/{appointment.Id}", appointment);
+            return Created($"/api/me/appointments/{appointment.Id}", appointment);
         }
 
         return MapFailure(result.Failure);
@@ -100,7 +142,7 @@ public class AppointmentsController : ControllerBase
     /// <response code="403">The caller is not a patient.</response>
     /// <response code="404">No appointment with that identifier belongs to the authenticated patient.</response>
     /// <response code="409">A concurrent request changed the appointment or slot first.</response>
-    [HttpPost("{appointmentId:int}/cancel")]
+    [HttpPut("{appointmentId:int}/cancel")]
     [Produces("application/json")]
     [ProducesResponseType(typeof(AppointmentDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -127,8 +169,8 @@ public class AppointmentsController : ControllerBase
     }
 
     /// <summary>
-    /// Moves one of the authenticated patient's booked appointments to another free slot of the same doctor,
-    /// before the current slot starts. The appointment, doctor and patient stay in the same scope (FR-BKG-05).
+    /// Moves one of the authenticated patient's booked appointments to another free slot of the same doctor, before
+    /// the current slot starts. The appointment, doctor and patient stay in the same scope (FR-BKG-05).
     /// </summary>
     /// <param name="appointmentId">The appointment to reschedule.</param>
     /// <param name="request">The target slot.</param>
@@ -143,7 +185,7 @@ public class AppointmentsController : ControllerBase
     /// <response code="403">The caller is not a patient.</response>
     /// <response code="404">The appointment, doctor or target slot does not exist.</response>
     /// <response code="409">The target slot is already booked, or a concurrent request changed the state first.</response>
-    [HttpPost("{appointmentId:int}/reschedule")]
+    [HttpPut("{appointmentId:int}/reschedule")]
     [Produces("application/json")]
     [ProducesResponseType(typeof(AppointmentDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]

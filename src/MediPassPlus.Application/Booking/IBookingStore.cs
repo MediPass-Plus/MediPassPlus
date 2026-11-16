@@ -48,6 +48,21 @@ public interface IBookingStore
         int slotId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Reads one page of the authenticated patient's appointments, newest slot first, together with the total count.
+    /// The patient identifier is part of the query, so another patient's rows can never be returned (FR-BKG-06).
+    /// </summary>
+    /// <param name="patientUserId">The authenticated patient's user account identifier.</param>
+    /// <param name="skip">The number of rows to skip.</param>
+    /// <param name="take">The maximum number of rows to return.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The requested page and the total number of appointments in the patient's scope.</returns>
+    Task<PatientAppointmentsPage> ListAppointmentsAsync(
+        Guid patientUserId,
+        int skip,
+        int take,
+        CancellationToken cancellationToken = default);
+
     /// <summary>Stages a new appointment.</summary>
     /// <param name="appointment">The appointment to add.</param>
     void AddAppointment(Appointment appointment);
