@@ -109,10 +109,17 @@ A doctor, slot or appointment outside the clinic answers `404`, a staff account 
 no staff response carries diagnosis, prescription or report data. No migration was needed.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
-calendar while every stored timestamp stays UTC. Twelve migrations live in
+calendar while every stored timestamp stays UTC. MP-31 adds the refresh-token lifecycle (FR-ACC-04, FR-ACC-06):
+`POST api/Auth/login` answers the access token plus an opaque 256-bit refresh token and its expiry, `POST
+api/Auth/refresh` rotates the pair, and `POST api/Auth/logout` ends the session and always answers `204`. Only the
+SHA-256 hash of a token is stored, in `identity.RefreshTokens`; one token lives `Jwt:RefreshTokenDays` (7 days) and no
+session outlives `Jwt:SessionDays` (30 days) from the first login. Presenting an already-rotated token is treated as a
+leak and revokes every live token of the account, `RevokedAtUtc` is the concurrency token that makes a double rotation
+impossible, deactivating an account or resetting its password also revokes every live token, and both token responses
+carry `Cache-Control: no-store` (ADR-0003 decision 4). Thirteen migrations live in
 `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin`, `AddAuditLog`,
-`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot`, `AddAppointmentStatusTimestamps` and
-`AddMedicalRecordSchema`. MP-28 adds the `records` schema (`MedicalRecords`, `Diagnoses`, `Prescriptions`, `Reports`):
+`EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot`, `AddAppointmentStatusTimestamps`,
+`AddMedicalRecordSchema` and `AddRefreshTokens`. MP-28 adds the `records` schema (`MedicalRecords`, `Diagnoses`, `Prescriptions`, `Reports`):
 one record per patient, diagnoses always scoped to a visit, prescriptions inside a diagnosis, record-level reports
 with an explicit uploader, append-only rows linked by `SupersedesDiagnosisId` / `SupersedesPrescriptionId` for
 corrections, ciphertext columns for diagnosis and prescription text, required owning foreign keys with `Restrict` and
@@ -133,7 +140,10 @@ both audit proofs, a two-context persistence test proving a stale completion can
 test-only `[RequireActiveGrant]` controller that shows the doctor's next gated request returns `403` after the
 patient ends the grant. The MP-97 tests add the rendered-QR round trip, scan as text and as a camera image, the
 token approve/reject matrix, the closed-visit `410`/`409` split, the wrong-patient `403`, the `415` upload, the
-shared `QrApprove` `429`, and the doctor/patient access-state authorization matrix. There is still no record-read
+shared `QrApprove` `429`, and the doctor/patient access-state authorization matrix. The MP-31 tests add rotation and
+single use, a replay ending every live session, idempotent logout and its `204`, the seven-day expiry and the
+thirty-day session cap, revocation on deactivation and on password reset, and `no-store` on both token responses.
+There is still no record-read
 endpoint, no medical-record module and no audit endpoint, and the frontend is the untouched Angular welcome page.
 Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
@@ -222,8 +232,8 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   It marks operations that carry `[Authorize]` automatically, so do not hand-write security requirements.
 - Schema ids are namespace-qualified by `Swagger/SwaggerSchemaId.cs`; two DTOs may share a simple name without
   breaking the document.
-- **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `forgot-password`,
-  `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
+- **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `refresh`, `logout`,
+  `forgot-password`, `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
   `POST api/appointments/{appointmentId}/access-code` (Patient),
   `POST api/appointments/{appointmentId}/verify-code` (Doctor),

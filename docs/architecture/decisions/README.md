@@ -11,7 +11,7 @@ be resolved by the team, not silently.
 |---|---|---|---|
 | [0001](0001-separate-visit-access-credentials.md) | Separate QR token and 6-digit code credentials | **Accepted** | Visit Access entities |
 | [0002](0002-code-generation-and-verification-actors.md) | Code generation and verification actors (doctor-only) | **Accepted** | Visit Access endpoints |
-| [0003](0003-identity-and-jwt-authentication.md) | ASP.NET Core Identity with JWT authorization | Proposed — user model + refresh tokens; see implementation review | Accounts, every authorized endpoint |
+| [0003](0003-identity-and-jwt-authentication.md) | ASP.NET Core Identity with JWT authorization | Proposed — user model shape; refresh-token design recorded 2026-11-16 (amended) | Accounts, every authorized endpoint |
 | [0004](0004-audit-logging.md) | Audit logging scope and controlled values | **Accepted** | Record, Privacy, Visit Access |
 | [0005](0005-diagnosis-relationships.md) | Diagnosis → record and appointment relationships | **Accepted** (2026-11-11; amended 2026-11-11) | Medical Record entities |
 | [0006](0006-api-integration-tests.md) | HTTP integration tests with WebApplicationFactory | **Accepted** (2026-11-09; Testcontainers SQL Server) | Authorization test matrix (NFR-SEC-10) |
@@ -35,7 +35,6 @@ be resolved by the team, not silently.
 ## Decisions still needed outside these ADRs
 
 - User model shape: TPH subclasses of `ApplicationUser` vs profile tables (ADR-0003, open).
-- Refresh-token storage and rotation (ADR-0003, open).
 
 Resolved on 2026-10-29: code verification is doctor-only (ADR-0002); `Diagnosis.AppointmentId` is required
 (ADR-0005 revision); Swagger UI is a Development tool and the document is off in Production by default (ADR-0008).
@@ -45,4 +44,6 @@ Testcontainers SQL Server (ADR-0006). Resolved on 2026-11-11: ADR-0005 is accept
 (prescription cardinality 0..*, supersedes links, report uploader attribution, diagnosis and prescription encryption,
 write invariants); Swashbuckle is the single Swagger document generator (ADR-0012). Resolved on 2026-11-13: the
 password policy keeps the stricter upper/lower/digit/symbol rule and the lockout lasts 15 minutes (ADR-0003, amended
-that day); ADR-0003 remains open only on the user-model shape and the refresh-token design.
+that day). Resolved on 2026-11-16: refresh tokens are a hashed single-use row with rotation, a seven-day lifetime, a
+thirty-day session cap, replay revoking every live token, and an idempotent logout (ADR-0003 decision 4, MP-31);
+ADR-0003 remains open only on the user-model shape.

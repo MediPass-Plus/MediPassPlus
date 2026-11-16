@@ -22,6 +22,20 @@ internal static class JwtExtensions
         if (string.IsNullOrWhiteSpace(jwt.SecretKey) || jwt.SecretKey.Length < 32)
             throw new InvalidOperationException("Jwt:SecretKey is missing or shorter than 32 characters.");
 
+        // A non-positive lifetime would make RefreshToken.Issue throw on the first login and answer 500, so the
+        // misconfiguration is refused at startup instead (FR-ACC-06).
+        if (jwt.AccessTokenMinutes <= 0)
+            throw new InvalidOperationException("Jwt:AccessTokenMinutes must be greater than zero.");
+
+        if (jwt.RefreshTokenDays <= 0)
+            throw new InvalidOperationException("Jwt:RefreshTokenDays must be greater than zero.");
+
+        if (jwt.SessionDays <= 0)
+            throw new InvalidOperationException("Jwt:SessionDays must be greater than zero.");
+
+        if (jwt.RefreshTokenDays > jwt.SessionDays)
+            throw new InvalidOperationException("Jwt:RefreshTokenDays cannot be longer than Jwt:SessionDays.");
+
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(options =>
             {
