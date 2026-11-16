@@ -14,8 +14,10 @@ using MediPassPlus.Infrastructure.Auth;
 using MediPassPlus.Infrastructure.Email;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
+using MediPassPlus.Infrastructure.Privacy;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using MediPassPlus.Application.AdminManagement;
 using MediPassPlus.Infrastructure.AdminManagement;
 using MediPassPlus.Application.Staff;
@@ -28,7 +30,7 @@ namespace MediPassPlus.Infrastructure.Extensions;
 public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddInfrastructure(
-        this IServiceCollection services, IConfiguration configuration)
+        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         // HERE we are adding OR registering all the infrastructure services to the DI container
         services.AddPersistence(configuration);
@@ -45,6 +47,10 @@ public static class ServiceCollectionExtensions
         // Audit writes are append-only and timestamped by the server (FR-PRV-02, ADR-0004).
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IAuditWriter, AuditWriter>();
+
+        // Data Protection key ring outside the repository and the only diagnosis-text encryptor (FR-PRV-04,
+        // NFR-SEC-05, ADR-0007 decision 5).
+        services.AddDiagnosisProtection(configuration, environment);
 
         // Visit-access scope checks: resolve the appointment/doctor from the database, never from caller-supplied ids
         // (FR-ACS-06, ADR-0011 decision 8).

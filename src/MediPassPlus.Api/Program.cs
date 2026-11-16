@@ -128,7 +128,7 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddValidatorsFromAssemblyContaining<SampleRequestValidator>();
 
 // DbContext + Identity + Roles + JWT (all registered in Infrastructure/Extensions)
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 // Swashbuckle is the single Swagger document generator and UI (ADR-0012).
 builder.Services.AddSwaggerDocumentation();
 var app = builder.Build();

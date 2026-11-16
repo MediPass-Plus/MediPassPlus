@@ -122,6 +122,7 @@ The phone camera needs HTTPS (or localhost) to scan the QR code.
 - Project Planning and Management: `Documentations/`
 - Requirements Gathering: `Documentations/`
 - UML diagrams and the Gantt chart: `Diagrams/`
+- Deployment keys and the Data Protection ring: [`docs/operations/deployment-keys.md`](docs/operations/deployment-keys.md)
 
 ## Working on the project
 
