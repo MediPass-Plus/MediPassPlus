@@ -53,6 +53,10 @@ public static class ServiceCollectionExtensions
         // NFR-SEC-05, ADR-0007 decision 5).
         services.AddDiagnosisProtection(configuration, environment);
 
+        // The purpose-aware contract the Record write path depends on. Diagnosis text goes through the MP-50
+        // IDiagnosisProtector; prescription text uses the same ring under its own versioned purpose (ADR-0005).
+        services.AddSingleton<IClinicalTextProtector, ClinicalTextProtector>();
+
         // Visit-access scope checks: resolve the appointment/doctor from the database, never from caller-supplied ids
         // (FR-ACS-06, ADR-0011 decision 8).
         services.AddScoped<IVisitAccessScopeStore, VisitAccessScopeStore>();

@@ -15,11 +15,9 @@ namespace MediPassPlus.Api.IntegrationTests.Records;
 /// the grant's scope, so a caller can never learn that another patient's record exists (NFR-PRI-01).
 /// </summary>
 /// <remarks>
-/// Every refusal here is produced by the authorization middleware or the access-grant filter, so these tests do not
-/// assert anything about encryption. The controller is still activated before the action filters run, so the harness
-/// registers <see cref="TestOnlyClinicalTextProtector"/> as a stand-in for the implementation MP-50 owes (ADR-0007);
-/// the API itself registers none yet, which is why a request that passes the grant check still fails with 500 there.
-/// A happy-path test belongs with that ticket.
+/// Every refusal here is produced by the authorization middleware or the access-grant filter and asserts nothing about
+/// encryption; the rows these tests seed carry placeholder ciphertext. The harness hosts the real protector that
+/// MP-50 registered, over its own ephemeral key ring, so a request that passes the grant check is never a 500.
 /// </remarks>
 [Collection(IntegrationTestCollection.Name)]
 public sealed class DiagnosisWriteEndpointTests : IClassFixture<MediPassApiFactory>

@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using MediPassPlus.Application.Common;
-using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
@@ -733,12 +732,6 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             services.AddDataProtection()
                 .SetApplicationName(DataProtectionApplicationName)
                 .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysPath));
-
-            // MP-50 owns the real IClinicalTextProtector, its key-ring path and its startup check. Until that ticket
-            // lands, the API registers no implementation, and MVC fails while activating a record-write controller
-            // even when the request is about to be refused. This stand-in keeps the refusal paths observable in HTTP;
-            // it is defined in this test project only and nothing in src references it.
-            services.AddSingleton<IClinicalTextProtector, TestOnlyClinicalTextProtector>();
         });
     }
 
