@@ -95,9 +95,16 @@ public sealed class AuthTokenService : IAuthTokenService
 
         var user = await _userManager.FindByIdAsync(current.UserId.ToString());
 
-        // A deactivated account (FR-STF-07) never gets a new pair, even with a token that is still valid.
-        if (user is null || !user.IsActive)
+        if (user is null)
         {
+            return null;
+        }
+
+        // A deactivated account (FR-STF-07) never gets a new pair. Its live tokens are revoked here as well, so
+        // reactivating the account cannot bring the old session back to life.
+        if (!user.IsActive)
+        {
+            await RevokeAllForUserAsync(user.Id, cancellationToken);
             return null;
         }
 
@@ -110,7 +117,7 @@ public sealed class AuthTokenService : IAuthTokenService
             // presents it again is refused without touching the account's other sessions.
             if (current.ReplacedByTokenId is not null)
             {
-                await RevokeAllActiveAsync(user.Id, now, cancellationToken);
+                await RevokeAllForUserAsync(user.Id, cancellationToken);
             }
 
             return null;
@@ -207,13 +214,13 @@ public sealed class AuthTokenService : IAuthTokenService
             roles.ToArray());
     }
 
-    private async Task RevokeAllActiveAsync(
-        Guid userId,
-        DateTime now,
-        CancellationToken cancellationToken)
+    /// <inheritdoc />
+    public async Task RevokeAllForUserAsync(Guid userId, CancellationToken cancellationToken)
     {
-        // One statement, so a concurrent rotation cannot make the batch fail halfway through. The presented token is
-        // refused whatever the outcome, and the account has to sign in again to open a new session.
+        var now = Now();
+
+        // One statement, so a concurrent rotation cannot make the batch fail halfway through. The caller refuses the
+        // request whatever the outcome, and the account has to sign in again to open a new session.
         await _context.RefreshTokens
             .Where(token => token.UserId == userId && token.RevokedAtUtc == null)
             .ExecuteUpdateAsync(

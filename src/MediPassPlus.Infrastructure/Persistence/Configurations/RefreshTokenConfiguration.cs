@@ -34,6 +34,10 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
         // A detected replay revokes every live token of the account, and a session cap read scans by user.
         builder.HasIndex(token => token.UserId);
 
+        // Expired and revoked rows are kept until a retention job removes them; this index is what lets that job scan
+        // the table instead of reading it whole.
+        builder.HasIndex(token => token.ExpiresAtUtc);
+
         builder.HasOne<ApplicationUser>()
             .WithMany()
             .HasForeignKey(token => token.UserId)

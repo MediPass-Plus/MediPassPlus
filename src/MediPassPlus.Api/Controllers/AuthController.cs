@@ -178,6 +178,8 @@ public class AuthController : ControllerBase
             return InvalidCredentials();
         }
 
+        PreventTokenCaching();
+
         return Ok(await _authTokens.IssueAsync(user, request.DeviceId, HttpContext.RequestAborted));
     }
 
@@ -206,7 +208,14 @@ public class AuthController : ControllerBase
         var tokens = await _authTokens.RotateAsync(
             request.RefreshToken, request.DeviceId, cancellationToken);
 
-        return tokens is null ? InvalidRefreshToken() : Ok(tokens);
+        if (tokens is null)
+        {
+            return InvalidRefreshToken();
+        }
+
+        PreventTokenCaching();
+
+        return Ok(tokens);
     }
 
     /// <summary>
@@ -282,7 +291,21 @@ public class AuthController : ControllerBase
         await _userManager.ResetAccessFailedCountAsync(user);
         await _userManager.SetLockoutEndDateAsync(user, null);
 
+        // A token that leaked before the reset must not outlive it: the new password is the only proof of ownership
+        // from here on (FR-ACC-06).
+        await _authTokens.RevokeAllForUserAsync(user.Id, HttpContext.RequestAborted);
+
         return Ok(new { message = "Password has been reset successfully." });
+    }
+
+    /// <summary>
+    /// Marks a response that carries a token as non-cacheable (RFC 6749 section 5.1), so no proxy or browser keeps
+    /// the access or refresh token. The visit-access endpoints already do the same for their secrets.
+    /// </summary>
+    private void PreventTokenCaching()
+    {
+        Response.Headers["Cache-Control"] = "no-store";
+        Response.Headers["Pragma"] = "no-cache";
     }
 
     /// <summary>

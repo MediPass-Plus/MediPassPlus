@@ -1,7 +1,8 @@
 # ADR-0003: ASP.NET Core Identity with JWT authorization
 
-- **Status:** Proposed (blocked: user-model shape and refresh-token design; see the implementation review dated
-  2026-11-13 below. The password policy and the 15-minute lockout are settled.)
+- **Status:** Proposed (blocked on the user-model shape only; see the open sub-decision at the end. The password
+  policy, the 15-minute lockout and the refresh-token design are settled — the last by MP-31 on 2026-11-16 and
+  recorded in decision 4.)
 - **Date:** 2026-10-29
 - **Affects:** Accounts module, every authorized endpoint, class diagram (D4), database baseline
 
@@ -28,10 +29,35 @@ what the documents require, and it would duplicate Identity.
 3. Roles via Identity roles (`Patient`, `Doctor`, `Staff`, `Admin`), issued as JWT role claims. `Staff` is the seeded
    and enforced name for the requirements' `ClinicStaff` label. Server-side `[Authorize(Roles = ...)]`/policies on
    every endpoint (FR-ACC-09); the medical-grant check is separate (ADR-0004).
-4. Access token: 15 minutes (NFR-SEC-03). Refresh: dedicated hashed token row with rotation and revocation (FR-ACC-06)
-   — exact table design is an open sub-decision for the Accounts owner.
+4. Access token: 15 minutes (NFR-SEC-03). Refresh (FR-ACC-06) is a dedicated hashed token row with rotation and
+   revocation. The design below was confirmed on 2026-11-16 by MP-31 and is what the code runs:
+   - **Value:** 256 bits of CSPRNG output, handed to the client once as an opaque Base64Url string. It is never
+     stored: the row keeps only its SHA-256 hash in upper-case hex (64 characters) under a unique index.
+   - **Table:** `identity.RefreshTokens` with `Id` (UUIDv7), `UserId` (foreign key to `identity.Users`, cascade),
+     `TokenHash`, `CreatedAtUtc`, `ExpiresAtUtc`, `SessionStartedAtUtc`, `RevokedAtUtc`, `ReplacedByTokenId` and an
+     optional `DeviceId`. Indexes on the unique `TokenHash`, on `UserId` (replay and session reads) and on
+     `ExpiresAtUtc`, which is what a retention job would scan.
+   - **Lifetime:** one token lives `Jwt:RefreshTokenDays` (7 days) and no session outlives `Jwt:SessionDays`
+     (30 days) counted from the first login. Every rotation carries the original `SessionStartedAtUtc` forward, so a
+     replacement expires at `min(now + 7 days, sessionStart + 30 days)`. Both lifetimes are validated at startup, so a
+     misconfiguration cannot turn the first login into a `500`.
+   - **Rotation:** a refresh retires the presented row (`RevokedAtUtc`, `ReplacedByTokenId`) and inserts its
+     replacement in one unit of work, so no value can be exchanged twice. `RevokedAtUtc` is the EF concurrency token:
+     of two concurrent refreshes exactly one wins and the loser answers `401`.
+   - **Replay:** presenting a revoked row that has a successor proves a copy leaked, so every live token of the
+     account is revoked with one `ExecuteUpdate`. A row revoked by a logout has no successor and ends only itself, so
+     replaying a logged-out token cannot end the account's other sessions.
+   - **Logout:** `POST api/Auth/logout` is anonymous, idempotent and always answers `204`, so it reveals nothing about
+     which tokens exist.
+   - **Other ways a session ends:** deactivating the account (FR-STF-07) and a successful password reset both revoke
+     every live token of that account, so reactivating an account or resetting a password cannot revive an old session.
+   - **Transport:** the login and refresh responses carry `Cache-Control: no-store` and `Pragma: no-cache`
+     (RFC 6749 section 5.1).
+   - **Refusals:** every failed refresh answers the same `401` `ProblemDetails`, whatever the reason.
 5. Deactivated accounts (FR-STF-07) block login (Identity lockout) **and** carry an `IsActive` flag; because JWT bearer
    validation does not hit the database, deactivation takes effect at latest when the 15-minute access token expires.
+   A deactivated account cannot extend a session either: every live refresh token of the account is revoked with the
+   flag (decision 4).
 6. JWT signing key comes from `Jwt:SecretKey` (user-secrets/env); it is never the Data Protection key (ADR-0007).
 
 ## Implementation review (2026-11-05, superseded by the review dated 2026-11-13)
@@ -86,7 +112,7 @@ Aligned:
 Gaps:
 
 - **Refresh tokens:** there is no refresh-token table, rotation, revocation or endpoint; `RefreshTokenDays` is unused.
-  FR-ACC-06 is not implemented.
+  FR-ACC-06 is not implemented. **Closed by MP-31 on 2026-11-16; see decision 4 and the confirmation below.**
 - **User model:** the code uses one `ApplicationUser` plus a `Doctor` profile table and a duplicate `Role` string. The
   TPH-vs-profile sub-decision and the single source of truth for roles remain unresolved.
 - **Role assignment:** registration still accepts `Patient`, `Doctor` and `Staff` from the request body. `Admin` is
@@ -94,20 +120,34 @@ Gaps:
   the body never grants access on its own. Restricting the public endpoint to `Patient` (FR-ACC-03) remains a product
   decision.
 
-## Open sub-decisions (block the Accounts PR, not the ADR)
+## Refresh-token design confirmed (2026-11-16)
+
+MP-31 closed the refresh-token sub-decision decision 4 used to leave open for the Accounts owner. Decision 4 now
+records the lifecycle the code runs, so the remaining gap from the 2026-11-13 review is closed.
+
+The HTTP contract is covered by
+`tests/MediPassPlus.Api.IntegrationTests/RefreshTokenEndpointTests.cs`: rotation and single use, a replay ending every
+live session of the account, logout idempotence and its `204`, the seven-day expiry, the thirty-day session cap,
+revocation on deactivation and on password reset, and `no-store` on both token responses.
+`RefreshTokenTests` (Domain) and `RefreshTokenPersistenceTests` (SQLite) cover the entity rules and the stored
+columns. Nothing in this design contradicts FR-ACC-04, FR-ACC-06 or NFR-SEC-03.
+
+## Open sub-decision (blocks the Accounts PR, not the ADR)
 
 - **User model shape:** TPH subclasses (`Patient`, `Doctor`, `ClinicStaff`, `Admin` inheriting `ApplicationUser`, one
   `AspNetUsers` table with a discriminator) — matches the existing class diagram and needs a diagram field rename; or
   `ApplicationUser` + 1:1 profile tables (`PatientProfile.DateOfBirth/Phone`, `DoctorProfile.Specialty/ClinicId`,
   `StaffProfile.ClinicId`) — cleaner for Identity, but redraws part 1. **Recommendation: TPH**, with tests asserting the
   subtype and the Identity role never disagree.
-- **Refresh-token storage:** table with rotation vs security-stamp revalidation only. **Recommendation:** table.
 
 ## Consequences
 
 - `passwordHash`, `failedLogins`, `lockoutEnd` disappear from the diagram; Identity's `PasswordHash`,
   `AccessFailedCount`, `LockoutEnd` take their place.
 - `Patient`'s duplicate phone fields (`phoneNumber` inherited + `phone`) must be resolved to one source.
+- `identity.RefreshTokens` gains one row per login and per rotation, and the API never deletes them. A retention job
+  must remove expired and revoked rows; the `ExpiresAtUtc` index exists so that job can scan instead of reading the
+  table whole.
 - JWT bearer tokens are self-contained, so role changes and deactivation lag by up to one token lifetime — accepted
   because tokens are short (NFR-SEC-03) and documented in the security notes.
 

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using MediPassPlus.Application.AdminManagement;
 using MediPassPlus.Application.Auth;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Infrastructure.Persistence;
@@ -19,9 +20,10 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// Every case registers its own account, so the tokens of one case can never be reached by another.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class RefreshTokenEndpointTests : IAsyncLifetime
+public sealed class RefreshTokenEndpointTests : IAsyncLifetime, IClassFixture<MediPassApiFactory>
 {
     private const string Password = "Str0ng!Pass1";
+    private const string NewPassword = "N3w!Passw0rd2";
     private const string GenericRefreshTitle = "Invalid or expired refresh token.";
 
     private readonly MediPassApiFactory _factory;
@@ -174,6 +176,71 @@ public sealed class RefreshTokenEndpointTests : IAsyncLifetime
         await DeactivateAsync(email);
 
         Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(login.RefreshToken)).StatusCode);
+    }
+
+    /// <summary>
+    /// Deactivation ends the session for good: reactivating the account must not bring the old token back to life
+    /// (FR-STF-07, FR-ACC-06). This goes through the same service the admin endpoint calls.
+    /// </summary>
+    [Fact]
+    public async Task Deactivation_ThenReactivation_LeavesTheOldTokenRefused()
+    {
+        var email = NewEmail("refresh.reactivate");
+        var login = await LoginAsync(email, afterRegister: true);
+
+        await SetActiveThroughTheAdminServiceAsync(email, isActive: false);
+        await SetActiveThroughTheAdminServiceAsync(email, isActive: true);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(login.RefreshToken)).StatusCode);
+
+        // The account itself still works: only the session it held was ended.
+        Assert.False(string.IsNullOrWhiteSpace((await LoginAsync(email)).RefreshToken));
+    }
+
+    /// <summary>
+    /// A password reset ends every live session, so a token stolen before the reset cannot outlive it (FR-ACC-06).
+    /// </summary>
+    [Fact]
+    public async Task ResetPassword_RevokesTheOldRefreshToken()
+    {
+        var email = NewEmail("refresh.reset");
+        var login = await LoginAsync(email, afterRegister: true);
+        var resetToken = await GeneratePasswordResetTokenAsync(email);
+
+        var reset = await _client.PostAsJsonAsync(
+            "/api/Auth/reset-password",
+            new { email, token = resetToken, newPassword = NewPassword });
+        Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await RefreshAsync(login.RefreshToken)).StatusCode);
+
+        // The new password opens a new session.
+        var newLogin = await _client.PostAsJsonAsync(
+            "/api/Auth/login",
+            new { email, password = NewPassword });
+        Assert.Equal(HttpStatusCode.OK, newLogin.StatusCode);
+    }
+
+    /// <summary>Token responses are never cacheable (RFC 6749 section 5.1).</summary>
+    [Fact]
+    public async Task LoginAndRefresh_DoNotAllowTheResponseToBeCached()
+    {
+        var email = NewEmail("refresh.cache");
+        var registration = await _client.PostAsJsonAsync(
+            "/api/Auth/register",
+            new { fullName = "Refresh Token Test", email, password = Password, role = "Patient" });
+        Assert.Equal(HttpStatusCode.OK, registration.StatusCode);
+
+        var login = await _client.PostAsJsonAsync("/api/Auth/login", new { email, password = Password });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+        Assert.Equal("no-store", SingleHeader(login, "Cache-Control"));
+
+        var tokens = await login.Content.ReadFromJsonAsync<TokenPair>();
+        Assert.NotNull(tokens);
+
+        var refresh = await RefreshAsync(tokens!.RefreshToken);
+        Assert.Equal(HttpStatusCode.OK, refresh.StatusCode);
+        Assert.Equal("no-store", SingleHeader(refresh, "Cache-Control"));
     }
 
     /// <summary>After a logout the same token is refused, and the answer is still the generic one.</summary>
@@ -335,6 +402,43 @@ public sealed class RefreshTokenEndpointTests : IAsyncLifetime
         var result = await userManager.UpdateAsync(user);
         Assert.True(result.Succeeded);
     }
+
+    private async Task SetActiveThroughTheAdminServiceAsync(string email, bool isActive)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var status = scope.ServiceProvider.GetRequiredService<IAccountStatusService>();
+
+        var user = await userManager.FindByEmailAsync(email);
+        Assert.NotNull(user);
+
+        var failure = await status.SetActiveAsync(
+            user!.Id,
+            isActive,
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        Assert.Equal(ChangeStatusFailure.None, failure);
+    }
+
+    private async Task<string> GeneratePasswordResetTokenAsync(string email)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+        var user = await userManager.FindByEmailAsync(email);
+        Assert.NotNull(user);
+
+        var token = await userManager.GeneratePasswordResetTokenAsync(user!);
+        Assert.False(string.IsNullOrWhiteSpace(token));
+
+        return token;
+    }
+
+    private static string? SingleHeader(HttpResponseMessage response, string name) =>
+        response.Headers.TryGetValues(name, out var values)
+            ? string.Join(", ", values)
+            : null;
 
     private static async Task<AuthProblem> ReadProblemAsync(HttpResponseMessage response)
     {

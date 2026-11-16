@@ -39,6 +39,12 @@ namespace MediPassPlus.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateIndex(
+                name: "IX_RefreshTokens_ExpiresAtUtc",
+                schema: "identity",
+                table: "RefreshTokens",
+                column: "ExpiresAtUtc");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_RefreshTokens_TokenHash",
                 schema: "identity",
                 table: "RefreshTokens",

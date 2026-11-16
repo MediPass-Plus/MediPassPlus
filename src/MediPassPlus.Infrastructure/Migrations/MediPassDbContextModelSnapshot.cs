@@ -325,6 +325,8 @@ namespace MediPassPlus.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ExpiresAtUtc");
+
                     b.HasIndex("TokenHash")
                         .IsUnique();
 

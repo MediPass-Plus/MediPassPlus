@@ -101,7 +101,8 @@ public sealed class RefreshToken
 
         return new RefreshToken
         {
-            Id = Guid.NewGuid(),
+            // v7 keeps the insert order of the clustered primary key, like every other entity in the model.
+            Id = Guid.CreateVersion7(),
             UserId = userId,
             TokenHash = tokenHash,
             CreatedAtUtc = nowUtc,

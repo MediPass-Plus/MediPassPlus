@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MediPassPlus.Infrastructure.Migrations
 {
     [DbContext(typeof(MediPassDbContext))]
-    [Migration("20261115182941_AddRefreshTokens")]
+    [Migration("20261116122831_AddRefreshTokens")]
     partial class AddRefreshTokens
     {
         /// <inheritdoc />
@@ -327,6 +327,8 @@ namespace MediPassPlus.Infrastructure.Migrations
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc");
 
                     b.HasIndex("TokenHash")
                         .IsUnique();

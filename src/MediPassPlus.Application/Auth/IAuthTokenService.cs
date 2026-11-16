@@ -38,6 +38,15 @@ public interface IAuthTokenService
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Ends every live session of one account. Called when the account is deactivated, when its password is reset,
+    /// and when a replayed token proves that a copy leaked (FR-ACC-06, FR-STF-07).
+    /// </summary>
+    /// <param name="userId">The account whose tokens must all be revoked.</param>
+    /// <param name="cancellationToken">Cancels the database work.</param>
+    /// <returns>A task that completes when the rows are revoked or there was nothing to revoke.</returns>
+    Task RevokeAllForUserAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Ends the session that owns the presented token. Unknown and already-revoked tokens are ignored, so the
     /// endpoint is idempotent and cannot be used to discover which tokens exist.
     /// </summary>
