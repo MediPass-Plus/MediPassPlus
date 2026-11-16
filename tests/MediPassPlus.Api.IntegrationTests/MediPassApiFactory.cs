@@ -10,6 +10,7 @@ using MediPassPlus.Domain.VisitAccess;
 using MediPassPlus.Infrastructure.Extensions;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -17,22 +18,22 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Testcontainers.MsSql;
 
 namespace MediPassPlus.Api.IntegrationTests;
 
 /// <summary>
-/// Hosts the real API over HTTP with a SQL Server database (ADR-0006).
-/// Testcontainers SQL Server is the default. Set <c>MEDIPASS_TEST_SQLSERVER</c> to a SQL Server
-/// connection string to run locally without Docker; the provider stays SQL Server, so authorization
-/// and Identity behavior are exercised through the same code path as production.
+/// Hosts the real API over HTTP with its own SQL Server database (ADR-0006 decision 3).
+/// Every test class receives its own instance as a class fixture, so the class owns one catalog, one migrated
+/// schema and one API host that nothing else can reach. Testcontainers SQL Server is the default server; set
+/// <c>MEDIPASS_TEST_SQLSERVER</c> to run locally without Docker. The provider stays SQL Server, so authorization and
+/// Identity behavior are exercised through the same code path as production.
 /// </summary>
 public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
     private const string JwtIssuer = "MediPassPlus";
     private const string JwtAudience = "MediPassPlus.Client";
     private const string TestPassword = "Integration1!";
-    private const string LocalSqlServerVariable = "MEDIPASS_TEST_SQLSERVER";
+    private const string DataProtectionApplicationName = "MediPassPlus.IntegrationTests";
 
     private static readonly IClinicTimeZone ClinicTimeZone = new CairoClinicTimeZone();
 
@@ -49,31 +50,40 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
 
     private readonly string _connectionString;
     private readonly string _databaseName;
-    private readonly MsSqlContainer? _sqlContainer;
+    private readonly string _dataProtectionKeysPath;
     private readonly Dictionary<string, string?> _previousEnvironment = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _tokens = new(StringComparer.Ordinal);
     private bool _cleanedUp;
 
     /// <summary>
-    /// Starts the database server when no local SQL Server is configured, creates this run's isolated database and
-    /// applies every migration.
+    /// Creates a factory for the test class xUnit instantiates it for. xUnit resolves class fixtures through a
+    /// parameterless constructor, so this overload delegates to <see cref="MediPassApiFactory(string)"/>.
     /// </summary>
-    public MediPassApiFactory()
+    public MediPassApiFactory() : this(null)
     {
-        var serverConnectionString = Environment.GetEnvironmentVariable(LocalSqlServerVariable);
+    }
 
-        if (string.IsNullOrWhiteSpace(serverConnectionString))
-        {
-            _sqlContainer = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest").Build();
-            _sqlContainer.StartAsync().GetAwaiter().GetResult();
-            serverConnectionString = _sqlContainer.GetConnectionString();
-        }
-
-        _databaseName = $"MediPassPlus_IntegrationTests_{Guid.NewGuid():N}";
-        _connectionString = new SqlConnectionStringBuilder(serverConnectionString)
+    /// <summary>
+    /// Creates this test class's own database, applies every migration and builds the API host against it. Each test
+    /// class receives a separate factory, so no two classes share a catalog (ADR-0006 decision 3).
+    /// </summary>
+    /// <param name="databaseNameHint">
+    /// An optional class name embedded in the catalog name, so a test can prove which class owns the database.
+    /// </param>
+    internal MediPassApiFactory(string? databaseNameHint)
+    {
+        _databaseName = BuildDatabaseName(databaseNameHint);
+        _connectionString = new SqlConnectionStringBuilder(TestSqlServer.ConnectionString)
         {
             InitialCatalog = _databaseName
         }.ConnectionString;
+
+        _dataProtectionKeysPath = Path.Combine(
+            Path.GetTempPath(),
+            "MediPassPlus.IntegrationTests",
+            "dp-keys",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_dataProtectionKeysPath);
 
         // Program reads Jwt and ConnectionStrings before builder.Build(), so the deferred
         // WebApplicationFactory configuration would arrive too late. Environment variables are
@@ -89,7 +99,17 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         SetEnvironmentVariable("Logging__LogLevel__Microsoft.EntityFrameworkCore", "Warning");
 
         ApplyMigrations();
+
+        // Build the host while this factory's connection string is the live environment value. WebApplicationFactory
+        // caches the built host, so a second live factory cannot retarget this one.
+        EnsureHostStarted();
     }
+
+    /// <summary>The catalog this factory created and migrated; unique per test class.</summary>
+    public string DatabaseName => _databaseName;
+
+    /// <summary>Builds the host now instead of on the first request, freezing this factory's configuration.</summary>
+    public void EnsureHostStarted() => _ = Services;
 
     /// <summary>
     /// Creates (or reuses) a test user in the requested role and returns a signed JWT for it.
@@ -215,7 +235,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         return client;
     }
 
-    /// <summary>Creates a context for assertions against this run's isolated database.</summary>
+    /// <summary>Creates a context for assertions against this class's isolated database.</summary>
     /// <returns>A context that the caller disposes.</returns>
     public MediPassDbContext CreateDbContext()
     {
@@ -227,8 +247,8 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     }
 
     /// <summary>
-    /// The connection string of this run's isolated database. The server behind it is shared with the test database,
-    /// so a migration test can create its own scratch catalog on the same instance.
+    /// The connection string of this class's isolated database. Only this factory's host points at it, so a row
+    /// written here is invisible to every other test class.
     /// </summary>
     public string ConnectionString => _connectionString;
 
@@ -619,7 +639,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             tomorrowAppointment);
     }
 
-    /// <summary>Disposes the host, drops the test database and stops the Testcontainers database.</summary>
+    /// <summary>Disposes the host, drops this class's test database and removes its ephemeral Data Protection ring.</summary>
     public async ValueTask CleanupAsync()
     {
         if (_cleanedUp)
@@ -631,11 +651,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         await base.DisposeAsync();
         DropDatabase();
         RestoreEnvironmentVariables();
-
-        if (_sqlContainer is not null)
-        {
-            await _sqlContainer.DisposeAsync();
-        }
+        DeleteDataProtectionKeys();
     }
 
     /// <summary>Disposes the host and releases the test database (ADR-0006).</summary>
@@ -659,8 +675,27 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         // The gated test controller lives in this assembly. It proves an HTTP request that passes
         // [RequireActiveGrant] is refused after the patient ends the grant (FR-ACS-09, NFR-PRI-02).
         builder.ConfigureTestServices(services =>
+        {
             services.AddControllers()
-                .AddApplicationPart(typeof(MedicalRecordGateTestController).Assembly));
+                .AddApplicationPart(typeof(MedicalRecordGateTestController).Assembly);
+
+            // ADR-0006 decision 3: an ephemeral Data Protection ring per test host. The keys live under the temp
+            // path, are never committed, and are deleted with the factory.
+            services.AddDataProtection()
+                .SetApplicationName(DataProtectionApplicationName)
+                .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysPath));
+        });
+    }
+
+    private static string BuildDatabaseName(string? databaseNameHint)
+    {
+        if (string.IsNullOrWhiteSpace(databaseNameHint))
+        {
+            return $"MediPassPlus_IntegrationTests_{Guid.NewGuid():N}";
+        }
+
+        var safeHint = new string(databaseNameHint.Where(char.IsLetterOrDigit).ToArray());
+        return $"MediPassPlus_IntegrationTests_{safeHint}_{Guid.NewGuid():N}";
     }
 
     private static DoctorSlot NewSlot(int doctorId, DateTime startUtc, bool isAvailable) =>
@@ -739,5 +774,24 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             END
             """;
         command.ExecuteNonQuery();
+    }
+
+    private void DeleteDataProtectionKeys()
+    {
+        try
+        {
+            if (Directory.Exists(_dataProtectionKeysPath))
+            {
+                Directory.Delete(_dataProtectionKeysPath, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // The ring is ephemeral and lives under the temp path; a lingering handle must not fail the test run.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Same: a read-only temp directory must not turn a green test run red during cleanup.
+        }
     }
 }

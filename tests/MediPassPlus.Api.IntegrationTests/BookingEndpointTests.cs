@@ -14,12 +14,12 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// FR-BKG-09, NFR-SEC-10, NFR-REL-03).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class BookingEndpointTests
+public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
 {
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public BookingEndpointTests(MediPassApiFactory factory)
     {
         _factory = factory;
@@ -32,7 +32,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateClient();
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = scenario.Doctor.Id, SlotId = scenario.FreeSlot.Id });
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -49,7 +49,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(user);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = scenario.Doctor.Id, SlotId = scenario.FreeSlot.Id });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -62,7 +62,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = scenario.Doctor.Id, SlotId = scenario.FreeSlot.Id });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -95,7 +95,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest
             {
                 DoctorId = scenario.Doctor.Id,
@@ -115,7 +115,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest
             {
                 DoctorId = scenario.Doctor.Id,
@@ -140,7 +140,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = scenario.Doctor.Id, SlotId = pastSlot.Id });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -154,7 +154,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = scenario.Doctor.Id, SlotId = scenario.FreeSlot.Id });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -168,7 +168,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = scenario.Doctor.Id, SlotId = scenario.FreeSlot.Id });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -181,7 +181,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = scenario.Doctor.Id, SlotId = 999_999 });
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -194,7 +194,7 @@ public sealed class BookingEndpointTests
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
         using var response = await client.PostAsJsonAsync(
-            "/api/appointments",
+            "/api/me/appointments",
             new BookAppointmentRequest { DoctorId = 0, SlotId = 0 });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -217,8 +217,8 @@ public sealed class BookingEndpointTests
         };
 
         var responses = await Task.WhenAll(
-            firstClient.PostAsJsonAsync("/api/appointments", request),
-            secondClient.PostAsJsonAsync("/api/appointments", request));
+            firstClient.PostAsJsonAsync("/api/me/appointments", request),
+            secondClient.PostAsJsonAsync("/api/me/appointments", request));
 
         try
         {
@@ -265,17 +265,17 @@ public sealed class BookingEndpointTests
             SlotId = scenario.FreeSlot.Id
         };
 
-        using var firstResponse = await client.PostAsJsonAsync("/api/appointments", request);
+        using var firstResponse = await client.PostAsJsonAsync("/api/me/appointments", request);
         Assert.Equal(HttpStatusCode.Created, firstResponse.StatusCode);
         var first = await firstResponse.Content.ReadFromJsonAsync<AppointmentDto>();
         Assert.NotNull(first);
 
-        using var cancelResponse = await client.PostAsync(
-            $"/api/appointments/{first.Id}/cancel",
+        using var cancelResponse = await client.PutAsync(
+            $"/api/me/appointments/{first.Id}/cancel",
             content: null);
         Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
 
-        using var secondResponse = await client.PostAsJsonAsync("/api/appointments", request);
+        using var secondResponse = await client.PostAsJsonAsync("/api/me/appointments", request);
         Assert.Equal(HttpStatusCode.Created, secondResponse.StatusCode);
         var second = await secondResponse.Content.ReadFromJsonAsync<AppointmentDto>();
         Assert.NotNull(second);
@@ -297,8 +297,8 @@ public sealed class BookingEndpointTests
         var scenario = await _factory.CreateBookingScenarioAsync();
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/cancel",
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
             content: null);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -329,8 +329,8 @@ public sealed class BookingEndpointTests
         var otherPatient = await _factory.CreateUserAsync(DefaultRoles.Patient);
         using var client = _factory.CreateAuthenticatedClient(otherPatient);
 
-        using var response = await client.PostAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/cancel",
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
             content: null);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -353,8 +353,8 @@ public sealed class BookingEndpointTests
             appointmentStatus: AppointmentStatus.CheckedIn);
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/cancel",
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
             content: null);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -367,8 +367,8 @@ public sealed class BookingEndpointTests
             slotStartUtc: DateTime.UtcNow.AddHours(-2));
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/cancel",
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
             content: null);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -380,8 +380,8 @@ public sealed class BookingEndpointTests
         var scenario = await _factory.CreateBookingScenarioAsync();
         using var client = _factory.CreateClient();
 
-        using var response = await client.PostAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/cancel",
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
             content: null);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -397,8 +397,8 @@ public sealed class BookingEndpointTests
         var user = await _factory.CreateUserAsync(role);
         using var client = _factory.CreateAuthenticatedClient(user);
 
-        using var response = await client.PostAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/cancel",
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
             content: null);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
@@ -410,8 +410,8 @@ public sealed class BookingEndpointTests
         var scenario = await _factory.CreateBookingScenarioAsync();
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -444,8 +444,8 @@ public sealed class BookingEndpointTests
         var scenario = await _factory.CreateBookingScenarioAsync();
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = scenario.AppointmentSlot.Id });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -464,8 +464,8 @@ public sealed class BookingEndpointTests
 
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = occupiedSlot.Id });
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
@@ -477,8 +477,8 @@ public sealed class BookingEndpointTests
         var scenario = await _factory.CreateBookingScenarioAsync();
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = scenario.OtherDoctorSlot.Id });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -491,11 +491,21 @@ public sealed class BookingEndpointTests
         var otherPatient = await _factory.CreateUserAsync(DefaultRoles.Patient);
         using var client = _factory.CreateAuthenticatedClient(otherPatient);
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+
+        Assert.Equal(
+            scenario.AppointmentSlot.Id,
+            (await db.Appointments.AsNoTracking()
+                .SingleAsync(a => a.Id == scenario.Appointment.Id)).DoctorSlotId);
+        Assert.True(
+            (await db.DoctorSlots.AsNoTracking()
+                .SingleAsync(s => s.Id == scenario.TargetSlot.Id)).IsAvailable);
     }
 
     [Fact]
@@ -505,8 +515,8 @@ public sealed class BookingEndpointTests
             appointmentStatus: AppointmentStatus.CheckedIn);
         using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
@@ -518,8 +528,8 @@ public sealed class BookingEndpointTests
         var scenario = await _factory.CreateBookingScenarioAsync();
         using var client = _factory.CreateClient();
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -535,8 +545,8 @@ public sealed class BookingEndpointTests
         var user = await _factory.CreateUserAsync(role);
         using var client = _factory.CreateAuthenticatedClient(user);
 
-        using var response = await client.PostAsJsonAsync(
-            $"/api/appointments/{scenario.Appointment.Id}/reschedule",
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
             new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);

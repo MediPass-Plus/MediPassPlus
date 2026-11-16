@@ -14,12 +14,12 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// the success shape and the single-decision rule (NFR-SEC-10, FR-ACS-06, ADR-0011).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class AccessRequestDecisionEndpointTests
+public sealed class AccessRequestDecisionEndpointTests : IClassFixture<MediPassApiFactory>
 {
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public AccessRequestDecisionEndpointTests(MediPassApiFactory factory)
     {
         _factory = factory;

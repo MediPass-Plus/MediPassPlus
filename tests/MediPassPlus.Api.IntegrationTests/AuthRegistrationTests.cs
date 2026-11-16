@@ -11,15 +11,15 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// stubbed.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class AuthRegistrationTests
+public sealed class AuthRegistrationTests : IClassFixture<MediPassApiFactory>
 {
     private const string Password = "Integration1!";
     private const string RegisterPath = "/api/Auth/register";
 
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public AuthRegistrationTests(MediPassApiFactory factory)
     {
         _factory = factory;

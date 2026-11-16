@@ -1,8 +1,11 @@
+using MediPassPlus.Application.Common;
+
 namespace MediPassPlus.Application.Booking;
 
 /// <summary>
-/// The booking rules shared by every controller: book a free future slot, cancel a booked appointment, and reschedule
-/// it to another free slot of the same doctor (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-09, NFR-REL-03).
+/// The booking rules shared by every controller: book a free future slot, cancel a booked appointment, reschedule it
+/// to another free slot of the same doctor, and list the authenticated patient's own appointments
+/// (FR-BKG-03, FR-BKG-04, FR-BKG-05, FR-BKG-06, FR-BKG-09, NFR-REL-03).
 /// </summary>
 public interface IBookingService
 {
@@ -45,5 +48,18 @@ public interface IBookingService
         int appointmentId,
         int newSlotId,
         Guid patientUserId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns one page of the authenticated patient's own appointments, newest slot first, with the total count.
+    /// The patient identifier comes from the caller's token, never from the request (FR-BKG-06, NFR-PRF-04).
+    /// </summary>
+    /// <param name="patientUserId">The authenticated patient's user account identifier.</param>
+    /// <param name="page">The requested page and page size.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The requested page of appointments.</returns>
+    Task<PagedResult<PatientAppointmentDto>> GetMyAppointmentsAsync(
+        Guid patientUserId,
+        PageRequest page,
         CancellationToken cancellationToken = default);
 }

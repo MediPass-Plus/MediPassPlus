@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Security.Claims;
 using MediPassPlus.Api.Controllers;
 using MediPassPlus.Application.Booking;
+using MediPassPlus.Application.Common;
 using MediPassPlus.Domain.Clinical;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -9,7 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace MediPassPlus.Api.UnitTests;
 
-public class AppointmentsControllerTests
+public class MyAppointmentsControllerTests
 {
     private static readonly Guid PatientUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly DateTime StartUtc = new(2026, 11, 9, 9, 0, 0, DateTimeKind.Utc);
@@ -43,11 +44,64 @@ public class AppointmentsControllerTests
 
         var created = Assert.IsType<CreatedResult>(result);
         Assert.Equal(StatusCodes.Status201Created, created.StatusCode);
-        Assert.Equal($"/api/appointments/{appointment.Id}", created.Location);
+        Assert.Equal($"/api/me/appointments/{appointment.Id}", created.Location);
         Assert.Same(appointment, created.Value);
         Assert.Equal(7, service.LastDoctorId);
         Assert.Equal(3, service.LastSlotId);
         Assert.Equal(PatientUserId, service.LastPatientUserId);
+    }
+
+    [Fact]
+    public async Task Get_WithoutAUserIdentifier_Returns401()
+    {
+        var service = new FakeBookingService();
+        var controller = CreateController(service, authenticated: false);
+
+        var result = await controller.Get(new MyAppointmentsQuery(), CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status401Unauthorized, objectResult.StatusCode);
+        Assert.IsType<ProblemDetails>(objectResult.Value);
+        Assert.Null(service.LastPage);
+    }
+
+    [Fact]
+    public async Task Get_ReturnsThePagedAppointmentsOfTheAuthenticatedPatient()
+    {
+        var page = new PagedResult<PatientAppointmentDto>
+        {
+            Items =
+            [
+                new(
+                    42,
+                    7,
+                    "Doctor User",
+                    1,
+                    "Booking Clinic",
+                    3,
+                    StartUtc,
+                    StartUtc.AddMinutes(30),
+                    nameof(AppointmentStatus.Booked),
+                    StartUtc.AddDays(-1))
+            ],
+            TotalCount = 1,
+            Page = 1,
+            PageSize = 20
+        };
+        var service = new FakeBookingService { GetResult = page };
+        var controller = CreateController(service);
+
+        var result = await controller.Get(
+            new MyAppointmentsQuery { Page = 1, PageSize = 20 },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(StatusCodes.Status200OK, ok.StatusCode);
+        Assert.Same(page, ok.Value);
+        Assert.Equal(PatientUserId, service.LastPatientUserId);
+        Assert.NotNull(service.LastPage);
+        Assert.Equal(1, service.LastPage!.Page);
+        Assert.Equal(20, service.LastPage.PageSize);
     }
 
     [Fact]
@@ -124,36 +178,49 @@ public class AppointmentsControllerTests
     [Fact]
     public void Controller_RequiresThePatientRole()
     {
-        var authorize = typeof(AppointmentsController).GetCustomAttribute<AuthorizeAttribute>();
+        var authorize = typeof(MyAppointmentsController).GetCustomAttribute<AuthorizeAttribute>();
 
         Assert.NotNull(authorize);
         Assert.Equal("Patient", authorize.Roles);
     }
 
-    [Theory]
-    [InlineData(nameof(AppointmentsController.Book))]
-    [InlineData(nameof(AppointmentsController.Cancel))]
-    [InlineData(nameof(AppointmentsController.Reschedule))]
-    public void EveryAction_DeclaresTheExpectedResponseCodes(string actionName)
+    [Fact]
+    public void Controller_UsesThePatientScopedRoute()
     {
-        var method = typeof(AppointmentsController).GetMethod(actionName)!;
+        var route = typeof(MyAppointmentsController).GetCustomAttribute<RouteAttribute>();
+
+        Assert.NotNull(route);
+        Assert.Equal("api/me/appointments", route.Template);
+    }
+
+    [Theory]
+    [InlineData(nameof(MyAppointmentsController.Book), StatusCodes.Status201Created, true)]
+    [InlineData(nameof(MyAppointmentsController.Get), StatusCodes.Status200OK, false)]
+    [InlineData(nameof(MyAppointmentsController.Cancel), StatusCodes.Status200OK, true)]
+    [InlineData(nameof(MyAppointmentsController.Reschedule), StatusCodes.Status200OK, true)]
+    public void EveryAction_DeclaresTheExpectedResponseCodes(
+        string actionName,
+        int successCode,
+        bool hasScopeFailures)
+    {
+        var method = typeof(MyAppointmentsController).GetMethod(actionName)!;
         var codes = method.GetCustomAttributes<ProducesResponseTypeAttribute>()
             .Select(attribute => attribute.StatusCode)
             .ToHashSet();
-
-        var successCode = actionName == nameof(AppointmentsController.Book)
-            ? StatusCodes.Status201Created
-            : StatusCodes.Status200OK;
 
         Assert.Contains(successCode, codes);
         Assert.Contains(StatusCodes.Status400BadRequest, codes);
         Assert.Contains(StatusCodes.Status401Unauthorized, codes);
         Assert.Contains(StatusCodes.Status403Forbidden, codes);
-        Assert.Contains(StatusCodes.Status404NotFound, codes);
-        Assert.Contains(StatusCodes.Status409Conflict, codes);
+
+        if (hasScopeFailures)
+        {
+            Assert.Contains(StatusCodes.Status404NotFound, codes);
+            Assert.Contains(StatusCodes.Status409Conflict, codes);
+        }
     }
 
-    private static AppointmentsController CreateController(
+    private static MyAppointmentsController CreateController(
         FakeBookingService service,
         bool authenticated = true)
     {
@@ -165,7 +232,7 @@ public class AppointmentsControllerTests
                 "Test"));
         }
 
-        return new AppointmentsController(service)
+        return new MyAppointmentsController(service)
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
@@ -193,6 +260,8 @@ public class AppointmentsControllerTests
         public BookingResult RescheduleResult { get; set; } =
             BookingResult.Denied(BookingFailure.AppointmentNotFound);
 
+        public PagedResult<PatientAppointmentDto> GetResult { get; set; } = new();
+
         public bool BookCalled { get; private set; }
 
         public int? LastDoctorId { get; private set; }
@@ -204,6 +273,8 @@ public class AppointmentsControllerTests
         public int? LastNewSlotId { get; private set; }
 
         public Guid? LastPatientUserId { get; private set; }
+
+        public PageRequest? LastPage { get; private set; }
 
         public Task<BookingResult> BookAsync(
             int doctorId,
@@ -241,6 +312,17 @@ public class AppointmentsControllerTests
             LastPatientUserId = patientUserId;
 
             return Task.FromResult(RescheduleResult);
+        }
+
+        public Task<PagedResult<PatientAppointmentDto>> GetMyAppointmentsAsync(
+            Guid patientUserId,
+            PageRequest page,
+            CancellationToken cancellationToken = default)
+        {
+            LastPatientUserId = patientUserId;
+            LastPage = page;
+
+            return Task.FromResult(GetResult);
         }
     }
 }

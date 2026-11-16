@@ -20,7 +20,7 @@ namespace MediPassPlus.Api.IntegrationTests.Records;
 /// </para>
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class MedicalRecordMigrationTests : IAsyncLifetime
+public sealed class MedicalRecordMigrationTests : IAsyncLifetime, IClassFixture<MediPassApiFactory>
 {
     private const string RecordMigrationSuffix = "_AddMedicalRecordSchema";
 
@@ -51,8 +51,8 @@ public sealed class MedicalRecordMigrationTests : IAsyncLifetime
 
     private string _connectionString = string.Empty;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public MedicalRecordMigrationTests(MediPassApiFactory factory)
     {
         _factory = factory;

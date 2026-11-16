@@ -30,9 +30,12 @@ the projects.
 This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
 register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
 `DoctorSlot` and `Appointment` (CLB-01); B1 exposes read-only clinic search, clinic-doctor search and doctor-slot
-listing endpoints. MP-27 adds the patient booking slice: `POST api/appointments` books a free future slot for the
-authenticated patient, `POST api/appointments/{appointmentId}/cancel` cancels a booked appointment, and
-`POST api/appointments/{appointmentId}/reschedule` moves it to another free slot of the same doctor. Every refusal is
+listing endpoints. MP-27 adds the patient booking rules, and MP-35 exposes them on the patient surface:
+`POST api/me/appointments` books a free future slot for the authenticated patient,
+`PUT api/me/appointments/{appointmentId}/cancel` cancels a booked appointment,
+`PUT api/me/appointments/{appointmentId}/reschedule` moves it to another free slot of the same doctor, and
+`GET api/me/appointments?page=&pageSize=` returns the authenticated patient's own upcoming, past and cancelled
+appointments, newest slot first, 20 per page by default and at most 50 (FR-BKG-06, NFR-PRF-04). Every refusal is
 the shared `ProblemDetails` envelope (`400` invalid state, `404` out of the patient's scope, `409` slot/state
 conflict), and a filtered unique index (`IX_Appointments_DoctorSlotId_Active`) plus slot and appointment concurrency
 tokens make a concurrent double booking impossible. Clinic and doctor searches default to 20 results per page,
@@ -91,6 +94,19 @@ request-id approve path keeps its `409` for a closed visit. A decision race answ
 decision shares the per-patient `QrApprove` limit. No new audit action was added: scanning is read-only and the
 decisions reuse `AccessGrantCreated`/`AccessRequestRejected`. Swagger UI links to a development-only camera helper at
 `/visit-access-tool.html` (served only when the API reference is exposed). No migration was needed.
+MP-40 adds the clinic staff workflow (FR-STF-01..05, FR-PRV-06), all under `[Authorize(Roles = "Staff")]` and scoped to
+the staff member's own clinic, which is read from the `ClinicStaff` row of the token's user and applied inside every
+query, never taken from the request. `GET api/staff/schedule?date=` returns the clinic's non-cancelled appointments for
+one Africa/Cairo day, ordered by start then id, with only the appointment id, patient name, phone, start time and
+status. `POST api/staff/doctors/{doctorId}/slots` adds a slot for a doctor of the clinic and `DELETE
+api/staff/doctors/{doctorId}/slots/{slotId}` removes one; the overlap check and the insert run in one Serializable
+transaction, so concurrent creates cannot overlap (`409`), and any appointment that references a slot, even a
+cancelled one, blocks its deletion (`409`). `POST api/staff/appointments` books a free future slot for a patient
+identified by email, resolved on the server and required to have the Patient role, and delegates every booking rule to
+`IBookingService`. `POST api/staff/appointments/{appointmentId}/check-in` checks in a booked appointment of today in
+the clinic through `IAppointmentStatusService.CheckInAsync`, the same transition as `api/appointments/{id}/check-in`.
+A doctor, slot or appointment outside the clinic answers `404`, a staff account without a profile answers `403`, and
+no staff response carries diagnosis, prescription or report data. No migration was needed.
 `GET api/doctors/me/schedule?date=` returns only the authenticated doctor's non-cancelled appointments for one
 clinic-local day, ordered by start, with only the patient name. "Today" and the schedule date use the Africa/Cairo
 calendar while every stored timestamp stays UTC. Twelve migrations live in
@@ -104,9 +120,11 @@ no cascade path, plus an EF interceptor that refuses updates and deletes. Patien
 the same transaction and the migration backfills every existing patient. The audit store (`AuditLog`, `IAuditWriter`
 and an append-only EF interceptor) now exists. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
-server through `MEDIPASS_TEST_SQLSERVER`) and share one `MediPassApiFactory` collection fixture. They cover the
+server through `MEDIPASS_TEST_SQLSERVER`) and give every test class its own database through a `MediPassApiFactory`
+class fixture (ADR-0006 decision 3), with a test-only probe endpoint, smoke tests for the four roles, and isolation
+tests that prove two classes never share a catalog. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
-(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-34 check-in/complete
+(including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-40 staff matrix (clinic scope, Cairo schedule day, slot overlap including a concurrent create, delete conflicts, booking and check-in, and the schedule response shape), the MP-34 check-in/complete
 authorization and state matrix (including the check-in → start-visit → complete flow and the Cairo schedule
 boundary), the MP-28 registration record matrix and the applied record migration, the MP-36 code
 generation/verification matrix (wrong doctor, expiry, replay, lockout, both rate limits, and the HMAC-only storage
@@ -215,8 +233,9 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   `POST api/access/scan` / `/scan-image` (Patient),
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
-  `POST api/access-grants/{grantId}/end` (Patient), and the booking actions
-  `POST api/appointments` / `{appointmentId}/cancel` / `{appointmentId}/reschedule` (Patient). Start-visit exercises
+  `POST api/access-grants/{grantId}/end` (Patient), and the patient appointment actions
+  `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
+  `PUT {appointmentId}/reschedule` (Patient). Start-visit exercises
   the scope check and issues a one-time QR credential plus its rendered `qrCodeDataUri`; the scan endpoints resolve
   that token as text or as a camera image without consuming it, and the token decision endpoints approve or reject
   the request it proves; check-in and completion enforce the appointment state machine

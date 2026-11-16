@@ -18,6 +18,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MediPassPlus.Application.AdminManagement;
 using MediPassPlus.Infrastructure.AdminManagement;
+using MediPassPlus.Application.Staff;
+using MediPassPlus.Infrastructure.Staff;
 using MediPassPlus.Infrastructure.VisitAccess;
 using Microsoft.Extensions.Options;
 
@@ -33,7 +35,7 @@ public static class ServiceCollectionExtensions
         // register Identity Serice
         services.AddIdentityServices();             
           // Authentication & JWT
-     services.AddJwtAuthentication(configuration);
+        services.AddJwtAuthentication(configuration);
         services.AddScoped<JwtTokenService>();
 
         // Refresh-token lifecycle: single-use hashed rows, rotation on every refresh and revoke-all on a replay
@@ -111,7 +113,9 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IClinicAdminService, ClinicAdminService>();
         services.AddScoped<IAccountAdminService, AccountAdminService>();
         services.AddScoped<IAccountStatusService, AccountStatusService>();
-
+        services.AddScoped<IStaffScheduleService, StaffScheduleService>();
+        services.AddScoped<IStaffSlotService, StaffSlotService>();
+        services.AddScoped<IStaffBookingService, StaffBookingService>();
         // Password-reset email: real SMTP when Smtp:Host is configured, otherwise a no-op sender so the API still
         // starts on a machine without mail settings.
         if (!string.IsNullOrWhiteSpace(configuration["Smtp:Host"]))

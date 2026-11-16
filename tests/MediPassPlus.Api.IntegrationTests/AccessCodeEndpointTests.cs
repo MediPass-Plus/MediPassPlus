@@ -17,15 +17,15 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// ADR-0002, ADR-0007).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
-public sealed class AccessCodeEndpointTests
+public sealed class AccessCodeEndpointTests : IClassFixture<MediPassApiFactory>
 {
     private const string KnownCode = "042915";
     private const string WrongCode = "999999";
 
     private readonly MediPassApiFactory _factory;
 
-    /// <summary>Initializes the test class with the shared API factory.</summary>
-    /// <param name="factory">The collection fixture that hosts the API and database.</param>
+    /// <summary>Initializes the test class with its own API factory and database.</summary>
+    /// <param name="factory">The class fixture that hosts this class's API and database.</param>
     public AccessCodeEndpointTests(MediPassApiFactory factory)
     {
         _factory = factory;
