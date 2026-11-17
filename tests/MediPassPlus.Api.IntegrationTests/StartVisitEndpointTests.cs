@@ -123,6 +123,13 @@ public sealed class StartVisitEndpointTests : IClassFixture<MediPassApiFactory>
     /// Re-issuing the QR for an already started visit is the UC-11 A1 retry: it reuses the pending request, revokes
     /// the old credential and never creates a second request.
     /// </summary>
+    /// <remarks>
+    /// FR-ACS-01 says a visit starts only while the appointment is <c>CheckedIn</c>, but UC-11 A1 requires the doctor
+    /// to start again and get a new QR after the code expires. Because start-visit moves the appointment to
+    /// <c>InVisit</c>, both requirements can hold only if an <c>InVisit</c> appointment without a grant may re-issue
+    /// its QR. This test locks in that documented exception; it does not extend to an approved or ended grant, which
+    /// is refused instead (FR-ACS-11). Reconciling the requirement text is a team decision, not a code change here.
+    /// </remarks>
     [Fact]
     public async Task StartVisit_WhenAlreadyInVisitWithoutAGrant_ReissuesTheQrWithoutADuplicateRequest()
     {
@@ -161,11 +168,16 @@ public sealed class StartVisitEndpointTests : IClassFixture<MediPassApiFactory>
     }
 
     /// <summary>
-    /// An ended grant is never reused: after the patient ends it, start-visit answers 409 and issues no new request
-    /// or QR, while the original creation and end audits remain (FR-ACS-11, ADR-0011).
+    /// After the patient ends the grant, start-visit still answers 409 and issues no new request or QR, while the
+    /// original creation and end audits remain (FR-ACS-11, ADR-0011).
     /// </summary>
+    /// <remarks>
+    /// The approved request is never reopened, so the refusal is the approved-request guard and would also happen
+    /// while the grant is still live. The grant's own ended state is proven on the gated record endpoints by
+    /// <c>DiagnosisWriteEndpointTests</c>, <c>RecordHistoryEndpointTests</c> and <c>AccessGrantEndEndpointTests</c>.
+    /// </remarks>
     [Fact]
-    public async Task StartVisit_AfterThePatientEndedTheGrant_ReturnsConflictAndIssuesNoNewQr()
+    public async Task StartVisit_AfterApprovalAndPatientEnd_ReturnsConflictAndIssuesNoNewQr()
     {
         var scenario = await _factory.CreateVisitScenarioAsync(includePendingRequest: false);
         using var doctorClient = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
@@ -217,11 +229,16 @@ public sealed class StartVisitEndpointTests : IClassFixture<MediPassApiFactory>
     }
 
     /// <summary>
-    /// A grant that reached its two-hour cap is also never reused: start-visit answers 409 instead of issuing a QR
+    /// A grant that reached its two-hour cap also blocks a restart: start-visit answers 409 instead of issuing a QR
     /// that could never be approved (FR-ACS-07, FR-ACS-11).
     /// </summary>
+    /// <remarks>
+    /// As with a patient-ended grant, the approved request is what refuses the restart, not the grant's effective
+    /// state. <c>AccessGrantEndEndpointTests.GatedRequest_AfterTheTwoHourLimit_ReturnsForbidden</c> proves that the
+    /// expired grant itself is refused.
+    /// </remarks>
     [Fact]
-    public async Task StartVisit_AfterTheGrantExpired_ReturnsConflictAndIssuesNoNewQr()
+    public async Task StartVisit_AfterApprovalAndGrantExpiry_ReturnsConflictAndIssuesNoNewQr()
     {
         var scenario = await _factory.CreateVisitScenarioAsync(includePendingRequest: false);
         var grant = await _factory.CreateGrantAsync(

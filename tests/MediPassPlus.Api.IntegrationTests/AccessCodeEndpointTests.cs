@@ -124,9 +124,16 @@ public sealed class AccessCodeEndpointTests : IClassFixture<MediPassApiFactory>
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
-    /// <summary>An ended grant is never reused, so no new fallback code can be generated for the same request.</summary>
+    /// <summary>
+    /// After the patient ends the grant, no new fallback code can be generated for the same request (FR-ACS-11).
+    /// </summary>
+    /// <remarks>
+    /// The approved request is never reopened, so the refusal is the approved-request guard and would also happen
+    /// while the grant is still live. The grant's ended state is proven on the gated record endpoints by
+    /// <c>DiagnosisWriteEndpointTests</c> and <c>AccessGrantEndEndpointTests</c>.
+    /// </remarks>
     [Fact]
-    public async Task GenerateCode_AfterThePatientEndedTheGrant_ReturnsConflict()
+    public async Task GenerateCode_AfterApprovalAndPatientEnd_ReturnsConflict()
     {
         var scenario = await _factory.CreateVisitScenarioAsync(AppointmentStatus.InVisit);
         var request = RequireRequest(scenario);
@@ -538,9 +545,16 @@ public sealed class AccessCodeEndpointTests : IClassFixture<MediPassApiFactory>
             .AnyAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
     }
 
-    /// <summary>An ended grant is never reused, so the code cannot be verified into a second grant.</summary>
+    /// <summary>
+    /// After the patient ends the grant, the code cannot be verified into a second grant (FR-ACS-11).
+    /// </summary>
+    /// <remarks>
+    /// The approved request is never reopened, so the refusal is the approved-request guard and would also happen
+    /// while the grant is still live. The grant's ended state is proven on the gated record endpoints by
+    /// <c>DiagnosisWriteEndpointTests</c> and <c>AccessGrantEndEndpointTests</c>.
+    /// </remarks>
     [Fact]
-    public async Task VerifyCode_AfterThePatientEndedTheGrant_ReturnsConflict()
+    public async Task VerifyCode_AfterApprovalAndPatientEnd_ReturnsConflict()
     {
         var scenario = await _factory.CreateVisitScenarioAsync(
             AppointmentStatus.InVisit,
