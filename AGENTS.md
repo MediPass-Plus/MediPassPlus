@@ -1,14 +1,14 @@
-# AGENTS.md
+# MediPass+ engineering guide
 
 MediPass+ — DEPI graduation project. ASP.NET Core 10 + EF Core + SQL Server API with an Angular 22 frontend.
 Privacy-first medical history: a doctor can read a patient's record only while a visit-scoped access grant is active.
-This file is the shared entry point for every developer and every AI agent. Read it before you change anything.
+This file is the shared entry point for every developer. Read it before you change anything.
 
 ## 1. Read these first
 
 | What | Where | Why |
 |---|---|---|
-| ADR index | `docs/architecture/decisions/README.md` | Binding decisions per area; read the one that governs what you touch |
+| Architecture decisions | `docs/architecture/decisions/README.md` | Binding decisions per area; read the one that governs what you touch |
 | Requirements | `Documentations/MediPass_Requirements_Gathering.docx` | FR/NFR/US/UC IDs and the grant rules |
 | Planning | `Documentations/MediPass+_Project_Planning_and_Management.docx` | Scope, sprints, module owners, risks |
 | Process | `CONTRIBUTING.md`, `.github/pull_request_template.md`, `.github/workflows/ci.yml` | Branch, commit, review, CI |
@@ -45,27 +45,27 @@ A read-only visit-access scope service now verifies that the acting doctor or pa
 `POST api/appointments/{appointmentId}/start-visit` lets a doctor start a today, checked-in appointment, reuse its
 pending request or create a new one, and receive a fresh two-minute QR credential whose SHA-256 hash is the only
 stored form. A filtered unique index allows at most one pending request per appointment, so a concurrent start
-returns `409`. A newly created request is audited with `AccessRequestCreated` in the same unit of work (ADR-0004,
-ADR-0011 decision 8). `POST api/access-requests/{requestId}/approve` and `/reject` let the authenticated owner of the
+returns `409`. A newly created request is audited with `AccessRequestCreated` in the same unit of work.
+`POST api/access-requests/{requestId}/approve` and `/reject` let the authenticated owner of the
 appointment answer a pending request: approval creates the visit's grant (two-hour cap) and its audit row, rejection
 creates no grant, and both answer the request and change its credentials in one unit of work. `AccessRequest.Status`
 is an EF concurrency token, so only the first decision wins and the other returns `409`. Both decisions also share the
 named `QrApprove` fixed-window rate limit (default 5 attempts / 15 minutes per patient, configurable and validated at
-startup); a rejection is `429` with `Retry-After` (ADR-0007). MP-34 adds the appointment status flow: the domain
+startup); a rejection is `429` with `Retry-After`. MP-34 adds the appointment status flow: the domain
 `Appointment` owns the only allowed transitions (`Booked -> CheckedIn -> InVisit -> Completed`, plus
 `Booked -> Cancelled`) and records each state's UTC timestamp, refusing every skipped or backward transition.
 `POST api/appointments/{appointmentId}/check-in` lets staff in the appointment's clinic check in a booked appointment
 for today, `POST api/appointments/{appointmentId}/complete` lets the owning doctor complete an in-visit appointment,
 and `start-visit` now moves `CheckedIn -> InVisit` before it issues the QR (re-issuing while `InVisit` is allowed
 until the patient approves; once a grant exists, a restart returns `409` instead of a QR that could never be
-approved). MP-36 adds the six-digit fallback (FR-ACS-05, ADR-0002): `POST
+approved). MP-36 adds the six-digit fallback (FR-ACS-05): `POST
 api/appointments/{appointmentId}/access-code` lets the authenticated patient generate a code for today's
 checked-in or in-visit appointment with a pending request, and `POST
 api/appointments/{appointmentId}/verify-code` lets the owning doctor verify it. The code lives five minutes, is
 stored only as HMAC-SHA-256 under the separate `AccessCode:HmacKey` secret, is consumed on success, and locks after
 five wrong entries. A successful verification records the patient's approval, creates the two-hour grant, moves the
-appointment to `InVisit`, revokes the QR, and writes `AccessGrantCreated` in one unit of work (ADR-0011 amendment
-2026-11-12). Generation is limited to 3 per 15 minutes per patient and verification to 5 per 15 minutes per doctor
+appointment to `InVisit`, revokes the QR, and writes `AccessGrantCreated` in one unit of work.
+Generation is limited to 3 per 15 minutes per patient and verification to 5 per 15 minutes per doctor
 and appointment; both answer `429` with `Retry-After` beyond the budget. No migration was needed.
 MP-37 adds the remaining grant-ending paths (FR-ACS-07, FR-ACS-09, FR-ACS-11). `POST
 api/access-grants/{grantId}/end` lets the authenticated patient end a live grant immediately; it answers `200` with
@@ -77,7 +77,7 @@ completion capped by the two-hour limit and writes `AccessEnded` in the same uni
 with a grant that already ended or expired, completes without extending it or writing a second audit. The absolute
 two-hour cap itself is already enforced on every read by `AccessGrantChecker`, so no production change was needed
 there. Reaching the cap is time-only: `StatusAt` derives `Expired` from the stored timestamps, there is no stored
-change, no background job and no audit row (ADR-0011 decision 3). Completion and a patient end that are truly
+change, no background job and no audit row. Completion and a patient end that are truly
 concurrent cannot overwrite each other: `AccessGrant.EndedAtUtc` is an EF concurrency token, so the first end wins and
 the stale writer updates zero rows and answers `409` instead. A completion that loses the race does not extend the
 grant and writes no second audit; the doctor retries and the retry completes the visit against the already-ended
@@ -116,7 +116,7 @@ SHA-256 hash of a token is stored, in `identity.RefreshTokens`; one token lives 
 session outlives `Jwt:SessionDays` (30 days) from the first login. Presenting an already-rotated token is treated as a
 leak and revokes every live token of the account, `RevokedAtUtc` is the concurrency token that makes a double rotation
 impossible, deactivating an account or resetting its password also revokes every live token, and both token responses
-carry `Cache-Control: no-store` (ADR-0003 decision 4). Thirteen migrations live in
+carry `Cache-Control: no-store`. Thirteen migrations live in
 `src/MediPassPlus.Infrastructure/Migrations/`, including `AddClinicStaffAndAdmin`, `AddAuditLog`,
 `EnforceSinglePendingAccessRequest`, `EnforceSingleActiveAppointmentPerSlot`, `AddAppointmentStatusTimestamps`,
 `AddMedicalRecordSchema` and `AddRefreshTokens`. MP-28 adds the `records` schema (`MedicalRecords`, `Diagnoses`, `Prescriptions`, `Reports`):
@@ -132,17 +132,17 @@ derive the record, appointment and patient from the verified grant and resolve t
 require the visit to be `InVisit` or `Completed` inside the 15-minute grace window, encrypt diagnosis and prescription
 text through
 `IClinicalTextProtector`, and commit the medical rows and their `DiagnosisCreated`/`PrescriptionCreated` audit rows in
-one unit of work (FR-REC-03, FR-REC-04, FR-PRV-01, FR-PRV-02, FR-PRV-04, ADR-0004, ADR-0005). MP-39 adds the read
+one unit of work (FR-REC-03, FR-REC-04, FR-PRV-01, FR-PRV-02, FR-PRV-04). MP-39 adds the read
 path: `GET api/appointments/{appointmentId}/history` returns a patient's whole permanent record to the authenticated
 doctor only while the appointment's grant is active, and `GET api/me/history` returns the authenticated patient's own
 record with no grant. Both return the record header, one page of diagnoses newest first with their prescriptions and
 one page of report metadata, defaulting to 20 rows and capped at 50; invalid paging is `400`, every successful read
 writes a `RecordRead` audit row before decryption (including a patient self-read), and the store returns ciphertext
-only (FR-REC-01, FR-REC-02, FR-REC-07, FR-PRV-01, FR-PRV-02, NFR-PRF-04, ADR-0004, ADR-0005). Neither PR needed a
+only (FR-REC-01, FR-REC-02, FR-REC-07, FR-PRV-01, FR-PRV-02, NFR-PRF-04). Neither PR needed a
 migration. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
 server through `MEDIPASS_TEST_SQLSERVER`) and give every test class its own database through a `MediPassApiFactory`
-class fixture (ADR-0006 decision 3), with a test-only probe endpoint, smoke tests for the four roles, and isolation
+class fixture, with a test-only probe endpoint, smoke tests for the four roles, and isolation
 tests that prove two classes never share a catalog. They cover the
 approve/reject matrix, the start-visit→approve flow, the `QrApprove` 429, the booking `400`/`404`/`409` matrix
 (including a concurrent double-booking test), the MP-29 admin 401/403 matrix, the MP-40 staff matrix (clinic scope, Cairo schedule day, slot overlap including a concurrent create, delete conflicts, booking and check-in, and the schedule response shape), the MP-34 check-in/complete
@@ -161,38 +161,38 @@ The MP-38 tests add the diagnosis/prescription write authorization, appointment-
 the MP-39 tests add the doctor history grant/expiry/ended/wrong-doctor matrix, the patient self-read, the
 forged-patient-id case, paging boundaries, real-protector decryption and both audit proofs. There is still no report
 upload/download endpoint and no audit endpoint, and the frontend is the untouched Angular welcome page.
-Everything the README, planning document or an ADR describes
-as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
+Everything the README or the planning document describes
+as planned is a target, not a fact. Trust the code, the `.csproj` files and `package.json` over prose.
 
 MP-50 configures the Data Protection key ring from `DataProtection:KeysPath`: the directory must be absolute and
 outside the repository, Development and Testing fall back to a directory under the operating system's temporary path,
-and Production refuses to start without it (ADR-0007 decision 5). It also adds `IDiagnosisProtector`, the only
+and Production refuses to start without it. It also adds `IDiagnosisProtector`, the only
 component allowed to encrypt diagnosis text, under the versioned purpose `MediPass.Diagnosis.v1` (FR-PRV-04,
-NFR-SEC-05, ADR-0005); the MP-38 write endpoints encrypt through it and the MP-39 read path decrypts through it. The
+NFR-SEC-05); the MP-38 write endpoints encrypt through it and the MP-39 read path decrypts through it. The
 three secrets — the key ring, `Jwt:SecretKey` and
 `AccessCode:HmacKey` — are documented in `docs/operations/deployment-keys.md`, and
 `DiagnosisProtectorTests`, `DataProtectionOptionsValidatorTests` and `DataProtectionRegistrationTests` cover the
 round trip, the outside-repository rule and the Production startup failure. No migration was needed.
 
-Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline
-(ADR-0010); Swashbuckle generates the Swagger document and UI (ADR-0012). MP-97 adds QRCoder, ZXing.Net,
+Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
+Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
 ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed.
 
 This section is a snapshot, not a permanent fact: update it in the same PR that changes the status. Once a capability
-exists, the sentence that says it does not is a bug, and an agent that trusts it will make wrong assumptions.
+exists, the sentence that says it does not is a bug, and a reader who trusts it will make wrong assumptions.
 
-## 3. ADR rule
+## 3. Architecture decisions
 
-- An **Accepted** ADR is binding. Do not contradict it.
-- A **Proposed** ADR is not binding. If your task depends on the decision it leaves open, stop and ask for that
+- An **accepted** decision in `docs/architecture/decisions/` is binding. Do not contradict it.
+- A **proposed** decision is not binding. If your task depends on the decision it leaves open, stop and ask for that
   decision. If your task is independent of it and does not contradict it, proceed normally.
-- Write a new ADR and get team approval **before** implementing an architectural decision that:
-  - introduces a new architectural choice no existing ADR covers;
-  - changes or supersedes an Accepted ADR;
+- Write a new decision record and get team approval **before** implementing an architectural decision that:
+  - introduces a new architectural choice no existing record covers;
+  - changes or supersedes an accepted decision;
   - conflicts with an approved requirement or with the established architecture (§4).
-- Normal implementation that follows existing Accepted ADRs needs no new ADR — adding a table, endpoint, service or
-  test that an ADR already describes is just doing the task.
-- Never make an architectural decision silently, and never mark an ADR Accepted because it contains a good
+- Normal implementation that follows existing accepted decisions needs no new record — adding a table, endpoint,
+  service or test that a decision already describes is just doing the task.
+- Never make an architectural decision silently, and never mark a decision accepted because it contains a good
   recommendation — acceptance is a team decision.
 
 ## 4. Architecture boundaries
@@ -224,18 +224,18 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - Diagnosis text is stored encrypted. Files are only served through an endpoint that checks ownership or an active
   grant. Uploads are PDF/JPEG/PNG up to 10 MB, stored under random names.
 - Encryption keys: the Data Protection key ring is persisted to a filesystem path taken from configuration **outside the
-  repository** and protected at rest in a deployment; purpose strings are versioned (`MediPass.Diagnosis.v1`) —
-  ADR-0007, decision 5. Losing the ring makes existing diagnosis text unreadable; that is the accepted consequence, not
-  a reason to invent a second mechanism.
-- QR token: 128-bit CSPRNG value, 2-minute life, single use, stored only as a **SHA-256** hash (ADR-0001).
-- 6-digit code: 5-minute life, single use, entered by the doctor only (ADR-0002), stored only as **HMAC-SHA-256 with a
-  protected server-side key** — a plain SHA-256 over a 6-digit keyspace is precomputable. Compare in fixed time
-  (ADR-0001). The key is `AccessCode:HmacKey` (Base64 of at least 32 random bytes), validated at startup and separate
-  from the JWT signing key and the Data Protection ring.
-- Attempts: 5 wrong code entries lock that credential (FR-ACS-05). ADR-0007, decision 1 keeps the per-credential
-  lockout authoritative and treats rate limiting as defence-in-depth (5 verifications / 15 min per doctor+appointment,
-  3 generations / 15 min per patient; the numbers are tunable). The **lockout duration itself is not settled**: ADR-0003
-  records 15 minutes as an assumption, so do not present it as an approved value.
+  repository** and protected at rest in a deployment; purpose strings are versioned (`MediPass.Diagnosis.v1`).
+  Losing the ring makes existing diagnosis text unreadable; that is the accepted consequence, not a reason to invent a
+  second mechanism.
+- QR token: 128-bit CSPRNG value, 2-minute life, single use, stored only as a **SHA-256** hash.
+- 6-digit code: 5-minute life, single use, entered by the doctor only, stored only as **HMAC-SHA-256 with a
+  protected server-side key** — a plain SHA-256 over a 6-digit keyspace is precomputable. Compare in fixed time.
+  The key is `AccessCode:HmacKey` (Base64 of at least 32 random bytes), validated at startup and separate from the
+  JWT signing key and the Data Protection ring.
+- Attempts: 5 wrong code entries lock that credential (FR-ACS-05). The per-credential lockout is authoritative and
+  rate limiting is defence-in-depth (5 verifications / 15 min per doctor+appointment, 3 generations / 15 min per
+  patient; the numbers are tunable). The **lockout duration itself is not settled**: the decision record treats
+  15 minutes as an assumption, so do not present it as an approved value.
 - A grant ends in three independent ways (FR-ACS-07):
   - completing the visit sets its end to **15 minutes after completion** (UC-18, US-25);
   - it is never valid for **more than 2 hours from creation**, even if the visit is never completed (UC-24, US-25);
@@ -248,7 +248,7 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 ## 6. Swagger UI and OpenAPI
 
 - Swashbuckle (`Swashbuckle.AspNetCore`) is the single Swagger document generator and UI; `Microsoft.AspNetCore.OpenApi`
-  is not used. Do not add a second generator (ADR-0012).
+  is not used. Do not add a second generator.
 - Development URLs: UI at `http://localhost:5114/swagger`, JSON at
   `http://localhost:5114/swagger/v1/swagger.json` (document name `v1`).
 - Both are mapped only when the app runs in Development **or** `OpenApi:ExposeOutsideDevelopment` is `true`.
@@ -344,7 +344,7 @@ npm test -- --watch=false                   # Vitest; without --watch=false it s
 npm test -- --watch=false src/app/app.spec.ts
 ```
 
-Migrations — **only with approval** (ADR-0009):
+Migrations — **only with approval**:
 
 ```powershell
 dotnet ef migrations add <Name> --project src/MediPassPlus.Infrastructure --startup-project src/MediPassPlus.Api
@@ -367,7 +367,7 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
 
 - Backend xUnit; frontend Vitest + jsdom.
 - New or changed logic gets unit tests. Endpoint changes get HTTP tests in `tests/MediPassPlus.Api.IntegrationTests`
-  against Testcontainers SQL Server (ADR-0006, Accepted 2026-11-09). SQLite stays the fast persistence-test provider.
+  against Testcontainers SQL Server. SQLite stays the fast persistence-test provider.
   On a machine without Docker, set `MEDIPASS_TEST_SQLSERVER` to an existing SQL Server connection string; the
   suite creates and drops its own database. See the project README.
 - Every medical endpoint needs negative tests: no token (401), wrong role (403), no grant (403), expired grant (403),
@@ -383,10 +383,10 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
 - Fill `.github/pull_request_template.md`; its checklist is the review bar. Match the CI job locally before pushing.
 - Module owner reviews their module; the team leader approves every PR (planning document §3.2).
 
-## 11. Agent operating rules
+## 11. Working rules
 
-- **Plan before code.** For a Jira task, first report: the key and acceptance criteria, the requirement IDs, the ADRs
-  and modules involved, the plan, the files you expect to create or modify, the tests you will run, and anything
+- **Plan before code.** For a Jira task, first report: the key and acceptance criteria, the requirement IDs and
+  modules involved, the plan, the files you expect to create or modify, the tests you will run, and anything
   ambiguous. Wait for explicit approval, then implement.
 - **Approval gates.** Do not create or apply migrations, add or upgrade packages, change a public API contract,
   rename or delete entities, or commit, push, merge, rebase or force-push without explicit approval for that specific
@@ -397,4 +397,5 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
   review, commit or push that did not run.
 - **Stay in scope.** No application features, no schema changes, no "while I was there" refactors during a
   documentation or infrastructure task.
-- If an ADR or requirement blocks the task, stop and say which one and what decision is needed. Do not guess.
+- If an architecture decision or a requirement blocks the task, stop and say which one and what decision is
+  needed. Do not guess.
