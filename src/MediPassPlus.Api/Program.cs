@@ -1,5 +1,7 @@
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Api.Identity;
 using MediPassPlus.Api.RateLimiting;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Validator;
 using FluentValidation;
 using Microsoft.AspNetCore.RateLimiting;
@@ -41,6 +43,11 @@ builder.Services.AddControllers(options =>
 // One error envelope for every failure, with no stack traces in the response (ADR-0010, NFR-REL-04).
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
+
+// The currently authenticated caller, resolved from the request's claims once (FR-ACC-09). Self-service controllers
+// read the user id from ICurrentUser instead of parsing ClaimTypes.NameIdentifier themselves.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
 // Rate limits are configuration bound through IOptions and validated at startup (ADR-0007 decision 2).
 builder.Services.AddOptions<QrApproveRateLimitOptions>()
