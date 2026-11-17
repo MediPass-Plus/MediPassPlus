@@ -1,5 +1,10 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MediPassPlus.Api.IntegrationTests;
 
@@ -53,5 +58,86 @@ public sealed class SwaggerDocumentTests : IClassFixture<MediPassApiFactory>
         var createAdmin = paths.GetProperty("/api/Auth/create-admin").GetProperty("post");
         Assert.True(createAdmin.TryGetProperty("security", out var security));
         Assert.Equal("Bearer", security[0].EnumerateObject().Single().Name);
+    }
+
+    /// <summary>The Swagger UI itself loads, not only the JSON document (ADR-0012 decision 2).</summary>
+    [Fact]
+    public async Task SwaggerUi_LoadsTheDocument()
+    {
+        using var client = _factory.CreateClient();
+        using var response = await client.GetAsync("/swagger/index.html");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var html = await response.Content.ReadAsStringAsync();
+        Assert.Contains("swagger-ui", html, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// ADR-0012 keeps exactly one generator: the old built-in OpenAPI route is not mapped, so only the
+    /// Swashbuckle document exists.
+    /// </summary>
+    [Fact]
+    public async Task OpenApiV1Route_IsNotMapped()
+    {
+        using var client = _factory.CreateClient();
+        using var response = await client.GetAsync("/openapi/v1.json");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Every <c>[Authorize]</c> operation carries the Bearer requirement and every anonymous operation stays
+    /// unmarked, so the document cannot drift from the endpoint metadata (ADR-0012 decision 4).
+    /// </summary>
+    [Fact]
+    public async Task SecurityRequirement_MatchesTheAuthorizeMetadata()
+    {
+        using var client = _factory.CreateClient();
+        using var document = JsonDocument.Parse(
+            await client.GetStringAsync("/swagger/v1/swagger.json"));
+        var paths = document.RootElement.GetProperty("paths");
+
+        var endpoints = _factory.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint =>
+                endpoint.Metadata.GetMetadata<ApiExplorerSettingsAttribute>()?.IgnoreApi != true)
+            .ToList();
+
+        Assert.NotEmpty(endpoints);
+
+        foreach (var endpoint in endpoints)
+        {
+            var methods = endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods;
+            if (methods is null || methods.Count == 0 || endpoint.RoutePattern.RawText is null)
+            {
+                continue;
+            }
+
+            var path = NormalizePath(endpoint.RoutePattern.RawText);
+            var operation = paths.GetProperty(path);
+            var requiresAuthorization = endpoint.Metadata.GetMetadata<IAuthorizeData>() is not null;
+
+            foreach (var method in methods)
+            {
+                var action = operation.GetProperty(method.ToLowerInvariant());
+                var hasSecurity = action.TryGetProperty("security", out var security);
+
+                Assert.True(
+                    requiresAuthorization == hasSecurity,
+                    $"{method} {path}: expected security={requiresAuthorization}, found {hasSecurity}.");
+                if (hasSecurity)
+                {
+                    Assert.Contains(
+                        security.EnumerateArray(),
+                        requirement => requirement.TryGetProperty("Bearer", out _));
+                }
+            }
+        }
+    }
+
+    private static string NormalizePath(string route)
+    {
+        var withSlash = route.StartsWith('/') ? route : "/" + route;
+        return Regex.Replace(withSlash, @"\{([^}:]+)(?::[^}]*)?\}", "{$1}");
     }
 }

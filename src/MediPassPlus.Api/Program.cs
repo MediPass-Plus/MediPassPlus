@@ -28,8 +28,9 @@ builder.Services.Configure<DemoSeedOptions>(builder.Configuration.GetSection(Dem
 builder.Services.AddScoped<ISeeder, DemoDataSeeder>();
 builder.Services.AddScoped<DatabaseSeeder>();
 
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-  
+// Swagger generation, the Bearer scheme and XML comments are configured in Extensions/SwaggerExtensions.cs
+// (ADR-0012).
+
 builder.Services.AddControllers(options =>
 {
     // Runs any registered IValidator<T> before the action and returns 400 ValidationProblemDetails on failure
@@ -145,15 +146,15 @@ if (app.Environment.IsDevelopment())
 }
 
 // Configure the HTTP request pipeline.
-// The OpenAPI document and Swagger UI are development tools. They are served in Development only, unless a
-// deployment explicitly opts in with OpenApi:ExposeOutsideDevelopment (ADR-0008).
+// The Swagger document and UI are development tools. They are served in Development only, unless a deployment
+// explicitly opts in with OpenApi:ExposeOutsideDevelopment (ADR-0012).
 var exposeApiReference = app.Environment.IsDevelopment()
     || app.Configuration.GetValue<bool>("OpenApi:ExposeOutsideDevelopment");
 
 if (exposeApiReference)
 {
     app.UseSwagger();
-    // The static Swagger helper page is exposed exactly when the API reference is (ADR-0008, MP-97).
+    // The static Swagger helper page is exposed exactly when the API reference is (ADR-0012, MP-97).
     app.UseStaticFiles();
     app.UseSwaggerUI(options =>
     {

@@ -29,6 +29,7 @@ public class StaffSlotsController : ControllerBase
     /// <summary>Adds a slot for a doctor of the staff member's clinic. Overlapping slots are refused.</summary>
     /// <response code="201">The slot was created.</response>
     /// <response code="400">The slot is invalid or starts in the past.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
     /// <response code="403">The caller has no clinic staff profile.</response>
     /// <response code="404">The doctor does not exist in the staff member's clinic.</response>
     /// <response code="409">The slot overlaps another slot of the doctor.</response>
@@ -57,6 +58,7 @@ public class StaffSlotsController : ControllerBase
 
     /// <summary>Deletes an unbooked slot of a doctor of the staff member's clinic.</summary>
     /// <response code="204">The slot was deleted.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
     /// <response code="403">The caller has no clinic staff profile.</response>
     /// <response code="404">The slot does not exist in the staff member's clinic.</response>
     /// <response code="409">The slot has an active appointment.</response>

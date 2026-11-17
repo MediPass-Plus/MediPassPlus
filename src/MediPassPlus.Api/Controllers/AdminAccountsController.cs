@@ -25,6 +25,12 @@ public class AdminAccountsController : ControllerBase
     }
 
     /// <summary>Creates a doctor account with the Doctor role and a doctor profile.</summary>
+    /// <response code="201">The doctor account was created and the Location header points at it.</response>
+    /// <response code="400">The payload is invalid, or Identity rejected the account.</response>
+    /// <response code="404">The clinic does not exist.</response>
+    /// <response code="409">The email is already registered.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [HttpPost("doctors")]
     [ProducesResponseType(typeof(CreatedAccountDto), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
@@ -39,6 +45,12 @@ public class AdminAccountsController : ControllerBase
     }
 
     /// <summary>Creates a clinic staff account with the Staff role and a staff profile.</summary>
+    /// <response code="201">The staff account was created and the Location header points at it.</response>
+    /// <response code="400">The payload is invalid, or Identity rejected the account.</response>
+    /// <response code="404">The clinic does not exist.</response>
+    /// <response code="409">The email is already registered.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [HttpPost("staff")]
     [ProducesResponseType(typeof(CreatedAccountDto), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]

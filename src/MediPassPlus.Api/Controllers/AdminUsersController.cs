@@ -25,6 +25,11 @@ public class AdminUsersController : ControllerBase
     }
 
     /// <summary>Deactivates an account. The user cannot log in again until it is reactivated.</summary>
+    /// <response code="204">The account is deactivated.</response>
+    /// <response code="400">The caller tried to change their own status.</response>
+    /// <response code="404">No account has the requested identifier.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [HttpPost("{id:guid}/deactivate")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -35,6 +40,11 @@ public class AdminUsersController : ControllerBase
         ChangeAsync(id, false, cancellationToken);
 
     /// <summary>Reactivates an account.</summary>
+    /// <response code="204">The account is reactivated.</response>
+    /// <response code="400">The caller tried to change their own status.</response>
+    /// <response code="404">No account has the requested identifier.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [HttpPost("{id:guid}/reactivate")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
