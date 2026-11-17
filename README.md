@@ -27,7 +27,7 @@ DEPI graduation project, Full Stack .NET track.
 | Database | SQL Server |
 | Frontend | Angular (responsive web app) |
 | Auth | ASP.NET Core Identity with JWT |
-| Quality | xUnit, FluentValidation, Serilog, Swagger/OpenAPI, GitHub Actions |
+| Quality | xUnit, FluentValidation, built-in structured logging, Swagger/OpenAPI, GitHub Actions |
 
 ## Repository structure
 
@@ -72,6 +72,9 @@ The `http` profile comes from `src/MediPassPlus.Api/Properties/launchSettings.js
 
 - Swagger UI: `http://localhost:5114/swagger`
 - Swagger JSON: `http://localhost:5114/swagger/v1/swagger.json`
+- Health: `http://localhost:5114/health` — anonymous, `200` when the API and the database are healthy and `503`
+  otherwise; the body carries statuses only. It is not part of the Swagger document. The logging contract and the
+  correlation id are in [`docs/development/logging.md`](docs/development/logging.md).
 - Visit-access QR helper (Development only): `http://localhost:5114/visit-access-tool.html`; see
   [`docs/development/visit-access-qr-tool.md`](docs/development/visit-access-qr-tool.md)
 

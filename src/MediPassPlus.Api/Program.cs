@@ -1,7 +1,10 @@
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Api.Health;
+using MediPassPlus.Api.Logging;
 using MediPassPlus.Api.RateLimiting;
 using MediPassPlus.Application.Validator;
 using FluentValidation;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using MediPassPlus.Infrastructure.Extensions;
@@ -11,6 +14,7 @@ using MediPassPlus.Application.Validation;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using MediPassPlus.Infrastructure.VisitAccess;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -130,12 +134,21 @@ builder.Services.AddValidatorsFromAssemblyContaining<SampleRequestValidator>();
 
 // DbContext + Identity + Roles + JWT (all registered in Infrastructure/Extensions)
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
+
+// NFR-REL-06: /health reports the API itself and the database connectivity, and nothing else.
+// The database check is a plain IHealthCheck over the existing DbContext, so no package is added (ADR-0013).
+builder.Services.AddHealthChecks()
+    .AddCheck(HealthCheckNames.Api, () => HealthCheckResult.Healthy(), tags: ["api"])
+    .AddCheck<DatabaseHealthCheck>(HealthCheckNames.Database, tags: ["db"], timeout: TimeSpan.FromSeconds(5));
+
 // Swashbuckle is the single Swagger document generator and UI (ADR-0012).
 builder.Services.AddSwaggerDocumentation();
 var app = builder.Build();
 
 
-// Must run first so every downstream failure goes through ApiExceptionHandler (ADR-0010).
+// The correlation id must exist before the first log line, including the exception handler's (NFR-REL-02).
+app.UseMiddleware<CorrelationIdMiddleware>();
+// Must run before every endpoint so a downstream failure goes through ApiExceptionHandler (ADR-0010).
 app.UseExceptionHandler();
 await app.SeedDefaultRolesAsync();
 // Run the seeders in development only.
@@ -162,7 +175,10 @@ if (exposeApiReference)
     });
 }
 
-app.UseHttpsRedirection();
+// A probe has no HTTPS client, so /health answers its status instead of a 307 (ADR-0013).
+app.UseWhen(
+    context => !context.Request.Path.StartsWithSegments("/health"),
+    branch => branch.UseHttpsRedirection());
         // Add authentication and authorization middleware
  app.UseAuthentication();
 app.UseAuthorization();
@@ -170,6 +186,19 @@ app.UseAuthorization();
 // Must run after authentication so the QrApprove partition sees the patient id, and before endpoints so a rejected
 // decision never reaches the database (ADR-0007 decisions 2 and 4).
 app.UseRateLimiter();
+
+// Anonymous on purpose: a probe has no token, and the body carries statuses only (NFR-REL-06, FR-PRV-08).
+// It stays out of the Swagger document: it is operational surface, not a product contract (ADR-0013).
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = HealthResponseWriter.WriteAsync,
+    ResultStatusCodes =
+    {
+        [HealthStatus.Healthy] = StatusCodes.Status200OK,
+        [HealthStatus.Degraded] = StatusCodes.Status200OK,
+        [HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable
+    }
+}).AllowAnonymous();
 
 app.MapControllers();
 
