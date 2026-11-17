@@ -163,6 +163,10 @@ public class AuthController : ControllerBase
     /// The credentials were valid and the account is active. The refresh token is returned exactly once and must be
     /// kept by the client; the server stores only its hash.
     /// </response>
+    /// <response code="400">
+    /// The body is missing, or the email or password fails its validation rule. The response is the shared
+    /// <c>ValidationProblemDetails</c> envelope produced by the global validation filter (NFR-SEC-06).
+    /// </response>
     /// <response code="401">
     /// The email is unknown, the password is wrong, the account is locked out or the account is deactivated.
     /// Every one of those answers with the same body on purpose, so the endpoint never confirms which
@@ -170,6 +174,7 @@ public class AuthController : ControllerBase
     /// </response>
     [HttpPost("login")]
     [ProducesResponseType(typeof(AuthTokensResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Login(LoginDto request)
     {

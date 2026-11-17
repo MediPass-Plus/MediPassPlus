@@ -46,6 +46,11 @@ public sealed class ApiReferenceExposureTests
 
         using var ui = await client.GetAsync("/swagger/index.html");
         Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
+
+        // ADR-0012 decision 2: the Swashbuckle document is the only document, so the route the built-in
+        // generator used is unmapped in every environment that serves Swagger.
+        using var unmapped = await client.GetAsync("/openapi/v1.json");
+        Assert.Equal(HttpStatusCode.NotFound, unmapped.StatusCode);
     }
 
     private static async Task AssertHiddenAsync(HttpClient client)
@@ -53,7 +58,10 @@ public sealed class ApiReferenceExposureTests
         using var document = await client.GetAsync("/swagger/v1/swagger.json");
         Assert.Equal(HttpStatusCode.NotFound, document.StatusCode);
 
-        using var ui = await client.GetAsync("/swagger");
+        using var redirect = await client.GetAsync("/swagger");
+        Assert.Equal(HttpStatusCode.NotFound, redirect.StatusCode);
+
+        using var ui = await client.GetAsync("/swagger/index.html");
         Assert.Equal(HttpStatusCode.NotFound, ui.StatusCode);
     }
 }

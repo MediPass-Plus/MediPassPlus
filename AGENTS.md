@@ -259,8 +259,10 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
 - Schema ids are namespace-qualified by `Swagger/SwaggerSchemaId.cs`; two DTOs may share a simple name without
   breaking the document.
 - Exposure and security are covered by `ApiReferenceExposureTests` (Development + flag `false`, Production + flag
-  `false`, Production + flag `true`) and `SwaggerDocumentTests` (UI loads, `/openapi/v1.json` stays 404, and every
-  `[Authorize]` operation carries `Bearer` while anonymous operations stay unmarked).
+  `false`, Production + flag `true`; wherever Swagger is served, `/openapi/v1.json` still answers 404) and
+  `SwaggerDocumentTests` (the UI configuration points at the document it serves, every operation has a summary and a
+  described response, `login` documents the validation `400` it can return, and every `[Authorize]` operation carries
+  `Bearer` while anonymous operations stay unmarked).
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `refresh`, `logout`,
   `forgot-password`, `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
