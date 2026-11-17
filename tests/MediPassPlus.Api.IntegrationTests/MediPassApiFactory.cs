@@ -278,13 +278,15 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <param name="qrTokenCreatedAtUtc">
     /// When the QR token was generated; defaults to now. A past value seeds an expired token (MP-97).
     /// </param>
+    /// <param name="slotStartUtc">An optional explicit slot start, in UTC; defaults to today at 09:00 Cairo.</param>
     /// <returns>The seeded graph.</returns>
     public async Task<VisitScenario> CreateVisitScenarioAsync(
         AppointmentStatus appointmentStatus = AppointmentStatus.CheckedIn,
         bool includePendingRequest = true,
         string? accessCode = null,
         DateTime? accessCodeCreatedAtUtc = null,
-        DateTime? qrTokenCreatedAtUtc = null)
+        DateTime? qrTokenCreatedAtUtc = null,
+        DateTime? slotStartUtc = null)
     {
         var doctorUser = await CreateUserAsync(DefaultRoles.Doctor);
         var patientUser = await CreateUserAsync(DefaultRoles.Patient);
@@ -308,7 +310,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         db.Doctors.Add(doctor);
         await db.SaveChangesAsync();
 
-        var slotStart = ClinicDateAtNineUtc(ClinicTimeZone.GetLocalDate(DateTime.UtcNow));
+        var slotStart = slotStartUtc ?? ClinicDateAtNineUtc(ClinicTimeZone.GetLocalDate(DateTime.UtcNow));
         var slot = new DoctorSlot
         {
             DoctorId = doctor.Id,

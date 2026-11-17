@@ -191,10 +191,16 @@ public sealed class AppointmentStatusEndpointTests : IClassFixture<MediPassApiFa
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    [Fact]
-    public async Task Complete_WhenTheAppointmentIsNotInVisit_ReturnsBadRequest()
+    /// <summary>Completion is allowed only from the InVisit state.</summary>
+    /// <param name="status">The non-InVisit appointment status under test.</param>
+    [Theory]
+    [InlineData(AppointmentStatus.Booked)]
+    [InlineData(AppointmentStatus.CheckedIn)]
+    [InlineData(AppointmentStatus.Cancelled)]
+    [InlineData(AppointmentStatus.Completed)]
+    public async Task Complete_WhenTheAppointmentIsNotInVisit_ReturnsBadRequest(AppointmentStatus status)
     {
-        var scenario = await _factory.CreateAppointmentStatusScenarioAsync(AppointmentStatus.CheckedIn);
+        var scenario = await _factory.CreateAppointmentStatusScenarioAsync(status);
         using var client = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
 
         using var response = await client.PostAsync(

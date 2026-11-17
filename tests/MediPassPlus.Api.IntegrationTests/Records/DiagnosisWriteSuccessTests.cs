@@ -90,14 +90,20 @@ public sealed class DiagnosisWriteSuccessTests : IClassFixture<MediPassApiFactor
             $"/api/appointments/{scenario.Visit.Appointment.Id}/diagnoses",
             new CreateDiagnosisRequest { Description = DiagnosisText });
 
-        // ADR-0005: the post-completion grace window still accepts the visit's record.
+        // MP-46 says record writes happen only in InVisit, but Accepted ADR-0005 and FR-ACS-07 extend the write
+        // window through the 15-minute post-completion grace while the grant is still active. The ADR wins until
+        // the ticket text is reconciled with the team.
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
-    [Fact]
-    public async Task CreateDiagnosis_WhenTheVisitIsNotOpen_ReturnsBadRequest()
+    /// <summary>An active grant does not allow a write before the visit reaches <c>InVisit</c>.</summary>
+    /// <param name="status">The appointment status under test.</param>
+    [Theory]
+    [InlineData(AppointmentStatus.Booked)]
+    [InlineData(AppointmentStatus.CheckedIn)]
+    public async Task CreateDiagnosis_WhenTheVisitHasNotStarted_ReturnsBadRequest(AppointmentStatus status)
     {
-        var scenario = await _factory.CreateDiagnosisWriteScenarioAsync(AppointmentStatus.Booked);
+        var scenario = await _factory.CreateDiagnosisWriteScenarioAsync(status);
         using var client = _factory.CreateAuthenticatedClient(scenario.Visit.DoctorUser);
 
         using var response = await client.PostAsJsonAsync(
@@ -110,6 +116,32 @@ public sealed class DiagnosisWriteSuccessTests : IClassFixture<MediPassApiFactor
         Assert.Equal(
             1,
             await db.Diagnoses.AsNoTracking().CountAsync(row => row.AppointmentId == scenario.Visit.Appointment.Id));
+    }
+
+    /// <summary>An active grant does not allow a prescription before the visit reaches <c>InVisit</c>.</summary>
+    /// <param name="status">The appointment status under test.</param>
+    [Theory]
+    [InlineData(AppointmentStatus.Booked)]
+    [InlineData(AppointmentStatus.CheckedIn)]
+    public async Task AddPrescription_WhenTheVisitHasNotStarted_ReturnsBadRequest(AppointmentStatus status)
+    {
+        var scenario = await _factory.CreateDiagnosisWriteScenarioAsync(status);
+        using var client = _factory.CreateAuthenticatedClient(scenario.Visit.DoctorUser);
+
+        using var response = await client.PostAsJsonAsync(
+            $"/api/diagnoses/{scenario.Diagnosis.Id}/prescriptions",
+            new CreatePrescriptionRequest
+            {
+                MedicineName = MedicineName,
+                Dosage = Dosage,
+                Notes = Notes
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.False(await db.Prescriptions.AsNoTracking()
+            .AnyAsync(row => row.DiagnosisId == scenario.Diagnosis.Id));
     }
 
     [Fact]
