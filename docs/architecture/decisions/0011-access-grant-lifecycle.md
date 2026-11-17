@@ -1,8 +1,9 @@
 # ADR-0011: Access grant lifecycle and status derivation
 
 - **Status:** Accepted (2026-11-05, module review completed by Ahmed; amended 2026-11-05 for composite scope enforcement;
-  amended 2026-11-12 for code-verification approval; amended 2026-11-13 for QR scanning and the access-state read model)
-- **Date:** 2026-11-05 (amended 2026-11-05, amended 2026-11-12, amended 2026-11-13)
+  amended 2026-11-12 for code-verification approval; amended 2026-11-13 for QR scanning and the access-state read model;
+  amended 2026-11-17 for the UC-11 A1 restart interpretation)
+- **Date:** 2026-11-05 (amended 2026-11-05, amended 2026-11-12, amended 2026-11-13, amended 2026-11-17)
 - **Affects:** Visit Access module, `access.AccessRequests`/`access.AccessGrants`/`clinical.Appointments` schema,
   the future access checker, class diagram (D4)
 
@@ -100,6 +101,17 @@ read time with `StatusAt`/`EffectiveEndUtc`; nothing is written, no status is st
 The endpoint adds no table and no column, and MP-97 needed no migration. Scanning is not an access-control event and
 adds no audit action; approve and reject continue to write `AccessGrantCreated` and `AccessRequestRejected` in their
 own unit of work.
+
+### Amendment 2026-11-17 — start-visit retry after QR expiry
+
+UC-11 A1 requires the doctor to start again and get a new QR when the code expires. Start-visit moves a checked-in
+appointment to `InVisit`, so reading FR-ACS-01's "status CheckedIn" as a precondition for every call would make A1
+impossible. FR-ACS-01 is therefore read as the precondition for the first start: the A1 retry is allowed while the
+appointment is `InVisit` and its request is still `Pending`. Once the request is `Approved`, a restart is refused
+with `409` (FR-ACS-11); it never reopens an approved request or reuses an ended grant.
+
+Record writes are unchanged: ADR-0005 already allows `InVisit`, or `Completed` while the grant is still inside its
+15-minute post-completion window (FR-ACS-07, UC-18).
 
 ## Consequences
 
