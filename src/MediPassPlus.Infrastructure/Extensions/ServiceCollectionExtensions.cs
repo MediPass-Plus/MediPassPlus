@@ -9,6 +9,7 @@ using MediPassPlus.Application.Common;
 using MediPassPlus.Application.DoctorSchedule;
 using MediPassPlus.Application.Email;
 using MediPassPlus.Application.Privacy;
+using MediPassPlus.Application.Records;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Infrastructure.Auth;
 using MediPassPlus.Infrastructure.Email;
@@ -51,6 +52,10 @@ public static class ServiceCollectionExtensions
         // Data Protection key ring outside the repository and the only diagnosis-text encryptor (FR-PRV-04,
         // NFR-SEC-05, ADR-0007 decision 5).
         services.AddDiagnosisProtection(configuration, environment);
+
+        // The purpose-aware contract the Record write path depends on. Diagnosis text goes through the MP-50
+        // IDiagnosisProtector; prescription text uses the same ring under its own versioned purpose (ADR-0005).
+        services.AddSingleton<IClinicalTextProtector, ClinicalTextProtector>();
 
         // Visit-access scope checks: resolve the appointment/doctor from the database, never from caller-supplied ids
         // (FR-ACS-06, ADR-0011 decision 8).
@@ -112,6 +117,13 @@ public static class ServiceCollectionExtensions
         // (FR-BKG-07, US-10).
         services.AddScoped<IDoctorScheduleStore, DoctorScheduleStore>();
         services.AddScoped<IDoctorScheduleService, DoctorScheduleService>();
+
+        // Doctor write path: diagnosis and prescription rows, their diagnosis scope reader and their audit rows
+        // (FR-REC-03, FR-REC-04, ADR-0005). The clinical text protector is the single encryption boundary and is
+        // registered by MP-50; without it the write endpoints cannot run, never store plaintext.
+        services.AddScoped<IDiagnosisScopeReader, DiagnosisScopeReader>();
+        services.AddScoped<IDiagnosisWriteStore, DiagnosisWriteStore>();
+        services.AddScoped<IDiagnosisWriteService, DiagnosisWriteService>();
 
         // Add other infrastructure services here as needed
 

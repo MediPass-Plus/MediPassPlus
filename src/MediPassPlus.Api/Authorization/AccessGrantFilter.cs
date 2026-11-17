@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Security.Claims;
+using MediPassPlus.Api.Extensions;
 using MediPassPlus.Application.Privacy;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace MediPassPlus.Api.Authorization;
@@ -20,8 +20,6 @@ namespace MediPassPlus.Api.Authorization;
 /// </remarks>
 public sealed class AccessGrantFilter : IAsyncActionFilter
 {
-    private const string UnauthorizedType = "https://tools.ietf.org/html/rfc9110#section-15.5.2";
-    private const string ForbiddenType = "https://tools.ietf.org/html/rfc9110#section-15.5.4";
     private const string AppointmentArgumentName = "appointmentId";
 
     private readonly IAccessGrantChecker _checker;
@@ -50,12 +48,7 @@ public sealed class AccessGrantFilter : IAsyncActionFilter
         var userIdValue = context.HttpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
         if (!Guid.TryParse(userIdValue, out var doctorUserId))
         {
-            context.Result = CreateProblem(
-                StatusCodes.Status401Unauthorized,
-                UnauthorizedType,
-                "Authentication required.",
-                "The access token does not identify a user.",
-                context.HttpContext.TraceIdentifier);
+            context.Result = AccessGrantProblem.Unauthorized(context.HttpContext.TraceIdentifier);
             return;
         }
 
@@ -67,7 +60,7 @@ public sealed class AccessGrantFilter : IAsyncActionFilter
                 "The access-grant filter is applied to {Action}, but no integer 'appointmentId' route value was supplied.",
                 context.ActionDescriptor.DisplayName);
 
-            context.Result = CreateForbidden(context.HttpContext.TraceIdentifier);
+            context.Result = AccessGrantProblem.Forbidden(context.HttpContext.TraceIdentifier);
             return;
         }
 
@@ -78,9 +71,12 @@ public sealed class AccessGrantFilter : IAsyncActionFilter
 
         if (!result.IsAllowed)
         {
-            context.Result = CreateForbidden(context.HttpContext.TraceIdentifier);
+            context.Result = AccessGrantProblem.Forbidden(context.HttpContext.TraceIdentifier);
             return;
         }
+
+        // The verified grant travels with the request, so the action never re-derives the scope from caller input.
+        context.HttpContext.SetVerifiedAccessGrant(result.Grant!);
 
         await next();
     }
@@ -100,33 +96,5 @@ public sealed class AccessGrantFilter : IAsyncActionFilter
             NumberStyles.Integer,
             CultureInfo.InvariantCulture,
             out appointmentId);
-    }
-
-    private static ObjectResult CreateForbidden(string traceIdentifier) =>
-        CreateProblem(
-            StatusCodes.Status403Forbidden,
-            ForbiddenType,
-            "You cannot access this record.",
-            "An active access grant is required for this appointment.",
-            traceIdentifier);
-
-    private static ObjectResult CreateProblem(
-        int statusCode,
-        string type,
-        string title,
-        string detail,
-        string traceIdentifier)
-    {
-        var problemDetails = new ProblemDetails
-        {
-            Status = statusCode,
-            Type = type,
-            Title = title,
-            Detail = detail
-        };
-
-        problemDetails.Extensions["traceId"] = traceIdentifier;
-
-        return new ObjectResult(problemDetails) { StatusCode = statusCode };
     }
 }
