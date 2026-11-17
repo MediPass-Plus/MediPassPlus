@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using MediPassPlus.Application.Common;
+using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.Identity;
@@ -39,6 +40,13 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     // A placeholder ciphertext for seeded rows. Integration tests never store plain medical text, and encryption
     // itself is owned by MP-50, so a seeded row only has to look like the stored shape (ADR-0007 decision 5).
     private const string SeededDiagnosisCiphertext = "seeded-ciphertext-not-plain-medical-text";
+
+    // The plaintext the history scenario encrypts before it seeds a row, so a read test can prove the response
+    // carries the original text back and never the stored ciphertext (FR-PRV-04, ADR-0005).
+    public const string HistoryDiagnosisPrefix = "Synthetic diagnosis ";
+    public const string HistoryMedicinePrefix = "Synthetic medicine ";
+    public const string HistoryDosagePrefix = "Synthetic dosage ";
+    public const string HistoryNotesPrefix = "Synthetic notes ";
 
     private static readonly IClinicTimeZone ClinicTimeZone = new CairoClinicTimeZone();
 
@@ -449,6 +457,97 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         await db.SaveChangesAsync();
 
         return new DiagnosisWriteScenario(visit, grant, record, diagnosis);
+    }
+
+    /// <summary>
+    /// Seeds the graph a history read needs: a visit, optionally its access grant, the patient's permanent record, a
+    /// number of diagnoses whose text is encrypted with the real protector, prescriptions on the first diagnosis and
+    /// report metadata. Real ciphertext matters here, because these tests prove the response carries the plaintext
+    /// back and never the stored payload (FR-REC-02, FR-PRV-04, ADR-0005).
+    /// </summary>
+    /// <param name="includeActiveGrant">Whether an active access grant is seeded for the appointment.</param>
+    /// <param name="grantedAtUtc">When the patient approved; defaults to now.</param>
+    /// <param name="diagnosisCount">How many diagnoses to seed, newest first.</param>
+    /// <param name="prescriptionCount">How many prescriptions to attach to the first diagnosis.</param>
+    /// <param name="reportCount">How many report rows to seed, newest upload first.</param>
+    /// <returns>The seeded history graph.</returns>
+    public async Task<RecordHistoryScenario> CreateRecordHistoryScenarioAsync(
+        bool includeActiveGrant = true,
+        DateTime? grantedAtUtc = null,
+        int diagnosisCount = 3,
+        int prescriptionCount = 2,
+        int reportCount = 2)
+    {
+        var visit = await CreateVisitScenarioAsync(AppointmentStatus.InVisit);
+
+        AccessGrant? grant = null;
+        if (includeActiveGrant)
+        {
+            grant = await CreateGrantAsync(visit.Appointment.Id, grantedAtUtc);
+        }
+
+        await using var db = CreateDbContext();
+
+        var record = MedicalRecord.Create(visit.PatientUser.Id, DateTime.UtcNow.AddDays(-30));
+        db.MedicalRecords.Add(record);
+
+        var protector = Services.GetRequiredService<IClinicalTextProtector>();
+        var baseTime = DateTime.UtcNow.AddMinutes(-5);
+
+        var diagnoses = new List<Diagnosis>();
+        for (var index = 0; index < diagnosisCount; index++)
+        {
+            var diagnosis = Diagnosis.Create(
+                record.Id,
+                visit.Appointment.Id,
+                protector.Protect(
+                    ClinicalTextPurpose.Diagnosis,
+                    $"{HistoryDiagnosisPrefix}{index}"),
+                baseTime.AddMinutes(-index));
+            diagnoses.Add(diagnosis);
+            db.Diagnoses.Add(diagnosis);
+        }
+
+        var prescriptions = new List<Prescription>();
+        if (diagnoses.Count > 0)
+        {
+            for (var index = 0; index < prescriptionCount; index++)
+            {
+                var prescription = Prescription.Create(
+                    diagnoses[0].Id,
+                    protector.Protect(
+                        ClinicalTextPurpose.Prescription,
+                        $"{HistoryMedicinePrefix}{index}"),
+                    protector.Protect(
+                        ClinicalTextPurpose.Prescription,
+                        $"{HistoryDosagePrefix}{index}"),
+                    index == 0
+                        ? null
+                        : protector.Protect(
+                            ClinicalTextPurpose.Prescription,
+                            $"{HistoryNotesPrefix}{index}"));
+                prescriptions.Add(prescription);
+                db.Prescriptions.Add(prescription);
+            }
+        }
+
+        var reports = new List<Report>();
+        for (var index = 0; index < reportCount; index++)
+        {
+            var report = Report.Create(
+                record.Id,
+                visit.PatientUser.Id,
+                $"stored-{Guid.NewGuid():N}.pdf",
+                "application/pdf",
+                1024 + index,
+                baseTime.AddHours(-index));
+            reports.Add(report);
+            db.Reports.Add(report);
+        }
+
+        await db.SaveChangesAsync();
+
+        return new RecordHistoryScenario(visit, grant, record, diagnoses, prescriptions, reports);
     }
 
     /// <summary>

@@ -125,6 +125,12 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDiagnosisWriteStore, DiagnosisWriteStore>();
         services.AddScoped<IDiagnosisWriteService, DiagnosisWriteService>();
 
+        // Record history read path: the same page shape serves the patient's self-scoped route and the doctor's
+        // appointment-scoped route, decryption happens after authorization and every read is audited
+        // (FR-REC-02, FR-REC-07, FR-PRV-01, FR-PRV-02, NFR-PRF-04, ADR-0004, ADR-0005).
+        services.AddScoped<IRecordHistoryStore, RecordHistoryStore>();
+        services.AddScoped<IRecordHistoryService, RecordHistoryService>();
+
         // Add other infrastructure services here as needed
 
         // Admin management: clinics (MP-29).

@@ -53,6 +53,24 @@ public sealed record DiagnosisWriteScenario(
     Diagnosis Diagnosis);
 
 /// <summary>
+/// The seeded graph a history read test needs: the visit, its optional grant, the patient's permanent record, and
+/// the diagnoses, prescriptions and reports whose text is encrypted with the real protector (FR-REC-02, ADR-0005).
+/// </summary>
+/// <param name="Visit">The visit graph, including the doctor and patient accounts and their tokens.</param>
+/// <param name="Grant">The seeded access grant, or null when the test starts without one.</param>
+/// <param name="Record">The patient's permanent record.</param>
+/// <param name="Diagnoses">The seeded diagnoses, newest first.</param>
+/// <param name="Prescriptions">The prescriptions attached to the first diagnosis.</param>
+/// <param name="Reports">The seeded report metadata, newest upload first.</param>
+public sealed record RecordHistoryScenario(
+    VisitScenario Visit,
+    AccessGrant? Grant,
+    MedicalRecord Record,
+    IReadOnlyList<Diagnosis> Diagnoses,
+    IReadOnlyList<Prescription> Prescriptions,
+    IReadOnlyList<Report> Reports);
+
+/// <summary>
 /// The seeded graph a booking test needs: a free future slot, an appointment on its own slot, a second free slot
 /// for rescheduling, and a second doctor with a slot for the cross-doctor rule.
 /// </summary>
