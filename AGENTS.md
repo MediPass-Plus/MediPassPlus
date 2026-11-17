@@ -125,7 +125,21 @@ with an explicit uploader, append-only rows linked by `SupersedesDiagnosisId` / 
 corrections, ciphertext columns for diagnosis and prescription text, required owning foreign keys with `Restrict` and
 no cascade path, plus an EF interceptor that refuses updates and deletes. Patient registration creates the record in
 the same transaction and the migration backfills every existing patient. The audit store (`AuditLog`, `IAuditWriter`
-and an append-only EF interceptor) now exists. HTTP integration tests live
+and an append-only EF interceptor) now exists. MP-38 adds the record write path: `POST
+api/appointments/{appointmentId}/diagnoses` records a diagnosis for the grant's appointment and `POST
+api/diagnoses/{diagnosisId}/prescriptions` adds one append-only prescription to a diagnosis the grant owns. Both
+derive the record, appointment and patient from the verified grant and resolve the diagnosis inside that scope,
+require the visit to be `InVisit` or `Completed` inside the 15-minute grace window, encrypt diagnosis and prescription
+text through
+`IClinicalTextProtector`, and commit the medical rows and their `DiagnosisCreated`/`PrescriptionCreated` audit rows in
+one unit of work (FR-REC-03, FR-REC-04, FR-PRV-01, FR-PRV-02, FR-PRV-04, ADR-0004, ADR-0005). MP-39 adds the read
+path: `GET api/appointments/{appointmentId}/history` returns a patient's whole permanent record to the authenticated
+doctor only while the appointment's grant is active, and `GET api/me/history` returns the authenticated patient's own
+record with no grant. Both return the record header, one page of diagnoses newest first with their prescriptions and
+one page of report metadata, defaulting to 20 rows and capped at 50; invalid paging is `400`, every successful read
+writes a `RecordRead` audit row before decryption (including a patient self-read), and the store returns ciphertext
+only (FR-REC-01, FR-REC-02, FR-REC-07, FR-PRV-01, FR-PRV-02, NFR-PRF-04, ADR-0004, ADR-0005). Neither PR needed a
+migration. HTTP integration tests live
 in `tests/MediPassPlus.Api.IntegrationTests`; they boot the real pipeline on Testcontainers SQL Server (or a local
 server through `MEDIPASS_TEST_SQLSERVER`) and give every test class its own database through a `MediPassApiFactory`
 class fixture (ADR-0006 decision 3), with a test-only probe endpoint, smoke tests for the four roles, and isolation
@@ -143,8 +157,10 @@ token approve/reject matrix, the closed-visit `410`/`409` split, the wrong-patie
 shared `QrApprove` `429`, and the doctor/patient access-state authorization matrix. The MP-31 tests add rotation and
 single use, a replay ending every live session, idempotent logout and its `204`, the seven-day expiry and the
 thirty-day session cap, revocation on deactivation and on password reset, and `no-store` on both token responses.
-There is still no record-read
-endpoint, no medical-record module and no audit endpoint, and the frontend is the untouched Angular welcome page.
+The MP-38 tests add the diagnosis/prescription write authorization, appointment-state, encryption and audit matrix;
+the MP-39 tests add the doctor history grant/expiry/ended/wrong-doctor matrix, the patient self-read, the
+forged-patient-id case, paging boundaries, real-protector decryption and both audit proofs. There is still no report
+upload/download endpoint and no audit endpoint, and the frontend is the untouched Angular welcome page.
 Everything the README, planning document or an ADR describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files, `package.json` and the ADRs over prose.
 
@@ -152,7 +168,8 @@ MP-50 configures the Data Protection key ring from `DataProtection:KeysPath`: th
 outside the repository, Development and Testing fall back to a directory under the operating system's temporary path,
 and Production refuses to start without it (ADR-0007 decision 5). It also adds `IDiagnosisProtector`, the only
 component allowed to encrypt diagnosis text, under the versioned purpose `MediPass.Diagnosis.v1` (FR-PRV-04,
-NFR-SEC-05, ADR-0005); no record-write endpoint consumes it yet. The three secrets — the key ring, `Jwt:SecretKey` and
+NFR-SEC-05, ADR-0005); the MP-38 write endpoints encrypt through it and the MP-39 read path decrypts through it. The
+three secrets — the key ring, `Jwt:SecretKey` and
 `AccessCode:HmacKey` — are documented in `docs/operations/deployment-keys.md`, and
 `DiagnosisProtectorTests`, `DataProtectionOptionsValidatorTests` and `DataProtectionRegistrationTests` cover the
 round trip, the outside-repository rule and the Production startup failure. No migration was needed.
@@ -247,14 +264,19 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   `POST api/appointments/{appointmentId}/access-code` (Patient),
   `POST api/appointments/{appointmentId}/verify-code` (Doctor),
   `POST api/appointments/{appointmentId}/check-in` (Staff), `POST api/appointments/{appointmentId}/complete`
-  (Doctor), `GET api/doctors/me/schedule?date=` (Doctor),
+  (Doctor), `POST api/appointments/{appointmentId}/diagnoses` (Doctor),
+  `POST api/diagnoses/{diagnosisId}/prescriptions` (Doctor), `GET api/doctors/me/schedule?date=` (Doctor),
   `POST api/access-requests/{requestId}/approve` / `/reject` (Patient),
   `POST api/access/scan` / `/scan-image` (Patient),
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
-  `POST api/access-grants/{grantId}/end` (Patient), and the patient appointment actions
+  `POST api/access-grants/{grantId}/end` (Patient), `GET api/appointments/{appointmentId}/history` (Doctor),
+  `GET api/me/history` (Patient), and the patient appointment actions
   `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
-  `PUT {appointmentId}/reschedule` (Patient). Start-visit exercises
+  `PUT {appointmentId}/reschedule` (Patient). The record write endpoints derive the patient, record and diagnosis
+  from the verified grant, encrypt clinical text and commit each medical row with its audit row; the history
+  endpoints return the record header, paged diagnoses with their prescriptions and paged report metadata, with the
+  doctor's route gated by an active grant and the patient's route self-scoped. Start-visit exercises
   the scope check and issues a one-time QR credential plus its rendered `qrCodeDataUri`; the scan endpoints resolve
   that token as text or as a camera image without consuming it, and the token decision endpoints approve or reject
   the request it proves; check-in and completion enforce the appointment state machine
@@ -267,7 +289,7 @@ exists, the sentence that says it does not is a bug, and an agent that trusts it
   timestamps for the appointment's doctor or patient. The booking actions stay inside the authenticated patient's
   scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. Swagger UI adds a topbar link to
   `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
-  medical-record endpoint.
+  report upload/download endpoint and no audit endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for

@@ -1,10 +1,13 @@
 using System.Net;
 using System.Text.Json;
+using MediPassPlus.Application.Privacy;
 using MediPassPlus.Application.Records;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Domain.Clinical;
+using MediPassPlus.Domain.Records;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MediPassPlus.Api.IntegrationTests.Records;
 
@@ -67,13 +70,15 @@ public sealed class RecordHistoryEndpointTests : IClassFixture<MediPassApiFactor
         Assert.Equal(scenario.Prescriptions.Count, first.Prescriptions.Count);
 
         // The list is a set of prescriptions, so the assertions match by medicine name instead of position.
-        var withoutNotes = Assert.Single(first.Prescriptions.Where(
-            item => item.MedicineName == $"{MediPassApiFactory.HistoryMedicinePrefix}0"));
+        var withoutNotes = Assert.Single(
+            first.Prescriptions,
+            item => item.MedicineName == $"{MediPassApiFactory.HistoryMedicinePrefix}0");
         Assert.Equal($"{MediPassApiFactory.HistoryDosagePrefix}0", withoutNotes.Dosage);
         Assert.Null(withoutNotes.Notes);
 
-        var withNotes = Assert.Single(first.Prescriptions.Where(
-            item => item.MedicineName == $"{MediPassApiFactory.HistoryMedicinePrefix}1"));
+        var withNotes = Assert.Single(
+            first.Prescriptions,
+            item => item.MedicineName == $"{MediPassApiFactory.HistoryMedicinePrefix}1");
         Assert.Equal($"{MediPassApiFactory.HistoryDosagePrefix}1", withNotes.Dosage);
         Assert.Equal($"{MediPassApiFactory.HistoryNotesPrefix}1", withNotes.Notes);
 
@@ -303,6 +308,62 @@ public sealed class RecordHistoryEndpointTests : IClassFixture<MediPassApiFactor
         // The diagnoses page keeps its own default.
         Assert.Equal(1, history.Diagnoses.Page);
         Assert.Equal(20, history.Diagnoses.PageSize);
+    }
+
+    [Fact]
+    public async Task DoctorHistory_ReturnsDiagnosesFromEarlierVisitsOfTheSameRecord()
+    {
+        var scenario = await _factory.CreateRecordHistoryScenarioAsync();
+        var protector = _factory.Services.GetRequiredService<IClinicalTextProtector>();
+        var earlierStartUtc = scenario.Visit.Slot.StartTimeUtc.AddDays(-7);
+        int earlierAppointmentId;
+
+        await using (var db = _factory.CreateDbContext())
+        {
+            var earlierSlot = new DoctorSlot
+            {
+                DoctorId = scenario.Visit.Doctor.Id,
+                StartTimeUtc = earlierStartUtc,
+                EndTimeUtc = earlierStartUtc.AddMinutes(30),
+                IsAvailable = false
+            };
+            db.DoctorSlots.Add(earlierSlot);
+            await db.SaveChangesAsync();
+
+            var earlierAppointment = new Appointment
+            {
+                PatientId = scenario.Visit.PatientUser.Id,
+                DoctorId = scenario.Visit.Doctor.Id,
+                DoctorSlotId = earlierSlot.Id,
+                Status = AppointmentStatus.Completed,
+                CreatedAtUtc = DateTime.UtcNow.AddDays(-8)
+            };
+            db.Appointments.Add(earlierAppointment);
+            await db.SaveChangesAsync();
+
+            earlierAppointmentId = earlierAppointment.Id;
+
+            db.Diagnoses.Add(Diagnosis.Create(
+                scenario.Record.Id,
+                earlierAppointment.Id,
+                protector.Protect(
+                    ClinicalTextPurpose.Diagnosis,
+                    $"{MediPassApiFactory.HistoryDiagnosisPrefix}earlier"),
+                DateTime.UtcNow.AddDays(-7)));
+            await db.SaveChangesAsync();
+        }
+
+        using var client = _factory.CreateAuthenticatedClient(scenario.Visit.DoctorUser);
+        var history = await ReadHistoryAsync(
+            client,
+            $"/api/appointments/{scenario.Visit.Appointment.Id}/history");
+
+        // FR-REC-02/US-26: the grant is for this visit, but the history is the patient's whole record.
+        Assert.Equal(scenario.Diagnoses.Count + 1, history.Diagnoses.TotalCount);
+        Assert.Contains(
+            history.Diagnoses.Items,
+            item => item.AppointmentId == earlierAppointmentId
+                && item.Description == $"{MediPassApiFactory.HistoryDiagnosisPrefix}earlier");
     }
 
     [Fact]
