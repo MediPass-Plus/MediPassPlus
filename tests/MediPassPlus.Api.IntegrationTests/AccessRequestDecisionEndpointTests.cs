@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using MediPassPlus.Application.VisitAccess;
 using MediPassPlus.Domain.Audit;
+using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Domain.VisitAccess;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Mvc;
@@ -101,6 +102,34 @@ public sealed class AccessRequestDecisionEndpointTests : IClassFixture<MediPassA
         var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
         Assert.NotNull(problem);
         Assert.Equal(403, problem.Status);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.Equal(
+            AccessRequestStatus.Pending,
+            (await db.AccessRequests.AsNoTracking().SingleAsync(r => r.Id == request.Id)).Status);
+        Assert.False(await db.AccessGrants.AsNoTracking().AnyAsync(g => g.AccessRequestId == request.Id));
+        Assert.False(await db.AuditLogs.AsNoTracking().AnyAsync(log => log.PatientId == scenario.PatientUser.Id));
+    }
+
+    /// <summary>A visit that is not checked in or in visit cannot be approved into a grant.</summary>
+    /// <param name="status">The closed appointment status under test.</param>
+    [Theory]
+    [InlineData(AppointmentStatus.Booked)]
+    [InlineData(AppointmentStatus.Cancelled)]
+    public async Task Approve_WhenTheVisitIsNotOpen_ReturnsConflict(AppointmentStatus status)
+    {
+        var scenario = await _factory.CreateVisitScenarioAsync(appointmentStatus: status);
+        var request = RequireRequest(scenario);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PostAsync(
+            $"/api/access-requests/{request.Id}/approve",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(409, problem.Status);
 
         await using var db = _factory.CreateDbContext();
         Assert.Equal(

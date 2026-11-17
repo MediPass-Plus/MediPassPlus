@@ -103,8 +103,8 @@ public sealed class AccessCodeEndpointTests : IClassFixture<MediPassApiFactory>
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
 
         await using var db = _factory.CreateDbContext();
-        Assert.False(await db.VisitAccessCredentials.AsNoTracking()
-            .AnyAsync(credential => credential.Type == VisitCredentialType.NumericCode));
+        Assert.False(await db.AccessRequests.AsNoTracking()
+            .AnyAsync(request => request.AppointmentId == scenario.Appointment.Id));
     }
 
     /// <summary>Once the patient approved access, no new fallback code can be generated.</summary>
@@ -122,6 +122,31 @@ public sealed class AccessCodeEndpointTests : IClassFixture<MediPassApiFactory>
         using var response = await PostGenerateAsync(client, scenario.Appointment.Id);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    /// <summary>An ended grant is never reused, so no new fallback code can be generated for the same request.</summary>
+    [Fact]
+    public async Task GenerateCode_AfterThePatientEndedTheGrant_ReturnsConflict()
+    {
+        var scenario = await _factory.CreateVisitScenarioAsync(AppointmentStatus.InVisit);
+        var request = RequireRequest(scenario);
+        var grant = await _factory.CreateGrantAsync(scenario.Appointment.Id);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var end = await client.PostAsync($"/api/access-grants/{grant.Id}/end", content: null);
+        Assert.Equal(HttpStatusCode.OK, end.StatusCode);
+
+        using var response = await PostGenerateAsync(client, scenario.Appointment.Id);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(409, problem.Status);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.False(await db.VisitAccessCredentials.AsNoTracking()
+            .AnyAsync(credential => credential.AccessRequestId == request.Id
+                && credential.Type == VisitCredentialType.NumericCode));
     }
 
     /// <summary>A code is only available for a visit that is checked in or already in visit.</summary>
@@ -491,18 +516,56 @@ public sealed class AccessCodeEndpointTests : IClassFixture<MediPassApiFactory>
             .AnyAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
     }
 
-    /// <summary>A completed visit can no longer be verified into a grant.</summary>
-    [Fact]
-    public async Task VerifyCode_WhenTheAppointmentIsCompleted_ReturnsBadRequest()
+    /// <summary>A visit that is not checked in or in visit can no longer be verified into a grant.</summary>
+    /// <param name="status">The closed appointment status under test.</param>
+    [Theory]
+    [InlineData(AppointmentStatus.Booked)]
+    [InlineData(AppointmentStatus.Cancelled)]
+    [InlineData(AppointmentStatus.Completed)]
+    public async Task VerifyCode_WhenTheAppointmentIsNotCheckedIn_ReturnsBadRequest(AppointmentStatus status)
     {
         var scenario = await _factory.CreateVisitScenarioAsync(
-            appointmentStatus: AppointmentStatus.Completed,
+            appointmentStatus: status,
             accessCode: KnownCode);
         using var client = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
 
         using var response = await PostVerifyAsync(client, scenario.Appointment.Id, KnownCode);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.False(await db.AccessGrants.AsNoTracking()
+            .AnyAsync(grant => grant.AppointmentId == scenario.Appointment.Id));
+    }
+
+    /// <summary>An ended grant is never reused, so the code cannot be verified into a second grant.</summary>
+    [Fact]
+    public async Task VerifyCode_AfterThePatientEndedTheGrant_ReturnsConflict()
+    {
+        var scenario = await _factory.CreateVisitScenarioAsync(
+            AppointmentStatus.InVisit,
+            accessCode: KnownCode);
+        var grant = await _factory.CreateGrantAsync(scenario.Appointment.Id);
+        using var patientClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+        using var doctorClient = _factory.CreateAuthenticatedClient(scenario.DoctorUser);
+
+        using var end = await patientClient.PostAsync(
+            $"/api/access-grants/{grant.Id}/end",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, end.StatusCode);
+
+        using var response = await PostVerifyAsync(doctorClient, scenario.Appointment.Id, KnownCode);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(409, problem.Status);
+
+        await using var db = _factory.CreateDbContext();
+        Assert.Equal(
+            1,
+            await db.AccessGrants.AsNoTracking()
+                .CountAsync(candidate => candidate.AppointmentId == scenario.Appointment.Id));
     }
 
     /// <summary>
