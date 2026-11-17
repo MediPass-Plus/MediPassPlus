@@ -64,6 +64,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     private readonly string _connectionString;
     private readonly string _databaseName;
     private readonly string _dataProtectionKeysPath;
+    private readonly string _environment;
     private readonly Dictionary<string, string?> _previousEnvironment = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _tokens = new(StringComparer.Ordinal);
     private bool _cleanedUp;
@@ -72,7 +73,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// Creates a factory for the test class xUnit instantiates it for. xUnit resolves class fixtures through a
     /// parameterless constructor, so this overload delegates to <see cref="MediPassApiFactory(string)"/>.
     /// </summary>
-    public MediPassApiFactory() : this(null)
+    public MediPassApiFactory() : this(null, "Testing", exposeApiReference: true)
     {
     }
 
@@ -84,7 +85,22 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// An optional class name embedded in the catalog name, so a test can prove which class owns the database.
     /// </param>
     internal MediPassApiFactory(string? databaseNameHint)
+        : this(databaseNameHint, "Testing", exposeApiReference: true)
     {
+    }
+
+    /// <summary>
+    /// Creates a factory for a specific host environment and Swagger exposure setting, so the API-reference tests can
+    /// prove the Development and Production boundaries (ADR-0012 decision 6).
+    /// </summary>
+    /// <param name="databaseNameHint">An optional class name embedded in the catalog name.</param>
+    /// <param name="environment">The host environment, for example <c>Development</c> or <c>Production</c>.</param>
+    /// <param name="exposeApiReference">Whether <c>OpenApi:ExposeOutsideDevelopment</c> is set to <c>true</c>.</param>
+    internal MediPassApiFactory(string? databaseNameHint, string environment, bool exposeApiReference)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(environment);
+
+        _environment = environment;
         _databaseName = BuildDatabaseName(databaseNameHint);
         _connectionString = new SqlConnectionStringBuilder(TestSqlServer.ConnectionString)
         {
@@ -101,14 +117,16 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         // Program reads Jwt and ConnectionStrings before builder.Build(), so the deferred
         // WebApplicationFactory configuration would arrive too late. Environment variables are
         // part of WebApplication.CreateBuilder's configuration from the start.
-        SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
+        SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", environment);
         SetEnvironmentVariable("Jwt__Issuer", JwtIssuer);
         SetEnvironmentVariable("Jwt__Audience", JwtAudience);
         SetEnvironmentVariable("Jwt__SecretKey", JwtSecretKey);
         SetEnvironmentVariable("Jwt__AccessTokenMinutes", "15");
         SetEnvironmentVariable("AccessCode__HmacKey", AccessCodeHmacKey);
         SetEnvironmentVariable("ConnectionStrings__DefaultConnection", _connectionString);
-        SetEnvironmentVariable("OpenApi__ExposeOutsideDevelopment", "true");
+        SetEnvironmentVariable("OpenApi__ExposeOutsideDevelopment", exposeApiReference ? "true" : "false");
+        // Production refuses to start without an absolute key-ring path outside the repository (ADR-0007).
+        SetEnvironmentVariable("DataProtection__KeysPath", _dataProtectionKeysPath);
         SetEnvironmentVariable("Logging__LogLevel__Microsoft.EntityFrameworkCore", "Warning");
 
         ApplyMigrations();
@@ -817,9 +835,10 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <param name="builder">The web host builder.</param>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // The API's Development seeder must not run in tests; default roles are seeded by Program
-        // for every environment, and the test factory creates only the users each test needs.
-        builder.UseEnvironment("Testing");
+        // The API's Development seeder must not run in the default test host; default roles are seeded by Program
+        // for every environment, and the test factory creates only the users each test needs. The exposure tests
+        // opt into Development or Production explicitly (ADR-0012 decision 6).
+        builder.UseEnvironment(_environment);
 
         // The gated test controller lives in this assembly. It proves an HTTP request that passes
         // [RequireActiveGrant] is refused after the patient ends the grant (FR-ACS-09, NFR-PRI-02).

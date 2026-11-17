@@ -15,6 +15,9 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace MediPassPlus.Api.Controllers;
 
+/// <summary>
+/// Registration, login, refresh-token, logout and password-reset endpoints (ACC-01, MP-31).
+/// </summary>
 [Route("api/[controller]")]
 [ApiController]
 public class AuthController : ControllerBase
@@ -39,7 +42,18 @@ public class AuthController : ControllerBase
         _configuration = configuration;
     }
 
+    /// <summary>
+    /// Registers a patient, doctor or staff account. Admin self-registration is refused.
+    /// </summary>
+    /// <param name="request">The account details, including the requested role.</param>
+    /// <returns>A message confirming the registration.</returns>
+    /// <response code="200">The account was created with the requested role.</response>
+    /// <response code="400">
+    /// The payload is invalid, the role does not exist or cannot be self-assigned, or Identity rejected the account.
+    /// </response>
     [HttpPost("register")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register(RegisterDto request)
     {
         // Validate registration data
@@ -149,6 +163,10 @@ public class AuthController : ControllerBase
     /// The credentials were valid and the account is active. The refresh token is returned exactly once and must be
     /// kept by the client; the server stores only its hash.
     /// </response>
+    /// <response code="400">
+    /// The body is missing, or the email or password fails its validation rule. The response is the shared
+    /// <c>ValidationProblemDetails</c> envelope produced by the global validation filter (NFR-SEC-06).
+    /// </response>
     /// <response code="401">
     /// The email is unknown, the password is wrong, the account is locked out or the account is deactivated.
     /// Every one of those answers with the same body on purpose, so the endpoint never confirms which
@@ -156,6 +174,7 @@ public class AuthController : ControllerBase
     /// </response>
     [HttpPost("login")]
     [ProducesResponseType(typeof(AuthTokensResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Login(LoginDto request)
     {
@@ -239,6 +258,14 @@ public class AuthController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Starts the password-reset flow. The answer is the same whether the email exists, so the endpoint never
+    /// confirms which addresses are registered.
+    /// </summary>
+    /// <param name="request">The account email.</param>
+    /// <returns><c>202</c> whether or not an email was sent.</returns>
+    /// <response code="202">The request was accepted; an email is sent only for an active account.</response>
+    /// <response code="400">The payload is invalid.</response>
     [HttpPost("forgot-password")]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -265,6 +292,14 @@ public class AuthController : ControllerBase
         // Same answer whether the account exists, is inactive, or does not exist at all.
         return Accepted(new { message = "If the email exists, a reset link has been sent." });
     }
+
+    /// <summary>
+    /// Completes a password reset with the emailed token and revokes every live session.
+    /// </summary>
+    /// <param name="request">The email, the reset token and the new password.</param>
+    /// <returns>A message confirming the reset.</returns>
+    /// <response code="200">The password was reset and every live session was revoked.</response>
+    /// <response code="400">The token is invalid or expired, or the new password was rejected.</response>
     [HttpPost("reset-password")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -368,8 +403,23 @@ public class AuthController : ControllerBase
 
     // Endpoint to create an admin user, accessible only by existing admins
 
+    /// <summary>
+    /// Creates an admin account. Only an existing admin may call it.
+    /// </summary>
+    /// <param name="request">The new admin's email, full name and password.</param>
+    /// <returns>A message confirming the creation.</returns>
+    /// <response code="200">The admin account was created.</response>
+    /// <response code="400">
+    /// The payload is invalid, the Admin role does not exist, or Identity rejected the account.
+    /// </response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [Authorize(Roles = "Admin")]
     [HttpPost("create-admin")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> CreateAdmin(CreateAdminDto request)
     {
         // Validate request data

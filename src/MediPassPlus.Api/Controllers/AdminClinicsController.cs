@@ -23,6 +23,10 @@ public class AdminClinicsController : ControllerBase
     }
 
     /// <summary>Creates a clinic.</summary>
+    /// <response code="201">The clinic was created.</response>
+    /// <response code="400">The payload is invalid.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [HttpPost]
     [ProducesResponseType(typeof(ClinicDto), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
@@ -35,6 +39,9 @@ public class AdminClinicsController : ControllerBase
     }
 
     /// <summary>Lists all clinics.</summary>
+    /// <response code="200">The clinics were returned.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<ClinicDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -45,6 +52,11 @@ public class AdminClinicsController : ControllerBase
     }
 
     /// <summary>Updates a clinic.</summary>
+    /// <response code="200">The clinic was updated.</response>
+    /// <response code="400">The payload is invalid.</response>
+    /// <response code="404">No clinic has the requested identifier.</response>
+    /// <response code="401">Missing, invalid or expired token.</response>
+    /// <response code="403">The caller is not an admin.</response>
     [HttpPut("{id:int}")]
     [ProducesResponseType(typeof(ClinicDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
