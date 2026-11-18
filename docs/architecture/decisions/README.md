@@ -22,6 +22,7 @@ be resolved by the team, not silently.
 | [0011](0011-access-grant-lifecycle.md) | Access grant lifecycle and status derivation | **Accepted** (2026-11-05; amended 2026-11-05, 2026-11-12 and 2026-11-13) | Visit Access checker, grant endpoints |
 | [0012](0012-swagger-single-document-generator.md) | Swashbuckle as the single Swagger document generator | **Accepted** (2026-11-11) | Every endpoint PR, Swagger configuration |
 | [0013](0013-observability-health-logging-and-ci-gates.md) | Built-in structured logging, correlation ids, `/health` and CI gates | Proposed (2026-11-17) | Logging, health endpoint, CI |
+| [0014](0014-staff-schedule-appointment-id.md) | Staff schedule returns the appointment id with the four FR-STF-04 fields | **Accepted** (2026-11-18) | Staff schedule contract, MP-41 refusal tests |
 
 ## How to use these records
 
@@ -47,4 +48,5 @@ write invariants); Swashbuckle is the single Swagger document generator (ADR-001
 password policy keeps the stricter upper/lower/digit/symbol rule and the lockout lasts 15 minutes (ADR-0003, amended
 that day). Resolved on 2026-11-16: refresh tokens are a hashed single-use row with rotation, a seven-day lifetime, a
 thirty-day session cap, replay revoking every live token, and an idempotent logout (ADR-0003 decision 4, MP-31);
-ADR-0003 remains open only on the user-model shape.
+ADR-0003 remains open only on the user-model shape. Resolved on 2026-11-18: the staff schedule keeps
+`appointmentId` alongside the four FR-STF-04 patient-data fields (ADR-0014, MP-41).
