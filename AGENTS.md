@@ -174,6 +174,18 @@ three secrets — the key ring, `Jwt:SecretKey` and
 `DiagnosisProtectorTests`, `DataProtectionOptionsValidatorTests` and `DataProtectionRegistrationTests` cover the
 round trip, the outside-repository rule and the Production startup failure. No migration was needed.
 
+MP-54 adds the platform observability (decision record 0013). `GET /health` is anonymous and reports the `api`
+and `database` checks as a status-only JSON body (`200` when every check is healthy, `503` otherwise, including
+`Degraded`); the database check is a plain `IHealthCheck` over the existing `DbContext`, so no package was added.
+Every request carries an `X-Correlation-ID` that is validated, echoed in the response and opened as a log scope; the
+header is written from `Response.OnStarting` so the exception handler's `500` keeps it, and a middleware line records
+method, path without the query string, status and duration. The API writes structured JSON to standard output in every
+environment except Development, where it uses the readable console format. An unhandled failure logs its type and
+stack trace outside Development, never its message, which can carry medical text; the identifiers-only contract is in
+`docs/development/logging.md`. CI runs a gitleaks scan (the working tree, the pull request's commits, and the full
+history on a push to `main`), a Domain/Application coverage gate at 50% (NFR-MNT-02) and a negative control that
+asserts a real failing test fails the job.
+
 MP-32 adds the self-service account surface at `api/me`: `GET api/me/profile` and `PUT api/me/profile` let any
 authenticated role read and change its own name and phone number, and `POST api/me/change-password` replaces the
 password after checking the current one against the same policy as registration, then revokes every live refresh token
@@ -193,7 +205,8 @@ ignored id/email/role/status body, one user not touching another, the wrong-pass
 
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
-ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed.
+ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed; the platform
+uses the built-in structured logging (decision record 0013).
 
 This section is a snapshot, not a permanent fact: update it in the same PR that changes the status. Once a capability
 exists, the sentence that says it does not is a bug, and a reader who trusts it will make wrong assumptions.
@@ -328,6 +341,8 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
 - XML documentation is mandatory on public controllers/actions and on public contracts whose shape is not obvious.
   `<GenerateDocumentationFile>` is on for `MediPassPlus.Api` and the comments are included in the document by
   Swashbuckle.
+- `GET /health` is deliberately **not** in the document: it is operational surface, not a product contract. It is
+  documented in `README.md` and `docs/development/logging.md` (decision record 0013).
 - Every action declares `[ProducesResponseType]` for each status code it can return, plus a `<response code="...">`
   description. A `<response>` tag alone does not add a status code.
 
@@ -340,6 +355,9 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   doctor's daily schedule (`GET api/doctors/me/schedule`) is the one documented exception: one clinic-local day for
   one doctor is a bounded set, so it returns the whole day ordered by start.
 - Return `ProblemDetails` for errors; do not invent a second error envelope.
+- Logging: `ILogger<T>` with message templates, identifiers only (FR-PRV-08). Never log bodies, headers, tokens, codes,
+  connection strings or medical text, and never build a message with string interpolation. The request's
+  `CorrelationId` scope and the full checklist are in `docs/development/logging.md`.
 - Names of requirement IDs are the shared vocabulary: quote `FR-ACS-02` / `NFR-PRI-02` in code comments, tests and PR
   descriptions when they justify a rule.
 
@@ -356,6 +374,26 @@ dotnet build --configuration Release        # 0 errors; 1 pre-existing warning (
 dotnet test --no-build --configuration Release
 dotnet test tests/MediPassPlus.Domain.Tests --filter FullyQualifiedName~MyTest   # single test
 dotnet run --project src/MediPassPlus.Api --launch-profile http   # http://localhost:5114
+```
+
+Coverage gate (NFR-MNT-02), from the repo root — this is also what CI runs:
+
+```powershell
+Remove-Item artifacts\coverage -Recurse -Force -ErrorAction SilentlyContinue   # never measure a stale report
+dotnet test tests/MediPassPlus.Domain.Tests --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/domain
+dotnet test tests/MediPassPlus.Application.Tests --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/application
+pwsh -NoProfile -File scripts/check-coverage.ps1          # fails below 50% in either project
+```
+
+On a Windows machine without `pwsh`, run the same file with `powershell -NoProfile -File scripts/check-coverage.ps1`.
+
+The negative control, to prove a red test really fails the run:
+
+```powershell
+$env:MEDIPASS_CI_NEGATIVE="1"
+dotnet test tests/MediPassPlus.Api.UnitTests --no-build --configuration Release --filter "FullyQualifiedName~CiNegativeControlTests"
+"exit=$LASTEXITCODE"                                      # must be 1
+Remove-Item Env:MEDIPASS_CI_NEGATIVE
 ```
 
 Frontend, from `frontend/`:
@@ -397,6 +435,9 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
 - Every medical endpoint needs negative tests: no token (401), wrong role (403), no grant (403), expired grant (403),
   ended grant (403), wrong doctor (403) — NFR-SEC-10.
 - Never weaken, skip or delete a test to get a green build. Report the failure instead.
+- CI also runs the coverage gate, the gitleaks scan and the negative control (`CiNegativeControlTests` with
+  `MEDIPASS_CI_NEGATIVE=1`). The negative control fails on purpose there; the step fails when it passes. Match all
+  three locally before pushing (`AGENTS.md` §8).
 
 ## 10. Git and pull requests
 

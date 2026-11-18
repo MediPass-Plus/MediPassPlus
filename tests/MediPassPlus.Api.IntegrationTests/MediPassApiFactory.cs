@@ -65,6 +65,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     private readonly string _databaseName;
     private readonly string _dataProtectionKeysPath;
     private readonly string _environment;
+    private readonly Action<IServiceCollection>? _configureTestServices;
     private readonly Dictionary<string, string?> _previousEnvironment = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _tokens = new(StringComparer.Ordinal);
     private bool _cleanedUp;
@@ -73,7 +74,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// Creates a factory for the test class xUnit instantiates it for. xUnit resolves class fixtures through a
     /// parameterless constructor, so this overload delegates to <see cref="MediPassApiFactory(string)"/>.
     /// </summary>
-    public MediPassApiFactory() : this(null, "Testing", exposeApiReference: true)
+    public MediPassApiFactory() : this(null, "Testing", exposeApiReference: true, configureTestServices: null)
     {
     }
 
@@ -85,7 +86,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// An optional class name embedded in the catalog name, so a test can prove which class owns the database.
     /// </param>
     internal MediPassApiFactory(string? databaseNameHint)
-        : this(databaseNameHint, "Testing", exposeApiReference: true)
+        : this(databaseNameHint, "Testing", exposeApiReference: true, configureTestServices: null)
     {
     }
 
@@ -96,11 +97,19 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <param name="databaseNameHint">An optional class name embedded in the catalog name.</param>
     /// <param name="environment">The host environment, for example <c>Development</c> or <c>Production</c>.</param>
     /// <param name="exposeApiReference">Whether <c>OpenApi:ExposeOutsideDevelopment</c> is set to <c>true</c>.</param>
-    internal MediPassApiFactory(string? databaseNameHint, string environment, bool exposeApiReference)
+    /// <param name="configureTestServices">
+    /// An optional hook for test-only registrations, such as a log capture or a deliberately broken database.
+    /// </param>
+    internal MediPassApiFactory(
+        string? databaseNameHint,
+        string environment,
+        bool exposeApiReference,
+        Action<IServiceCollection>? configureTestServices = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(environment);
 
         _environment = environment;
+        _configureTestServices = configureTestServices;
         _databaseName = BuildDatabaseName(databaseNameHint);
         _connectionString = new SqlConnectionStringBuilder(TestSqlServer.ConnectionString)
         {
@@ -852,6 +861,10 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             services.AddDataProtection()
                 .SetApplicationName(DataProtectionApplicationName)
                 .PersistKeysToFileSystem(new DirectoryInfo(_dataProtectionKeysPath));
+
+            // Test-only registrations (MP-54): a log capture or fixed health-check registrations. Nothing here is
+            // part of the product host.
+            _configureTestServices?.Invoke(services);
         });
     }
 

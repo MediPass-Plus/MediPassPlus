@@ -21,6 +21,7 @@ be resolved by the team, not silently.
 | [0010](0010-validation-and-error-format.md) | Input validation with FluentValidation and one ProblemDetails error format | **Accepted** (2026-11-05) | Every endpoint PR, error contract |
 | [0011](0011-access-grant-lifecycle.md) | Access grant lifecycle and status derivation | **Accepted** (2026-11-05; amended 2026-11-05, 2026-11-12 and 2026-11-13) | Visit Access checker, grant endpoints |
 | [0012](0012-swagger-single-document-generator.md) | Swashbuckle as the single Swagger document generator | **Accepted** (2026-11-11) | Every endpoint PR, Swagger configuration |
+| [0013](0013-observability-health-logging-and-ci-gates.md) | Built-in structured logging, correlation ids, `/health` and CI gates | Proposed (2026-11-17) | Logging, health endpoint, CI |
 
 ## How to use these records
 
