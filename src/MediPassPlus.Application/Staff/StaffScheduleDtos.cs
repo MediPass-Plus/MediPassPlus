@@ -1,7 +1,7 @@
 namespace MediPassPlus.Application.Staff;
 
-// Only the fields the reception needs (FR-STF-04): patient name, phone, appointment time and status.
-// AppointmentId is kept because check-in needs it. No diagnosis, prescription or report data (FR-PRV-06).
+// The four FR-STF-04 patient-data fields: patient name, phone, appointment time and status. AppointmentId is the
+// opaque key the staff check-in action needs (ADR-0014). No diagnosis, prescription or report data (FR-PRV-06).
 public record StaffScheduleItemDto(
     int AppointmentId,
     string PatientName,

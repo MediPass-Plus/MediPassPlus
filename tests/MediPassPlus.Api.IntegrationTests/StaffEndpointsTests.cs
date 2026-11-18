@@ -15,9 +15,6 @@ namespace MediPassPlus.Api.IntegrationTests;
 [Collection(IntegrationTestCollection.Name)]
 public sealed class StaffEndpointsTests : IClassFixture<MediPassApiFactory>
 {
-    private static readonly string[] ForbiddenFieldWords =
-        ["diagnos", "prescription", "report", "medical", "history"];
-
     private readonly MediPassApiFactory _factory;
 
     public StaffEndpointsTests(MediPassApiFactory factory)
@@ -396,21 +393,18 @@ public sealed class StaffEndpointsTests : IClassFixture<MediPassApiFactory>
         using var document = JsonDocument.Parse(json);
         Assert.NotEmpty(document.RootElement.EnumerateArray());
 
-        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        // The exact set is the contract (ADR-0014): a missing or extra field must fail, not only an extra one.
+        var expected = new[]
         {
             "appointmentId", "patientName", "patientPhone", "startTimeUtc", "status"
         };
 
         foreach (var item in document.RootElement.EnumerateArray())
         {
-            foreach (var property in item.EnumerateObject())
-            {
-                Assert.Contains(property.Name, allowed);
-                foreach (var word in ForbiddenFieldWords)
-                {
-                    Assert.DoesNotContain(word, property.Name, StringComparison.OrdinalIgnoreCase);
-                }
-            }
+            Assert.Equal(
+                expected.Order(StringComparer.Ordinal).ToArray(),
+                item.EnumerateObject().Select(property => property.Name)
+                    .Order(StringComparer.Ordinal).ToArray());
         }
     }
 
