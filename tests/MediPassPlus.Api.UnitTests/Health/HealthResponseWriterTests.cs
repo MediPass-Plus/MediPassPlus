@@ -34,7 +34,9 @@ public sealed class HealthResponseWriterTests
         Assert.Equal("Healthy", body.GetProperty("status").GetString());
         Assert.Equal("Healthy", body.GetProperty("checks").GetProperty(HealthCheckNames.Api).GetString());
         Assert.Equal("Healthy", body.GetProperty("checks").GetProperty(HealthCheckNames.Database).GetString());
-        Assert.Equal(7, body.GetProperty("totalDurationMs").GetInt64());
+
+        // Statuses only: a duration would be a timing signal the contract does not promise.
+        Assert.False(body.TryGetProperty("totalDurationMs", out _));
     }
 
     [Fact]
@@ -56,6 +58,28 @@ public sealed class HealthResponseWriterTests
         Assert.Equal("Unhealthy", document.RootElement.GetProperty("status").GetString());
         Assert.Equal(
             "Unhealthy",
+            document.RootElement.GetProperty("checks").GetProperty(HealthCheckNames.Database).GetString());
+    }
+
+    [Fact]
+    public async Task WriteAsync_DegradedReport_Returns503SoTheProbeActs()
+    {
+        var report = new HealthReport(
+            new Dictionary<string, HealthReportEntry>
+            {
+                [HealthCheckNames.Api] = Entry(HealthStatus.Healthy, "api ok"),
+                [HealthCheckNames.Database] = Entry(HealthStatus.Degraded, "db slow")
+            },
+            TimeSpan.FromMilliseconds(3));
+
+        var (context, raw) = await WriteAsync(report);
+
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, context.Response.StatusCode);
+
+        using var document = JsonDocument.Parse(raw);
+        Assert.Equal("Degraded", document.RootElement.GetProperty("status").GetString());
+        Assert.Equal(
+            "Degraded",
             document.RootElement.GetProperty("checks").GetProperty(HealthCheckNames.Database).GetString());
     }
 

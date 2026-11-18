@@ -4,8 +4,9 @@ using MediPassPlus.Api.Logging;
 namespace MediPassPlus.Api.IntegrationTests;
 
 /// <summary>
-/// Proves the correlation id crosses the real pipeline: it is echoed on success, on an unknown route and on an
-/// unauthorized request, and a generated one has the documented shape (NFR-REL-02).
+/// Proves the correlation id crosses the real pipeline: it is echoed on success, on an unknown route, on an
+/// unauthorized request and on a <c>500</c> written by the exception handler, and a generated one has the documented
+/// shape (NFR-REL-02).
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
 public sealed class CorrelationIdEndpointTests : IClassFixture<MediPassApiFactory>
@@ -61,5 +62,22 @@ public sealed class CorrelationIdEndpointTests : IClassFixture<MediPassApiFactor
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.True(response.Headers.Contains(CorrelationIdMiddleware.HeaderName));
+    }
+
+    [Fact]
+    public async Task AThrowingEndpoint_StillCarriesTheCorrelationHeader()
+    {
+        // The exception handler clears the response before it writes ProblemDetails, so this is the case where an
+        // eagerly written header disappears. The id is written from OnStarting instead (NFR-REL-02).
+        using var client = _factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/test/throw");
+        request.Headers.Add(CorrelationIdMiddleware.HeaderName, "exception-correlation-1");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Equal(
+            "exception-correlation-1",
+            response.Headers.GetValues(CorrelationIdMiddleware.HeaderName).Single());
     }
 }

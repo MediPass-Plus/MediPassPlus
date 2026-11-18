@@ -189,15 +189,11 @@ app.UseRateLimiter();
 
 // Anonymous on purpose: a probe has no token, and the body carries statuses only (NFR-REL-06, FR-PRV-08).
 // It stays out of the Swagger document: it is operational surface, not a product contract (ADR-0013).
+// The response writer owns the status code (Healthy 200, anything else 503), so no ResultStatusCodes override is
+// configured here: a second mapping would be dead code today and could disagree with the writer.
 app.MapHealthChecks("/health", new HealthCheckOptions
 {
-    ResponseWriter = HealthResponseWriter.WriteAsync,
-    ResultStatusCodes =
-    {
-        [HealthStatus.Healthy] = StatusCodes.Status200OK,
-        [HealthStatus.Degraded] = StatusCodes.Status200OK,
-        [HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable
-    }
+    ResponseWriter = HealthResponseWriter.WriteAsync
 }).AllowAnonymous();
 
 app.MapControllers();

@@ -9,7 +9,9 @@
     same lines twice.
 
 .PARAMETER ResultsDirectory
-    The root the CI passes to `--results-directory`. It must contain a `domain` and an `application` folder.
+    The root the CI passes to `--results-directory`. It must contain a `domain` and an `application` folder. Each
+    folder must hold exactly one report: the script fails when it finds none or several, so a report left over from
+    an earlier run cannot be measured by mistake. Clear the directory before running the tests.
 
 .PARAMETER Minimum
     The required line-coverage percentage. The requirement is 50 (NFR-MNT-02).
@@ -59,9 +61,11 @@ foreach ($target in $targets) {
         continue
     }
 
-    $percent = [math]::Round(([double]$package.GetAttribute("line-rate")) * 100, 1)
+    # Compare the raw rate, not the rounded one: rounding first lets 49.95% display as 50.0% and pass the gate.
+    $rate = [double]$package.GetAttribute("line-rate") * 100
+    $percent = [math]::Round($rate, 1)
 
-    if ($percent -lt $Minimum) {
+    if ($rate -lt $Minimum) {
         Write-Host "::error::$($target.Package): $percent% line coverage is below the $Minimum% gate (NFR-MNT-02)."
         $failed = $true
     }

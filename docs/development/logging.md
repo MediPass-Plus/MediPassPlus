@@ -14,8 +14,11 @@ Every request gets one `X-Correlation-ID`:
 - The resolved value is echoed in the response header, stored in `HttpContext.Items["CorrelationId"]`, and opened as
   a log scope named `CorrelationId` for the whole request.
 
-The middleware is registered before the exception handler, so even an unhandled failure is logged inside the scope.
-The value is validated on purpose: echoing an unchecked header would let a client inject newlines into the log stream.
+The header is written from `Response.OnStarting`, not when the middleware starts. The exception handler clears the
+response — status and headers — before it writes the `ProblemDetails` body, so a header set eagerly would be missing
+on the one response an operator most needs to correlate: a `500`. The middleware is registered before the exception
+handler, so even an unhandled failure is logged inside the scope. The value is validated on purpose: echoing an
+unchecked header would let a client inject newlines into the log stream.
 
 ## What may be logged
 
@@ -45,6 +48,31 @@ of the data.
 The default level is `Information`; `Microsoft.AspNetCore` and `Microsoft.EntityFrameworkCore` are `Warning` so the
 application's lines are not buried. A log scope is rendered only when the provider includes scopes, which is why both
 formatters set `IncludeScopes` to `true`.
+
+`Microsoft.AspNetCore` at `Warning` also hides the framework's own "Request finished" line. The correlation middleware
+writes the replacement at `Information`:
+
+```
+HTTP GET /api/me/appointments responded 200 in 12 ms
+```
+
+Method, path **without the query string**, status and duration. That keeps the `5xx` and slow-request signal without
+logging a query string, which the list above forbids.
+
+## Exceptions
+
+`ApiExceptionHandler` logs an unhandled failure with the `TraceId`, the exception type and its stack trace. Outside
+Development it does **not** log the exception message: a message can carry a patient name, a connection string or a
+parameter value, and an EF Core or SQL Server failure often does. Development logs the whole exception so a developer
+keeps the detail locally. The response body never carries either one (NFR-REL-04).
+
+## `/health`
+
+`GET /health` is anonymous and answers `200` when every check is healthy and `503` otherwise, with
+`Cache-Control: no-store`. The body carries the overall status and one status per check, and nothing else — no
+description, exception message, connection string, server name or duration. The checks are `api` (the process
+answered) and `database` (`Database.CanConnectAsync`). The endpoint is not part of the Swagger document: it is
+operational surface, not a product contract (ADR-0013).
 
 ## Where the files are
 
@@ -77,8 +105,12 @@ Before a pull request that adds or changes a log call:
 
 ## What the tests enforce
 
-- `LogRedactionTests` runs a real password-reset request through the pipeline, captures every line, and asserts that
-  each one carries the correlation id and that none repeats the email, password or patient name.
+- `LogRedactionTests` runs a real password-reset request and a throwing request through the pipeline, captures every
+  line — exception text included — and asserts that each one carries the correlation id and that none repeats the
+  email, password, patient name or the exception message.
 - `CorrelationIdMiddlewareTests` covers the header contract: generated value, accepted value, over-long value,
   control characters, comma-joined values.
-- `CorrelationIdEndpointTests` proves the header survives success, `401`, `404` and the exception handler.
+- `CorrelationIdEndpointTests` proves the header survives success, `401`, `404` and a `500` written by the exception
+  handler.
+- `ApiExceptionHandlerTests` proves the `500` body carries no detail, that Development logs the exception, and that
+  every other environment logs the type and stack trace without the message.

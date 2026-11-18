@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace MediPassPlus.Api.Logging;
 
 /// <summary>
@@ -41,11 +43,38 @@ public sealed class CorrelationIdMiddleware
         var correlationId = Resolve(context.Request.Headers[HeaderName].ToString());
 
         context.Items[ItemKey] = correlationId;
+
+        // Set eagerly so downstream middleware can read it, and again when the response starts: the exception
+        // handler clears the response (status and headers) before it writes ProblemDetails, so an eager header is
+        // lost on a 500 — the request an operator most needs to correlate (NFR-REL-02). OnStarting callbacks
+        // survive that clear.
         context.Response.Headers[HeaderName] = correlationId;
+        context.Response.OnStarting(() =>
+        {
+            context.Response.Headers[HeaderName] = correlationId;
+            return Task.CompletedTask;
+        });
 
         using (_logger.BeginScope(new Dictionary<string, object> { [ScopeKey] = correlationId }))
         {
-            await _next(context);
+            var stopwatch = Stopwatch.StartNew();
+
+            try
+            {
+                await _next(context);
+            }
+            finally
+            {
+                // Microsoft.AspNetCore is muted at Warning, so the framework's own "Request finished" line never
+                // reaches the log. This is its replacement: method, path without the query string, status and
+                // duration — identifiers and numbers only (FR-PRV-08).
+                _logger.LogInformation(
+                    "HTTP {Method} {Path} responded {StatusCode} in {ElapsedMilliseconds} ms",
+                    context.Request.Method,
+                    context.Request.Path.Value ?? string.Empty,
+                    context.Response.StatusCode,
+                    stopwatch.ElapsedMilliseconds);
+            }
         }
     }
 

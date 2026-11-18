@@ -351,6 +351,7 @@ dotnet run --project src/MediPassPlus.Api --launch-profile http   # http://local
 Coverage gate (NFR-MNT-02), from the repo root — this is also what CI runs:
 
 ```powershell
+Remove-Item artifacts\coverage -Recurse -Force -ErrorAction SilentlyContinue   # never measure a stale report
 dotnet test tests/MediPassPlus.Domain.Tests --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/domain
 dotnet test tests/MediPassPlus.Application.Tests --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/application
 pwsh -NoProfile -File scripts/check-coverage.ps1          # fails below 50% in either project

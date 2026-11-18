@@ -31,9 +31,11 @@ jobs:
         run: dotnet test MediPassPlus.slnx --no-build --configuration Release --verbosity normal
 
       # NFR-MNT-02: the two projects that own the core logic are measured separately, and the script fails the job
-      # below 50% line coverage. --no-build reuses the Release build above.
+      # below 50% line coverage. --no-build reuses the Release build above. The directory is cleared first so a
+      # report from an earlier run can never be measured.
       - name: Coverage (Domain and Application, gate 50%)
         run: |
+          rm -rf artifacts/coverage
           dotnet test tests/MediPassPlus.Domain.Tests --no-build --configuration Release \
             --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/domain
           dotnet test tests/MediPassPlus.Application.Tests --no-build --configuration Release \
@@ -55,11 +57,23 @@ jobs:
         run: |
           set +e
           dotnet test tests/MediPassPlus.Api.UnitTests --no-build --configuration Release \
-            --filter "FullyQualifiedName~CiNegativeControlTests"
+            --filter "FullyQualifiedName~CiNegativeControlTests" > negative-control.log 2>&1
           status=$?
           set -e
+          cat negative-control.log
+
+          # A non-zero exit on its own is not proof: a broken build or a filter that matched nothing also exits
+          # non-zero. Assert the reason as well.
           if [ "$status" -eq 0 ]; then
             echo "::error::The negative control passed. The pipeline no longer fails on a failing test."
+            exit 1
+          fi
+          if ! grep -q "CiNegativeControlTests" negative-control.log; then
+            echo "::error::The negative control did not run: the filter matched nothing or the build failed."
+            exit 1
+          fi
+          if ! grep -q "The CI negative control" negative-control.log; then
+            echo "::error::The negative control failed for an unexpected reason."
             exit 1
           fi
           echo "Negative control failed as expected (exit $status)."
@@ -90,6 +104,12 @@ jobs:
       - name: Scan the pull request commits
         if: github.event_name == 'pull_request'
         run: gitleaks git . --log-opts="origin/${{ github.base_ref }}..HEAD" --redact --exit-code 1 --verbose
+
+      # main's own history is outside the pull-request gate, so a secret merged before this job existed would never
+      # be caught. A push to main therefore scans every commit.
+      - name: Scan the full history on main
+        if: github.event_name == 'push'
+        run: gitleaks git . --log-opts="--all" --redact --exit-code 1 --verbose
 
   frontend:
     name: frontend
