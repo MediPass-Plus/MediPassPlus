@@ -232,7 +232,9 @@ public class MyAppointmentsControllerTests
                 "Test"));
         }
 
-        return new MyAppointmentsController(service)
+        return new MyAppointmentsController(
+            service,
+            new FakeCurrentUser(authenticated ? PatientUserId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

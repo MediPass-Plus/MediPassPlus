@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Staff;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -16,11 +16,15 @@ public class StaffScheduleController : ControllerBase
     private const string ForbiddenType = "https://tools.ietf.org/html/rfc9110#section-15.5.4";
 
     private readonly IStaffScheduleService _schedule;
+    private readonly ICurrentUser _currentUser;
 
-    public StaffScheduleController(IStaffScheduleService schedule)
+    public StaffScheduleController(IStaffScheduleService schedule, ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(schedule);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _schedule = schedule;
+        _currentUser = currentUser;
     }
 
     /// <summary>Returns the appointments of one day for the staff member's own clinic.</summary>
@@ -38,7 +42,7 @@ public class StaffScheduleController : ControllerBase
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> Get([FromQuery] DateOnly date, CancellationToken cancellationToken)
     {
-        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var staffUserId))
+        if (_currentUser.UserId is not { } staffUserId)
         {
             return Problem(
                 statusCode: StatusCodes.Status401Unauthorized,

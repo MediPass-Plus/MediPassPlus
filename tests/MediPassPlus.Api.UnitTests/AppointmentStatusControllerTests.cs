@@ -162,15 +162,9 @@ public class AppointmentStatusControllerTests
         bool asDoctor = false)
     {
         var context = new DefaultHttpContext();
-        if (authenticated)
-        {
-            var userId = asDoctor ? DoctorUserId : StaffUserId;
-            context.User = new ClaimsPrincipal(new ClaimsIdentity(
-                [new Claim(ClaimTypes.NameIdentifier, userId.ToString())],
-                "Test"));
-        }
+        var userId = asDoctor ? DoctorUserId : StaffUserId;
 
-        return new AppointmentStatusController(service)
+        return new AppointmentStatusController(service, new FakeCurrentUser(authenticated ? userId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

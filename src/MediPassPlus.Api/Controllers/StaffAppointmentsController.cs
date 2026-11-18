@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using MediPassPlus.Application.AppointmentStatusFlow;
 using MediPassPlus.Application.Booking;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Staff;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -22,13 +22,20 @@ public class StaffAppointmentsController : ControllerBase
 
     private readonly IStaffBookingService _booking;
     private readonly IAppointmentStatusService _status;
+    private readonly ICurrentUser _currentUser;
 
-    public StaffAppointmentsController(IStaffBookingService booking, IAppointmentStatusService status)
+    public StaffAppointmentsController(
+        IStaffBookingService booking,
+        IAppointmentStatusService status,
+        ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(booking);
         ArgumentNullException.ThrowIfNull(status);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _booking = booking;
         _status = status;
+        _currentUser = currentUser;
     }
 
     /// <summary>Books a free future slot of a doctor of the staff member's clinic for a patient.</summary>
@@ -133,8 +140,12 @@ public class StaffAppointmentsController : ControllerBase
         };
     }
 
-    private bool TryGetUserId(out Guid userId) =>
-        Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out userId) && userId != Guid.Empty;
+    private bool TryGetUserId(out Guid userId)
+    {
+        userId = _currentUser.UserId.GetValueOrDefault();
+
+        return userId != Guid.Empty;
+    }
 
     private IActionResult Unauthorized401() =>
         Problem(

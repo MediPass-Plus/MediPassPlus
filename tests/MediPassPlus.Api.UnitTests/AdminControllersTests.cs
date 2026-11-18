@@ -225,7 +225,7 @@ public class AdminControllersTests
                 "Test"));
         }
 
-        return new AdminUsersController(service)
+        return new AdminUsersController(service, new FakeCurrentUser(authenticated ? AdminId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
