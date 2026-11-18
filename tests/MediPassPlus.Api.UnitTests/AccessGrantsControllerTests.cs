@@ -143,7 +143,7 @@ public class AccessGrantsControllerTests
                 "Test"));
         }
 
-        return new AccessGrantsController(service)
+        return new AccessGrantsController(service, new FakeCurrentUser(authenticated ? PatientUserId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

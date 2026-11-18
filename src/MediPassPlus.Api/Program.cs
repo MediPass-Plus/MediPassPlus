@@ -1,7 +1,12 @@
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Api.Health;
+using MediPassPlus.Api.Identity;
+using MediPassPlus.Api.Logging;
 using MediPassPlus.Api.RateLimiting;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Validator;
 using FluentValidation;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using MediPassPlus.Infrastructure.Extensions;
@@ -11,6 +16,7 @@ using MediPassPlus.Application.Validation;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using MediPassPlus.Infrastructure.VisitAccess;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -42,6 +48,11 @@ builder.Services.AddControllers(options =>
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 
+// The currently authenticated caller, resolved from the request's claims once (FR-ACC-07, FR-ACC-08). Controllers read
+// the user id from ICurrentUser instead of parsing ClaimTypes.NameIdentifier themselves.
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
+
 // Rate limits are configuration bound through IOptions and validated at startup (ADR-0007 decision 2).
 builder.Services.AddOptions<QrApproveRateLimitOptions>()
     .Bind(builder.Configuration.GetSection(QrApproveRateLimitOptions.SectionName))
@@ -55,6 +66,13 @@ builder.Services.AddOptions<CodeGenerationRateLimitOptions>()
 
 builder.Services.AddOptions<CodeVerificationRateLimitOptions>()
     .Bind(builder.Configuration.GetSection(CodeVerificationRateLimitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// A stolen access token must not let an attacker guess the current password: ChangePasswordAsync does not raise the
+// lockout counter, so this budget is the only brake on that path (ADR-0007 decision 2).
+builder.Services.AddOptions<ChangePasswordRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(ChangePasswordRateLimitOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
@@ -101,6 +119,16 @@ builder.Services.AddRateLimiter(options =>
         return AccessCodeRateLimitPolicy.CreateVerificationPartition(httpContext, limits);
     });
 
+    // The self-service password change is limited per account, not per IP (NFR-SEC-06).
+    options.AddPolicy(ChangePasswordRateLimitPolicy.Name, httpContext =>
+    {
+        var limits = httpContext.RequestServices
+            .GetRequiredService<IOptions<ChangePasswordRateLimitOptions>>()
+            .Value;
+
+        return ChangePasswordRateLimitPolicy.CreatePartition(httpContext, limits);
+    });
+
     // The rejection body and Retry-After header are shared, but each policy family keeps its own title.
     options.OnRejected = static (context, cancellationToken) =>
     {
@@ -117,6 +145,10 @@ builder.Services.AddRateLimiter(options =>
                 context.HttpContext,
                 context.Lease,
                 cancellationToken),
+            ChangePasswordRateLimitPolicy.Name => ChangePasswordRateLimitPolicy.WriteRejectionAsync(
+                context.HttpContext,
+                context.Lease,
+                cancellationToken),
             _ => QrApproveRateLimitPolicy.WriteRejectionAsync(
                 context.HttpContext,
                 context.Lease,
@@ -130,12 +162,21 @@ builder.Services.AddValidatorsFromAssemblyContaining<SampleRequestValidator>();
 
 // DbContext + Identity + Roles + JWT (all registered in Infrastructure/Extensions)
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
+
+// NFR-REL-06: /health reports the API itself and the database connectivity, and nothing else.
+// The database check is a plain IHealthCheck over the existing DbContext, so no package is added (ADR-0013).
+builder.Services.AddHealthChecks()
+    .AddCheck(HealthCheckNames.Api, () => HealthCheckResult.Healthy(), tags: ["api"])
+    .AddCheck<DatabaseHealthCheck>(HealthCheckNames.Database, tags: ["db"], timeout: TimeSpan.FromSeconds(5));
+
 // Swashbuckle is the single Swagger document generator and UI (ADR-0012).
 builder.Services.AddSwaggerDocumentation();
 var app = builder.Build();
 
 
-// Must run first so every downstream failure goes through ApiExceptionHandler (ADR-0010).
+// The correlation id must exist before the first log line, including the exception handler's (NFR-REL-02).
+app.UseMiddleware<CorrelationIdMiddleware>();
+// Must run before every endpoint so a downstream failure goes through ApiExceptionHandler (ADR-0010).
 app.UseExceptionHandler();
 await app.SeedDefaultRolesAsync();
 // Run the seeders in development only.
@@ -162,7 +203,10 @@ if (exposeApiReference)
     });
 }
 
-app.UseHttpsRedirection();
+// A probe has no HTTPS client, so /health answers its status instead of a 307 (ADR-0013).
+app.UseWhen(
+    context => !context.Request.Path.StartsWithSegments("/health"),
+    branch => branch.UseHttpsRedirection());
         // Add authentication and authorization middleware
  app.UseAuthentication();
 app.UseAuthorization();
@@ -170,6 +214,15 @@ app.UseAuthorization();
 // Must run after authentication so the QrApprove partition sees the patient id, and before endpoints so a rejected
 // decision never reaches the database (ADR-0007 decisions 2 and 4).
 app.UseRateLimiter();
+
+// Anonymous on purpose: a probe has no token, and the body carries statuses only (NFR-REL-06, FR-PRV-08).
+// It stays out of the Swagger document: it is operational surface, not a product contract (ADR-0013).
+// The response writer owns the status code (Healthy 200, anything else 503), so no ResultStatusCodes override is
+// configured here: a second mapping would be dead code today and could disagree with the writer.
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = HealthResponseWriter.WriteAsync
+}).AllowAnonymous();
 
 app.MapControllers();
 

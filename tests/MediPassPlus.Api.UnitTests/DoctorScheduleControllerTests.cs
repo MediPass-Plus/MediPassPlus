@@ -85,7 +85,9 @@ public class DoctorScheduleControllerTests
                 "Test"));
         }
 
-        return new DoctorScheduleController(service)
+        return new DoctorScheduleController(
+            service,
+            new FakeCurrentUser(authenticated ? DoctorUserId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

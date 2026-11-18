@@ -168,7 +168,7 @@ public class RecordHistoryControllerTests
     private static MyHistoryController CreateMyHistoryController(
         FakeRecordHistoryService service,
         bool authenticated = true) =>
-        new(service)
+        new(service, new FakeCurrentUser(authenticated ? UserId : null))
         {
             ControllerContext = new ControllerContext
             {
@@ -187,7 +187,10 @@ public class RecordHistoryControllerTests
             context.SetVerifiedAccessGrant(grant);
         }
 
-        return new AppointmentHistoryController(service, NullLogger<AppointmentHistoryController>.Instance)
+        return new AppointmentHistoryController(
+            service,
+            NullLogger<AppointmentHistoryController>.Instance,
+            new FakeCurrentUser(UserId))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

@@ -174,9 +174,39 @@ three secrets — the key ring, `Jwt:SecretKey` and
 `DiagnosisProtectorTests`, `DataProtectionOptionsValidatorTests` and `DataProtectionRegistrationTests` cover the
 round trip, the outside-repository rule and the Production startup failure. No migration was needed.
 
+MP-54 adds the platform observability (decision record 0013). `GET /health` is anonymous and reports the `api`
+and `database` checks as a status-only JSON body (`200` when every check is healthy, `503` otherwise, including
+`Degraded`); the database check is a plain `IHealthCheck` over the existing `DbContext`, so no package was added.
+Every request carries an `X-Correlation-ID` that is validated, echoed in the response and opened as a log scope; the
+header is written from `Response.OnStarting` so the exception handler's `500` keeps it, and a middleware line records
+method, path without the query string, status and duration. The API writes structured JSON to standard output in every
+environment except Development, where it uses the readable console format. An unhandled failure logs its type and
+stack trace outside Development, never its message, which can carry medical text; the identifiers-only contract is in
+`docs/development/logging.md`. CI runs a gitleaks scan (the working tree, the pull request's commits, and the full
+history on a push to `main`), a Domain/Application coverage gate at 50% (NFR-MNT-02) and a negative control that
+asserts a real failing test fails the job.
+
+MP-32 adds the self-service account surface at `api/me`: `GET api/me/profile` and `PUT api/me/profile` let any
+authenticated role read and change its own name and phone number, and `POST api/me/change-password` replaces the
+password after checking the current one against the same policy as registration, then revokes every live refresh token
+of the account so a session stolen before the change cannot outlive it (FR-ACC-06, FR-ACC-07, FR-ACC-08, US-03, US-04,
+UC-03). The account is always the token's account: the body carries no id, email, role or status, so a caller can
+neither reach nor escalate another user, and the role in the response is read from Identity instead of the duplicate
+column. A changed phone number clears `PhoneNumberConfirmed`, an empty one clears the value, and a wrong current
+password answers `400` because the caller is already authenticated and the failure belongs to the request body. Every
+refusal is the shared `ProblemDetails` envelope, and both declared `400` paths are documented as such: a validation
+failure is a `ValidationProblemDetails` with an `errors` bag, an Identity refusal is a plain `ProblemDetails` with the
+reason in `detail`. The new `ICurrentUser` service
+(`Application/Identity/ICurrentUser.cs` + `Api/Identity/HttpContextCurrentUser.cs`, registered through
+`AddHttpContextAccessor`) is the single place where the `NameIdentifier` claim becomes a `Guid?`, and every controller
+now reads the caller from it instead of parsing the claim itself. `MeProfileEndpointTests` covers the four roles, an
+ignored id/email/role/status body, one user not touching another, the wrong-password and password-policy `400`s, the
+`401` matrix, and a password change ending the refresh tokens of every signed-in device. No migration was needed.
+
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
-ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed.
+ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed; the platform
+uses the built-in structured logging (decision record 0013).
 
 This section is a snapshot, not a permanent fact: update it in the same PR that changes the status. Once a capability
 exists, the sentence that says it does not is a bug, and a reader who trusts it will make wrong assumptions.
@@ -276,7 +306,9 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
   `POST api/access-grants/{grantId}/end` (Patient), `GET api/appointments/{appointmentId}/history` (Doctor),
-  `GET api/me/history` (Patient), and the patient appointment actions
+  `GET api/me/history` (Patient), the self-service profile actions
+  `GET api/me/profile` / `PUT api/me/profile` / `POST api/me/change-password` (any authenticated role), and the
+  patient appointment actions
   `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
   `PUT {appointmentId}/reschedule` (Patient). The record write endpoints derive the patient, record and diagnosis
   from the verified grant, encrypt clinical text and commit each medical row with its audit row; the history
@@ -292,7 +324,12 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   visit's active grant after the 15-minute grace, capped by the two-hour limit, and the patient end takes effect
   immediately. The access-state endpoint derives the request/grant status and remaining seconds from the stored
   timestamps for the appointment's doctor or patient. The booking actions stay inside the authenticated patient's
-  scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. Swagger UI adds a topbar link to
+  scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. The profile actions resolve the
+  account from the token, change only the name and phone number, and answer `400` for a wrong current password or a
+  body that breaks the password policy; a successful password change then revokes every live refresh token of the
+  account, so the caller's other sessions are refused at their next refresh. The change is also limited to five
+  attempts per 15 minutes per account (`ChangePassword` policy, configurable) and answers `429` with `Retry-After`
+  beyond it. Swagger UI adds a topbar link to
   `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
   report upload/download endpoint and no audit endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
@@ -304,6 +341,8 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
 - XML documentation is mandatory on public controllers/actions and on public contracts whose shape is not obvious.
   `<GenerateDocumentationFile>` is on for `MediPassPlus.Api` and the comments are included in the document by
   Swashbuckle.
+- `GET /health` is deliberately **not** in the document: it is operational surface, not a product contract. It is
+  documented in `README.md` and `docs/development/logging.md` (decision record 0013).
 - Every action declares `[ProducesResponseType]` for each status code it can return, plus a `<response code="...">`
   description. A `<response>` tag alone does not add a status code.
 
@@ -316,6 +355,9 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   doctor's daily schedule (`GET api/doctors/me/schedule`) is the one documented exception: one clinic-local day for
   one doctor is a bounded set, so it returns the whole day ordered by start.
 - Return `ProblemDetails` for errors; do not invent a second error envelope.
+- Logging: `ILogger<T>` with message templates, identifiers only (FR-PRV-08). Never log bodies, headers, tokens, codes,
+  connection strings or medical text, and never build a message with string interpolation. The request's
+  `CorrelationId` scope and the full checklist are in `docs/development/logging.md`.
 - Names of requirement IDs are the shared vocabulary: quote `FR-ACS-02` / `NFR-PRI-02` in code comments, tests and PR
   descriptions when they justify a rule.
 
@@ -332,6 +374,26 @@ dotnet build --configuration Release        # 0 errors; 1 pre-existing warning (
 dotnet test --no-build --configuration Release
 dotnet test tests/MediPassPlus.Domain.Tests --filter FullyQualifiedName~MyTest   # single test
 dotnet run --project src/MediPassPlus.Api --launch-profile http   # http://localhost:5114
+```
+
+Coverage gate (NFR-MNT-02), from the repo root — this is also what CI runs:
+
+```powershell
+Remove-Item artifacts\coverage -Recurse -Force -ErrorAction SilentlyContinue   # never measure a stale report
+dotnet test tests/MediPassPlus.Domain.Tests --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/domain
+dotnet test tests/MediPassPlus.Application.Tests --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/application
+pwsh -NoProfile -File scripts/check-coverage.ps1          # fails below 50% in either project
+```
+
+On a Windows machine without `pwsh`, run the same file with `powershell -NoProfile -File scripts/check-coverage.ps1`.
+
+The negative control, to prove a red test really fails the run:
+
+```powershell
+$env:MEDIPASS_CI_NEGATIVE="1"
+dotnet test tests/MediPassPlus.Api.UnitTests --no-build --configuration Release --filter "FullyQualifiedName~CiNegativeControlTests"
+"exit=$LASTEXITCODE"                                      # must be 1
+Remove-Item Env:MEDIPASS_CI_NEGATIVE
 ```
 
 Frontend, from `frontend/`:
@@ -373,6 +435,9 @@ dotnet ef database update --project src/MediPassPlus.Infrastructure --startup-pr
 - Every medical endpoint needs negative tests: no token (401), wrong role (403), no grant (403), expired grant (403),
   ended grant (403), wrong doctor (403) — NFR-SEC-10.
 - Never weaken, skip or delete a test to get a green build. Report the failure instead.
+- CI also runs the coverage gate, the gitleaks scan and the negative control (`CiNegativeControlTests` with
+  `MEDIPASS_CI_NEGATIVE=1`). The negative control fails on purpose there; the step fails when it passes. Match all
+  three locally before pushing (`AGENTS.md` §8).
 
 ## 10. Git and pull requests
 

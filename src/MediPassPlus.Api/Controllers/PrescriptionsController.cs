@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using MediPassPlus.Api.Authorization;
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Records;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -24,13 +24,18 @@ public class PrescriptionsController : ControllerBase
     private const string ConflictType = "https://tools.ietf.org/html/rfc9110#section-15.5.10";
 
     private readonly IDiagnosisWriteService _diagnosisWriteService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="PrescriptionsController"/> class.</summary>
     /// <param name="diagnosisWriteService">The diagnosis write application service.</param>
-    public PrescriptionsController(IDiagnosisWriteService diagnosisWriteService)
+    /// <param name="currentUser">The authenticated caller of this request.</param>
+    public PrescriptionsController(IDiagnosisWriteService diagnosisWriteService, ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(diagnosisWriteService);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _diagnosisWriteService = diagnosisWriteService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -113,9 +118,9 @@ public class PrescriptionsController : ControllerBase
 
     private bool TryGetUserId(out Guid userId)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        userId = _currentUser.UserId.GetValueOrDefault();
 
-        return Guid.TryParse(value, out userId) && userId != Guid.Empty;
+        return userId != Guid.Empty;
     }
 
     private ObjectResult CreateProblem(int statusCode, string type, string title, string detail) =>

@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using MediPassPlus.Application.AdminManagement;
+using MediPassPlus.Application.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -17,11 +17,15 @@ public class AdminUsersController : ControllerBase
     private const string NotFoundType = "https://tools.ietf.org/html/rfc9110#section-15.5.5";
 
     private readonly IAccountStatusService _status;
+    private readonly ICurrentUser _currentUser;
 
-    public AdminUsersController(IAccountStatusService status)
+    public AdminUsersController(IAccountStatusService status, ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(status);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _status = status;
+        _currentUser = currentUser;
     }
 
     /// <summary>Deactivates an account. The user cannot log in again until it is reactivated.</summary>
@@ -56,7 +60,7 @@ public class AdminUsersController : ControllerBase
 
     private async Task<IActionResult> ChangeAsync(Guid id, bool isActive, CancellationToken cancellationToken)
     {
-        if (!Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var adminId))
+        if (_currentUser.UserId is not { } adminId)
         {
             return Problem(
                 statusCode: StatusCodes.Status401Unauthorized,

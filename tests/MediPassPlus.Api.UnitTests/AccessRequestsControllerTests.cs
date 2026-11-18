@@ -639,7 +639,8 @@ public class AccessRequestsControllerTests
 
         return new AccessRequestsController(
             scanService ?? new FakeAccessRequestScanService(),
-            service)
+            service,
+            new FakeCurrentUser(authenticated ? PatientUserId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

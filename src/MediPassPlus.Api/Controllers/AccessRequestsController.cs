@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using MediPassPlus.Api.Extensions;
 using MediPassPlus.Api.RateLimiting;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.VisitAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -31,19 +31,24 @@ public class AccessRequestsController : ControllerBase
 
     private readonly IAccessRequestScanService _scanService;
     private readonly IAccessRequestDecisionService _decisionService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="AccessRequestsController"/> class.</summary>
     /// <param name="scanService">Resolves a presented QR token to the request it proves.</param>
     /// <param name="decisionService">The approve/reject application service.</param>
+    /// <param name="currentUser">The authenticated caller of this request.</param>
     public AccessRequestsController(
         IAccessRequestScanService scanService,
-        IAccessRequestDecisionService decisionService)
+        IAccessRequestDecisionService decisionService,
+        ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(scanService);
         ArgumentNullException.ThrowIfNull(decisionService);
+        ArgumentNullException.ThrowIfNull(currentUser);
 
         _scanService = scanService;
         _decisionService = decisionService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -418,9 +423,9 @@ public class AccessRequestsController : ControllerBase
 
     private bool TryGetPatientUserId(out Guid patientUserId)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        patientUserId = _currentUser.UserId.GetValueOrDefault();
 
-        return Guid.TryParse(value, out patientUserId) && patientUserId != Guid.Empty;
+        return patientUserId != Guid.Empty;
     }
 
     private IActionResult MapFailure(AccessRequestDecisionFailure failure, bool tokenPath) =>

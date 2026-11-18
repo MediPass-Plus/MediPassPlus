@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using MediPassPlus.Application.Booking;
 using MediPassPlus.Application.Common;
+using MediPassPlus.Application.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -25,13 +25,18 @@ public class MyAppointmentsController : ControllerBase
     private const string ConflictType = "https://tools.ietf.org/html/rfc9110#section-15.5.10";
 
     private readonly IBookingService _bookingService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="MyAppointmentsController"/> class.</summary>
     /// <param name="bookingService">The booking application service.</param>
-    public MyAppointmentsController(IBookingService bookingService)
+    /// <param name="currentUser">The authenticated caller of this request.</param>
+    public MyAppointmentsController(IBookingService bookingService, ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(bookingService);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _bookingService = bookingService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -220,9 +225,9 @@ public class MyAppointmentsController : ControllerBase
 
     private bool TryGetPatientUserId(out Guid patientUserId)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        patientUserId = _currentUser.UserId.GetValueOrDefault();
 
-        return Guid.TryParse(value, out patientUserId) && patientUserId != Guid.Empty;
+        return patientUserId != Guid.Empty;
     }
 
     private IActionResult MapFailure(BookingFailure failure) =>

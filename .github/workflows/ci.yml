@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: backend
@@ -26,6 +29,87 @@ jobs:
 
       - name: Test
         run: dotnet test MediPassPlus.slnx --no-build --configuration Release --verbosity normal
+
+      # NFR-MNT-02: the two projects that own the core logic are measured separately, and the script fails the job
+      # below 50% line coverage. --no-build reuses the Release build above. The directory is cleared first so a
+      # report from an earlier run can never be measured.
+      - name: Coverage (Domain and Application, gate 50%)
+        run: |
+          rm -rf artifacts/coverage
+          dotnet test tests/MediPassPlus.Domain.Tests --no-build --configuration Release \
+            --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/domain
+          dotnet test tests/MediPassPlus.Application.Tests --no-build --configuration Release \
+            --collect:"XPlat Code Coverage" --results-directory artifacts/coverage/application
+          pwsh -NoProfile -File scripts/check-coverage.ps1
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: artifacts/coverage
+
+      # MP-54: prove that a failing test really fails this job. The test passes in every normal run and fails only
+      # here; the step fails when it passes, which means the pipeline no longer reacts to a red test.
+      - name: CI negative control (a failing test must fail the pipeline)
+        env:
+          MEDIPASS_CI_NEGATIVE: "1"
+        run: |
+          set +e
+          dotnet test tests/MediPassPlus.Api.UnitTests --no-build --configuration Release \
+            --filter "FullyQualifiedName~CiNegativeControlTests" > negative-control.log 2>&1
+          status=$?
+          set -e
+          cat negative-control.log
+
+          # A non-zero exit on its own is not proof: a broken build or a filter that matched nothing also exits
+          # non-zero. Assert the reason as well.
+          if [ "$status" -eq 0 ]; then
+            echo "::error::The negative control passed. The pipeline no longer fails on a failing test."
+            exit 1
+          fi
+          if ! grep -q "CiNegativeControlTests" negative-control.log; then
+            echo "::error::The negative control did not run: the filter matched nothing or the build failed."
+            exit 1
+          fi
+          if ! grep -q "The CI negative control" negative-control.log; then
+            echo "::error::The negative control failed for an unexpected reason."
+            exit 1
+          fi
+          echo "Negative control failed as expected (exit $status)."
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The CLI is pinned instead of using gitleaks/gitleaks-action, which needs a licence for organizations
+      # (ADR-0013). The version is part of the review, not "latest".
+      - name: Install gitleaks
+        run: |
+          version=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      # NFR-SEC-08: the repository as it will be submitted.
+      - name: Scan the working tree
+        run: gitleaks dir . --redact --exit-code 1 --verbose
+
+      # The commits this pull request adds, so a secret removed from the tree but present in the branch is caught.
+      - name: Scan the pull request commits
+        if: github.event_name == 'pull_request'
+        run: gitleaks git . --log-opts="origin/${{ github.base_ref }}..HEAD" --redact --exit-code 1 --verbose
+
+      # main's own history is outside the pull-request gate, so a secret merged before this job existed would never
+      # be caught. A push to main therefore scans every commit.
+      - name: Scan the full history on main
+        if: github.event_name == 'push'
+        run: gitleaks git . --log-opts="--all" --redact --exit-code 1 --verbose
 
   frontend:
     name: frontend
