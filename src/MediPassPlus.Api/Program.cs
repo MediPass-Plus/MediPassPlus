@@ -44,8 +44,8 @@ builder.Services.AddControllers(options =>
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
 
-// The currently authenticated caller, resolved from the request's claims once (FR-ACC-09). Self-service controllers
-// read the user id from ICurrentUser instead of parsing ClaimTypes.NameIdentifier themselves.
+// The currently authenticated caller, resolved from the request's claims once (FR-ACC-07, FR-ACC-08). Controllers read
+// the user id from ICurrentUser instead of parsing ClaimTypes.NameIdentifier themselves.
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
@@ -62,6 +62,13 @@ builder.Services.AddOptions<CodeGenerationRateLimitOptions>()
 
 builder.Services.AddOptions<CodeVerificationRateLimitOptions>()
     .Bind(builder.Configuration.GetSection(CodeVerificationRateLimitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+// A stolen access token must not let an attacker guess the current password: ChangePasswordAsync does not raise the
+// lockout counter, so this budget is the only brake on that path (ADR-0007 decision 2).
+builder.Services.AddOptions<ChangePasswordRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(ChangePasswordRateLimitOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
@@ -108,6 +115,16 @@ builder.Services.AddRateLimiter(options =>
         return AccessCodeRateLimitPolicy.CreateVerificationPartition(httpContext, limits);
     });
 
+    // The self-service password change is limited per account, not per IP (NFR-SEC-06).
+    options.AddPolicy(ChangePasswordRateLimitPolicy.Name, httpContext =>
+    {
+        var limits = httpContext.RequestServices
+            .GetRequiredService<IOptions<ChangePasswordRateLimitOptions>>()
+            .Value;
+
+        return ChangePasswordRateLimitPolicy.CreatePartition(httpContext, limits);
+    });
+
     // The rejection body and Retry-After header are shared, but each policy family keeps its own title.
     options.OnRejected = static (context, cancellationToken) =>
     {
@@ -121,6 +138,10 @@ builder.Services.AddRateLimiter(options =>
                 context.Lease,
                 cancellationToken),
             AccessCodeRateLimitPolicy.VerificationName => AccessCodeRateLimitPolicy.WriteVerificationRejectionAsync(
+                context.HttpContext,
+                context.Lease,
+                cancellationToken),
+            ChangePasswordRateLimitPolicy.Name => ChangePasswordRateLimitPolicy.WriteRejectionAsync(
                 context.HttpContext,
                 context.Lease,
                 cancellationToken),

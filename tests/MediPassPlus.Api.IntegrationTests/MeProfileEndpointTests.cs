@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Application.Dtos.Profile;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
@@ -14,8 +15,8 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// HTTP contract of the self-service profile endpoints (FR-ACC-07, FR-ACC-08, US-03, US-04, UC-03).
 ///
 /// Every case runs against the real pipeline and the real Identity store, so the tests prove what the ticket
-/// promises: the account is always the token's account, a body cannot choose another account, and a password
-/// change needs the current password plus the password policy.
+/// promises: the account is always the token's account, a body cannot choose another account, a password
+/// change needs the current password plus the password policy, and a successful change ends every live session.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
 public sealed class MeProfileEndpointTests : IClassFixture<MediPassApiFactory>
@@ -328,6 +329,90 @@ public sealed class MeProfileEndpointTests : IClassFixture<MediPassApiFactory>
             new ChangePasswordRequest(CurrentPassword, NewPassword));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ChangePassword_BeyondTheConfiguredLimit_Returns429()
+    {
+        var user = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var client = _factory.CreateAuthenticatedClient(user);
+
+        // Every attempt spends the account's budget, successful or not: the limit exists to stop a stolen access
+        // token from guessing the current password (NFR-SEC-06).
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var refused = await client.PostAsJsonAsync(
+                ChangePasswordRoute,
+                new ChangePasswordRequest("Wrong0!Pass", NewPassword));
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        }
+
+        var rejected = await client.PostAsJsonAsync(
+            ChangePasswordRoute,
+            new ChangePasswordRequest(CurrentPassword, NewPassword));
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
+        Assert.NotNull(rejected.Headers.RetryAfter);
+
+        var problem = await rejected.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(429, problem.Status);
+
+        // The request never reached the controller, so the password is untouched.
+        Assert.True(await CheckPasswordAsync(user.Id, CurrentPassword));
+    }
+
+    [Fact]
+    public async Task ChangePassword_RevokesTheOldRefreshToken()
+    {
+        var email = $"profile.revoke.{Guid.NewGuid():N}@integration.medipass.test";
+        using var client = _factory.CreateClient();
+
+        var registration = await client.PostAsJsonAsync(
+            "api/Auth/register",
+            new
+            {
+                fullName = "Profile Revoke",
+                email,
+                password = CurrentPassword,
+                role = DefaultRoles.Patient
+            });
+        Assert.Equal(HttpStatusCode.OK, registration.StatusCode);
+
+        // Two devices sign in, so the change has to end both sessions, not only the one that changed the password.
+        var firstSession = await LoginAsync(client, email, CurrentPassword);
+        var secondSession = await LoginAsync(client, email, CurrentPassword);
+
+        using var authenticated = _factory.CreateClient();
+        authenticated.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", firstSession.AccessToken);
+
+        var change = await authenticated.PostAsJsonAsync(
+            ChangePasswordRoute,
+            new ChangePasswordRequest(CurrentPassword, NewPassword));
+        Assert.Equal(HttpStatusCode.OK, change.StatusCode);
+
+        // A token that leaked before the change must not outlive it (FR-ACC-06, FR-ACC-08).
+        foreach (var refreshToken in new[] { firstSession.RefreshToken, secondSession.RefreshToken })
+        {
+            var refresh = await client.PostAsJsonAsync("api/Auth/refresh", new { refreshToken });
+            Assert.Equal(HttpStatusCode.Unauthorized, refresh.StatusCode);
+        }
+
+        // The account still works: the new password opens a new session.
+        var newSession = await LoginAsync(client, email, NewPassword);
+        Assert.False(string.IsNullOrWhiteSpace(newSession.RefreshToken));
+    }
+
+    private static async Task<AuthTokensResponse> LoginAsync(HttpClient client, string email, string password)
+    {
+        var response = await client.PostAsJsonAsync("api/Auth/login", new { email, password });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var tokens = await response.Content.ReadFromJsonAsync<AuthTokensResponse>();
+        Assert.NotNull(tokens);
+
+        return tokens!;
     }
 
     private async Task<ApplicationUser> LoadUserAsync(Guid userId)

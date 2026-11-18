@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.VisitAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -22,13 +22,18 @@ public class AccessGrantsController : ControllerBase
     private const string ConflictType = "https://tools.ietf.org/html/rfc9110#section-15.5.10";
 
     private readonly IAccessGrantEndService _endService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="AccessGrantsController"/> class.</summary>
     /// <param name="endService">The patient's immediate-end application service.</param>
-    public AccessGrantsController(IAccessGrantEndService endService)
+    /// <param name="currentUser">The authenticated caller of this request.</param>
+    public AccessGrantsController(IAccessGrantEndService endService, ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(endService);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _endService = endService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -105,9 +110,9 @@ public class AccessGrantsController : ControllerBase
 
     private bool TryGetPatientUserId(out Guid patientUserId)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        patientUserId = _currentUser.UserId.GetValueOrDefault();
 
-        return Guid.TryParse(value, out patientUserId) && patientUserId != Guid.Empty;
+        return patientUserId != Guid.Empty;
     }
 
     private ObjectResult CreateProblem(int statusCode, string type, string title, string detail) =>

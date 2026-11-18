@@ -176,17 +176,20 @@ round trip, the outside-repository rule and the Production startup failure. No m
 
 MP-32 adds the self-service account surface at `api/me`: `GET api/me/profile` and `PUT api/me/profile` let any
 authenticated role read and change its own name and phone number, and `POST api/me/change-password` replaces the
-password after checking the current one against the same policy as registration (FR-ACC-07, FR-ACC-08, US-03, US-04,
+password after checking the current one against the same policy as registration, then revokes every live refresh token
+of the account so a session stolen before the change cannot outlive it (FR-ACC-06, FR-ACC-07, FR-ACC-08, US-03, US-04,
 UC-03). The account is always the token's account: the body carries no id, email, role or status, so a caller can
 neither reach nor escalate another user, and the role in the response is read from Identity instead of the duplicate
 column. A changed phone number clears `PhoneNumberConfirmed`, an empty one clears the value, and a wrong current
 password answers `400` because the caller is already authenticated and the failure belongs to the request body. Every
-refusal is the shared `ProblemDetails` envelope. The new `ICurrentUser` service
+refusal is the shared `ProblemDetails` envelope, and both declared `400` paths are documented as such: a validation
+failure is a `ValidationProblemDetails` with an `errors` bag, an Identity refusal is a plain `ProblemDetails` with the
+reason in `detail`. The new `ICurrentUser` service
 (`Application/Identity/ICurrentUser.cs` + `Api/Identity/HttpContextCurrentUser.cs`, registered through
-`AddHttpContextAccessor`) is the single place where the `NameIdentifier` claim becomes a `Guid?`; the pre-existing
-controllers still parse the claim themselves, and migrating them is a separate, behaviour-neutral refactor.
-`MeProfileEndpointTests` covers the four roles, an ignored id/email/role/status body, one user not touching another,
-the wrong-password and password-policy `400`s and the `401` matrix. No migration was needed.
+`AddHttpContextAccessor`) is the single place where the `NameIdentifier` claim becomes a `Guid?`, and every controller
+now reads the caller from it instead of parsing the claim itself. `MeProfileEndpointTests` covers the four roles, an
+ignored id/email/role/status body, one user not touching another, the wrong-password and password-policy `400`s, the
+`401` matrix, and a password change ending the refresh tokens of every signed-in device. No migration was needed.
 
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
@@ -310,7 +313,10 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   timestamps for the appointment's doctor or patient. The booking actions stay inside the authenticated patient's
   scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. The profile actions resolve the
   account from the token, change only the name and phone number, and answer `400` for a wrong current password or a
-  body that breaks the password policy. Swagger UI adds a topbar link to
+  body that breaks the password policy; a successful password change then revokes every live refresh token of the
+  account, so the caller's other sessions are refused at their next refresh. The change is also limited to five
+  attempts per 15 minutes per account (`ChangePassword` policy, configurable) and answers `429` with `Retry-After`
+  beyond it. Swagger UI adds a topbar link to
   `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
   report upload/download endpoint and no audit endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click

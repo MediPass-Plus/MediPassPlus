@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using MediPassPlus.Api.Extensions;
 using MediPassPlus.Api.RateLimiting;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.VisitAccess;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -27,27 +27,32 @@ public class VisitAccessController : ControllerBase
     private readonly IAccessCodeGenerationService _accessCodeGenerationService;
     private readonly IAccessCodeVerificationService _accessCodeVerificationService;
     private readonly IAccessStateService _accessStateService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="VisitAccessController"/> class.</summary>
     /// <param name="startVisitService">The start-visit application service.</param>
     /// <param name="accessCodeGenerationService">The patient's six-digit fallback generator.</param>
     /// <param name="accessCodeVerificationService">The owning doctor's six-digit code verifier.</param>
     /// <param name="accessStateService">The derived access-state reader for the doctor and patient.</param>
+    /// <param name="currentUser">The authenticated caller of this request.</param>
     public VisitAccessController(
         IStartVisitService startVisitService,
         IAccessCodeGenerationService accessCodeGenerationService,
         IAccessCodeVerificationService accessCodeVerificationService,
-        IAccessStateService accessStateService)
+        IAccessStateService accessStateService,
+        ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(startVisitService);
         ArgumentNullException.ThrowIfNull(accessCodeGenerationService);
         ArgumentNullException.ThrowIfNull(accessCodeVerificationService);
         ArgumentNullException.ThrowIfNull(accessStateService);
+        ArgumentNullException.ThrowIfNull(currentUser);
 
         _startVisitService = startVisitService;
         _accessCodeGenerationService = accessCodeGenerationService;
         _accessCodeVerificationService = accessCodeVerificationService;
         _accessStateService = accessStateService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -81,8 +86,7 @@ public class VisitAccessController : ControllerBase
         int appointmentId,
         CancellationToken cancellationToken)
     {
-        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(userIdValue, out var doctorUserId))
+        if (_currentUser.UserId is not { } doctorUserId)
         {
             return CreateProblem(
                 StatusCodes.Status401Unauthorized,
@@ -174,8 +178,7 @@ public class VisitAccessController : ControllerBase
         int appointmentId,
         CancellationToken cancellationToken)
     {
-        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(userIdValue, out var patientUserId))
+        if (_currentUser.UserId is not { } patientUserId)
         {
             return CreateProblem(
                 StatusCodes.Status401Unauthorized,
@@ -276,8 +279,7 @@ public class VisitAccessController : ControllerBase
         VerifyAccessCodeRequest request,
         CancellationToken cancellationToken)
     {
-        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(userIdValue, out var doctorUserId))
+        if (_currentUser.UserId is not { } doctorUserId)
         {
             return CreateProblem(
                 StatusCodes.Status401Unauthorized,
@@ -380,8 +382,7 @@ public class VisitAccessController : ControllerBase
         int appointmentId,
         CancellationToken cancellationToken)
     {
-        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(userIdValue, out var userId) || userId == Guid.Empty)
+        if (_currentUser.UserId is not { } userId)
         {
             return CreateProblem(
                 StatusCodes.Status401Unauthorized,

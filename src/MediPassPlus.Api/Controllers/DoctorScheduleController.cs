@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using MediPassPlus.Application.DoctorSchedule;
+using MediPassPlus.Application.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -18,13 +18,20 @@ public class DoctorScheduleController : ControllerBase
     private const string ForbiddenType = "https://tools.ietf.org/html/rfc9110#section-15.5.4";
 
     private readonly IDoctorScheduleService _doctorScheduleService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="DoctorScheduleController"/> class.</summary>
     /// <param name="doctorScheduleService">The doctor schedule application service.</param>
-    public DoctorScheduleController(IDoctorScheduleService doctorScheduleService)
+    /// <param name="currentUser">The authenticated caller of this request.</param>
+    public DoctorScheduleController(
+        IDoctorScheduleService doctorScheduleService,
+        ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(doctorScheduleService);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _doctorScheduleService = doctorScheduleService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -54,8 +61,7 @@ public class DoctorScheduleController : ControllerBase
         [FromQuery] DateOnly date,
         CancellationToken cancellationToken)
     {
-        var userIdValue = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(userIdValue, out var doctorUserId) || doctorUserId == Guid.Empty)
+        if (_currentUser.UserId is not { } doctorUserId)
         {
             return Problem(
                 statusCode: StatusCodes.Status401Unauthorized,

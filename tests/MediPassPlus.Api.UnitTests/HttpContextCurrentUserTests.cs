@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Http;
 namespace MediPassPlus.Api.UnitTests;
 
 /// <summary>
-/// The claim-to-id translation that every self-service endpoint relies on (FR-ACC-09). The cases pin the two
+/// The claim-to-id translation that every controller relies on (FR-ACC-07, FR-ACC-08). The cases pin the two
 /// behaviours that matter: an unparsable claim is <c>null</c>, never <see cref="Guid.Empty"/>, and a request with
 /// no <see cref="HttpContext"/> at all does not throw.
 /// </summary>
@@ -29,7 +29,6 @@ public class HttpContextCurrentUserTests
             new Claim(ClaimTypes.NameIdentifier, userId.ToString())));
 
         Assert.Equal(userId, currentUser.UserId);
-        Assert.True(currentUser.IsAuthenticated);
     }
 
     [Fact]
@@ -59,11 +58,10 @@ public class HttpContextCurrentUserTests
     }
 
     [Fact]
-    public void UserId_And_IsAuthenticated_AreSafe_WithoutAnHttpContext()
+    public void UserId_IsSafe_WithoutAnHttpContext()
     {
         var currentUser = CreateCurrentUser(principal: null);
 
-        Assert.False(currentUser.IsAuthenticated);
         Assert.Null(currentUser.UserId);
     }
 }

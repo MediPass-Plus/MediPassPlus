@@ -1,3 +1,5 @@
+using MediPassPlus.Api.RateLimiting;
+using MediPassPlus.Application.Auth;
 using MediPassPlus.Application.Dtos.Profile;
 using MediPassPlus.Application.Identity;
 using MediPassPlus.Domain.Identity;
@@ -5,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace MediPassPlus.Api.Controllers;
 
@@ -23,30 +26,36 @@ public class MeProfileController : ControllerBase
 
     private readonly UserManager<ApplicationUser> _users;
     private readonly ICurrentUser _currentUser;
+    private readonly IAuthTokenService _authTokens;
 
     /// <summary>Initializes a new instance of the <see cref="MeProfileController"/> class.</summary>
     /// <param name="users">The Identity user manager.</param>
     /// <param name="currentUser">The authenticated caller of this request.</param>
-    public MeProfileController(UserManager<ApplicationUser> users, ICurrentUser currentUser)
+    /// <param name="authTokens">Ends the account's live sessions after a password change.</param>
+    public MeProfileController(
+        UserManager<ApplicationUser> users,
+        ICurrentUser currentUser,
+        IAuthTokenService authTokens)
     {
         ArgumentNullException.ThrowIfNull(users);
         ArgumentNullException.ThrowIfNull(currentUser);
+        ArgumentNullException.ThrowIfNull(authTokens);
 
         _users = users;
         _currentUser = currentUser;
+        _authTokens = authTokens;
     }
 
     /// <summary>Returns the authenticated user's own profile.</summary>
-    /// <param name="cancellationToken">Cancels the database work.</param>
     /// <returns>The profile of the caller.</returns>
     /// <response code="200">The caller's profile.</response>
     /// <response code="401">The access token is missing, invalid or expired, or it does not identify a user.</response>
     [HttpGet("profile")]
     [ProducesResponseType(typeof(ProfileResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> GetProfile(CancellationToken cancellationToken)
+    public async Task<IActionResult> GetProfile()
     {
-        var user = await FindCurrentUserAsync(cancellationToken);
+        var user = await FindCurrentUserAsync();
 
         return user is null
             ? CreateProblem(
@@ -62,20 +71,22 @@ public class MeProfileController : ControllerBase
     /// (FR-ACC-07, US-03).
     /// </summary>
     /// <param name="request">The new name and phone number.</param>
-    /// <param name="cancellationToken">Cancels the database work.</param>
     /// <returns>The profile as stored after the update.</returns>
     /// <response code="200">The profile was saved and is returned as stored.</response>
-    /// <response code="400">The body breaks a validation rule, or Identity refused the update.</response>
+    /// <response code="400">
+    /// The request is refused and the body is a <see cref="ProblemDetails"/>. A body that breaks a validation rule is a
+    /// <see cref="ValidationProblemDetails"/> whose <c>errors</c> bag names the offending member (for example
+    /// <c>FullName</c> or <c>PhoneNumber</c>); a body Identity refuses carries the refusal in <c>detail</c> and has no
+    /// <c>errors</c> bag.
+    /// </response>
     /// <response code="401">The access token is missing, invalid or expired, or it does not identify a user.</response>
     [HttpPut("profile")]
     [ProducesResponseType(typeof(ProfileResponse), StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> UpdateProfile(
-        UpdateProfileRequest request,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> UpdateProfile(UpdateProfileRequest request)
     {
-        var user = await FindCurrentUserAsync(cancellationToken);
+        var user = await FindCurrentUserAsync();
 
         if (user is null)
         {
@@ -114,27 +125,37 @@ public class MeProfileController : ControllerBase
     }
 
     /// <summary>
-    /// Changes the caller's password after checking the current one (FR-ACC-08, US-04).
+    /// Changes the caller's password after checking the current one and then ends every live session of the account,
+    /// so a refresh token stolen before the change cannot outlive it (FR-ACC-06, FR-ACC-08, US-04).
     /// </summary>
     /// <param name="request">The current password and the new one.</param>
-    /// <param name="cancellationToken">Cancels the database work.</param>
     /// <returns>A message confirming the change.</returns>
-    /// <response code="200">The current password was correct and the new one satisfied the password policy.</response>
+    /// <response code="200">
+    /// The current password was correct, the new one satisfied the password policy, and every refresh token of the
+    /// account was revoked. The access token of this request keeps working until it expires; after that the account
+    /// signs in again with the new password.
+    /// </response>
     /// <response code="400">
-    /// The body breaks a validation rule, the current password is wrong, or Identity refused the new password.
-    /// A wrong current password is a failure of this request, not of authentication: the caller is already
-    /// authenticated.
+    /// The request is refused and the body is a <see cref="ProblemDetails"/>. A body that breaks a validation rule is a
+    /// <see cref="ValidationProblemDetails"/> whose <c>errors</c> bag names the offending member (for example
+    /// <c>NewPassword</c>); a wrong current password or an Identity refusal carries the reason in <c>detail</c> and has
+    /// no <c>errors</c> bag. A wrong current password is a failure of this request, not of authentication: the caller is
+    /// already authenticated. No session is revoked when the request is refused.
     /// </response>
     /// <response code="401">The access token is missing, invalid or expired, or it does not identify a user.</response>
+    /// <response code="429">
+    /// The account exhausted its password-change budget (5 attempts per 15 minutes by default) and every attempt
+    /// shares it, successful or not. The response carries <c>Retry-After</c>.
+    /// </response>
     [HttpPost("change-password")]
+    [EnableRateLimiting(ChangePasswordRateLimitPolicy.Name)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> ChangePassword(
-        ChangePasswordRequest request,
-        CancellationToken cancellationToken)
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request)
     {
-        var user = await FindCurrentUserAsync(cancellationToken);
+        var user = await FindCurrentUserAsync();
 
         if (user is null)
         {
@@ -161,17 +182,16 @@ public class MeProfileController : ControllerBase
                 detail);
         }
 
+        // A token that leaked before the change must not outlive it (FR-ACC-06, FR-ACC-08).
+        await _authTokens.RevokeAllForUserAsync(user.Id, HttpContext.RequestAborted);
+
         return Ok(new { message = "Password changed successfully." });
     }
 
-    private async Task<ApplicationUser?> FindCurrentUserAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-
-        return _currentUser.UserId is { } userId
+    private async Task<ApplicationUser?> FindCurrentUserAsync() =>
+        _currentUser.UserId is { } userId
             ? await _users.FindByIdAsync(userId.ToString())
             : null;
-    }
 
     private async Task<ProfileResponse> ToResponseAsync(ApplicationUser user)
     {

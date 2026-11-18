@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using MediPassPlus.Api.Extensions;
 using MediPassPlus.Application.AppointmentStatusFlow;
+using MediPassPlus.Application.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -24,13 +24,20 @@ public class AppointmentStatusController : ControllerBase
     private const string ConflictType = "https://tools.ietf.org/html/rfc9110#section-15.5.10";
 
     private readonly IAppointmentStatusService _appointmentStatusService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="AppointmentStatusController"/> class.</summary>
     /// <param name="appointmentStatusService">The appointment status application service.</param>
-    public AppointmentStatusController(IAppointmentStatusService appointmentStatusService)
+    /// <param name="currentUser">The authenticated caller of this request.</param>
+    public AppointmentStatusController(
+        IAppointmentStatusService appointmentStatusService,
+        ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(appointmentStatusService);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _appointmentStatusService = appointmentStatusService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -189,9 +196,9 @@ public class AppointmentStatusController : ControllerBase
 
     private bool TryGetUserId(out Guid userId)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        userId = _currentUser.UserId.GetValueOrDefault();
 
-        return Guid.TryParse(value, out userId) && userId != Guid.Empty;
+        return userId != Guid.Empty;
     }
 
     private ObjectResult CreateProblem(int statusCode, string type, string title, string detail) =>

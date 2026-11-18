@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Staff;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -19,11 +19,15 @@ public class StaffSlotsController : ControllerBase
     private const string ConflictType = "https://tools.ietf.org/html/rfc9110#section-15.5.10";
 
     private readonly IStaffSlotService _slots;
+    private readonly ICurrentUser _currentUser;
 
-    public StaffSlotsController(IStaffSlotService slots)
+    public StaffSlotsController(IStaffSlotService slots, ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(slots);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _slots = slots;
+        _currentUser = currentUser;
     }
 
     /// <summary>Adds a slot for a doctor of the staff member's clinic. Overlapping slots are refused.</summary>
@@ -80,8 +84,12 @@ public class StaffSlotsController : ControllerBase
         return result.IsSuccess ? NoContent() : MapFailure(result.Failure);
     }
 
-    private bool TryGetUserId(out Guid userId) =>
-        Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out userId) && userId != Guid.Empty;
+    private bool TryGetUserId(out Guid userId)
+    {
+        userId = _currentUser.UserId.GetValueOrDefault();
+
+        return userId != Guid.Empty;
+    }
 
     private IActionResult Unauthorized401() =>
         Problem(
