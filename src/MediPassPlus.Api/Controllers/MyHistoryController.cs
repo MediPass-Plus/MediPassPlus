@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Records;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -21,13 +21,18 @@ public class MyHistoryController : ControllerBase
     private const string UnauthorizedType = "https://tools.ietf.org/html/rfc9110#section-15.5.2";
 
     private readonly IRecordHistoryService _historyService;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="MyHistoryController"/> class.</summary>
     /// <param name="historyService">The record history application service.</param>
-    public MyHistoryController(IRecordHistoryService historyService)
+    /// <param name="currentUser">The authenticated caller of this request.</param>
+    public MyHistoryController(IRecordHistoryService historyService, ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(historyService);
+        ArgumentNullException.ThrowIfNull(currentUser);
+
         _historyService = historyService;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -91,9 +96,9 @@ public class MyHistoryController : ControllerBase
 
     private bool TryGetPatientUserId(out Guid patientUserId)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        patientUserId = _currentUser.UserId.GetValueOrDefault();
 
-        return Guid.TryParse(value, out patientUserId) && patientUserId != Guid.Empty;
+        return patientUserId != Guid.Empty;
     }
 
     private ObjectResult CreateProblem(int statusCode, string type, string title, string detail) =>

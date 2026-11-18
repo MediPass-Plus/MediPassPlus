@@ -175,12 +175,33 @@ three secrets — the key ring, `Jwt:SecretKey` and
 round trip, the outside-repository rule and the Production startup failure. No migration was needed.
 
 MP-54 adds the platform observability (decision record 0013). `GET /health` is anonymous and reports the `api`
-and `database` checks as a status-only JSON body (`200` when every check is healthy, `503` otherwise); the database
-check is a plain `IHealthCheck` over the existing `DbContext`, so no package was added. Every request carries an
-`X-Correlation-ID` that is validated, echoed in the response and opened as a log scope, and the API writes structured
-JSON to standard output in every environment except Development, where it uses the readable console format. The
-identifiers-only contract is in `docs/development/logging.md`. CI now runs a gitleaks scan, a Domain/Application
-coverage gate at 50% (NFR-MNT-02) and a negative control that proves a failing test fails the job.
+and `database` checks as a status-only JSON body (`200` when every check is healthy, `503` otherwise, including
+`Degraded`); the database check is a plain `IHealthCheck` over the existing `DbContext`, so no package was added.
+Every request carries an `X-Correlation-ID` that is validated, echoed in the response and opened as a log scope; the
+header is written from `Response.OnStarting` so the exception handler's `500` keeps it, and a middleware line records
+method, path without the query string, status and duration. The API writes structured JSON to standard output in every
+environment except Development, where it uses the readable console format. An unhandled failure logs its type and
+stack trace outside Development, never its message, which can carry medical text; the identifiers-only contract is in
+`docs/development/logging.md`. CI runs a gitleaks scan (the working tree, the pull request's commits, and the full
+history on a push to `main`), a Domain/Application coverage gate at 50% (NFR-MNT-02) and a negative control that
+asserts a real failing test fails the job.
+
+MP-32 adds the self-service account surface at `api/me`: `GET api/me/profile` and `PUT api/me/profile` let any
+authenticated role read and change its own name and phone number, and `POST api/me/change-password` replaces the
+password after checking the current one against the same policy as registration, then revokes every live refresh token
+of the account so a session stolen before the change cannot outlive it (FR-ACC-06, FR-ACC-07, FR-ACC-08, US-03, US-04,
+UC-03). The account is always the token's account: the body carries no id, email, role or status, so a caller can
+neither reach nor escalate another user, and the role in the response is read from Identity instead of the duplicate
+column. A changed phone number clears `PhoneNumberConfirmed`, an empty one clears the value, and a wrong current
+password answers `400` because the caller is already authenticated and the failure belongs to the request body. Every
+refusal is the shared `ProblemDetails` envelope, and both declared `400` paths are documented as such: a validation
+failure is a `ValidationProblemDetails` with an `errors` bag, an Identity refusal is a plain `ProblemDetails` with the
+reason in `detail`. The new `ICurrentUser` service
+(`Application/Identity/ICurrentUser.cs` + `Api/Identity/HttpContextCurrentUser.cs`, registered through
+`AddHttpContextAccessor`) is the single place where the `NameIdentifier` claim becomes a `Guid?`, and every controller
+now reads the caller from it instead of parsing the claim itself. `MeProfileEndpointTests` covers the four roles, an
+ignored id/email/role/status body, one user not touching another, the wrong-password and password-policy `400`s, the
+`401` matrix, and a password change ending the refresh tokens of every signed-in device. No migration was needed.
 
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
@@ -285,7 +306,9 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
   `POST api/access-grants/{grantId}/end` (Patient), `GET api/appointments/{appointmentId}/history` (Doctor),
-  `GET api/me/history` (Patient), and the patient appointment actions
+  `GET api/me/history` (Patient), the self-service profile actions
+  `GET api/me/profile` / `PUT api/me/profile` / `POST api/me/change-password` (any authenticated role), and the
+  patient appointment actions
   `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
   `PUT {appointmentId}/reschedule` (Patient). The record write endpoints derive the patient, record and diagnosis
   from the verified grant, encrypt clinical text and commit each medical row with its audit row; the history
@@ -301,7 +324,12 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   visit's active grant after the 15-minute grace, capped by the two-hour limit, and the patient end takes effect
   immediately. The access-state endpoint derives the request/grant status and remaining seconds from the stored
   timestamps for the appointment's doctor or patient. The booking actions stay inside the authenticated patient's
-  scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. Swagger UI adds a topbar link to
+  scope and return `400`/`404`/`409` `ProblemDetails` for every refused rule. The profile actions resolve the
+  account from the token, change only the name and phone number, and answer `400` for a wrong current password or a
+  body that breaks the password policy; a successful password change then revokes every live refresh token of the
+  account, so the caller's other sessions are refused at their next refresh. The change is also limited to five
+  attempts per 15 minutes per account (`ChangePassword` policy, configurable) and answers `429` with `Retry-After`
+  beyond it. Swagger UI adds a topbar link to
   `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
   report upload/download endpoint and no audit endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click

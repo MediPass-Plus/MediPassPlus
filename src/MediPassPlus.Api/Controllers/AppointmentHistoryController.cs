@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using MediPassPlus.Api.Authorization;
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Records;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -25,19 +25,24 @@ public class AppointmentHistoryController : ControllerBase
 
     private readonly IRecordHistoryService _historyService;
     private readonly ILogger<AppointmentHistoryController> _logger;
+    private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="AppointmentHistoryController"/> class.</summary>
     /// <param name="historyService">The record history application service.</param>
     /// <param name="logger">Records wiring mistakes with identifiers only.</param>
+    /// <param name="currentUser">The authenticated caller of this request.</param>
     public AppointmentHistoryController(
         IRecordHistoryService historyService,
-        ILogger<AppointmentHistoryController> logger)
+        ILogger<AppointmentHistoryController> logger,
+        ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(currentUser);
 
         _historyService = historyService;
         _logger = logger;
+        _currentUser = currentUser;
     }
 
     /// <summary>
@@ -130,9 +135,9 @@ public class AppointmentHistoryController : ControllerBase
 
     private bool TryGetUserId(out Guid userId)
     {
-        var value = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        userId = _currentUser.UserId.GetValueOrDefault();
 
-        return Guid.TryParse(value, out userId) && userId != Guid.Empty;
+        return userId != Guid.Empty;
     }
 
     private ObjectResult CreateProblem(int statusCode, string type, string title, string detail) =>

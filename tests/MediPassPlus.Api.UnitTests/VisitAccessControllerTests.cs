@@ -531,7 +531,8 @@ public class VisitAccessControllerTests
             service,
             generationService ?? new FakeAccessCodeGenerationService(),
             verificationService ?? new FakeAccessCodeVerificationService(),
-            accessStateService ?? new FakeAccessStateService())
+            accessStateService ?? new FakeAccessStateService(),
+            new FakeCurrentUser(authenticated ? DoctorUserId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };

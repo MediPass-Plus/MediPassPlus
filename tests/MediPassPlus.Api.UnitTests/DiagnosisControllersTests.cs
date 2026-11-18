@@ -174,7 +174,9 @@ public class DiagnosisControllersTests
     {
         var context = CreateHttpContext(authenticated);
 
-        return new DiagnosesController(service)
+        return new DiagnosesController(
+            service,
+            new FakeCurrentUser(authenticated ? DoctorUserId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
@@ -186,7 +188,9 @@ public class DiagnosisControllersTests
     {
         var context = CreateHttpContext(authenticated);
 
-        return new PrescriptionsController(service)
+        return new PrescriptionsController(
+            service,
+            new FakeCurrentUser(authenticated ? DoctorUserId : null))
         {
             ControllerContext = new ControllerContext { HttpContext = context }
         };
