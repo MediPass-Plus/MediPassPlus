@@ -49,6 +49,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(TimeProvider.System);
         services.AddScoped<IAuditWriter, AuditWriter>();
 
+        // The patient's own audit list, newest first and paged; reading it is not audited (FR-PRV-03, ADR-0004).
+        services.AddScoped<IAuditLogReader, AuditLogReader>();
+        services.AddScoped<IAuditLogQueryService, AuditLogQueryService>();
+
         // Data Protection key ring outside the repository and the only diagnosis-text encryptor (FR-PRV-04,
         // NFR-SEC-05, ADR-0007 decision 5).
         services.AddDiagnosisProtection(configuration, environment);
