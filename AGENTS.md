@@ -159,8 +159,12 @@ single use, a replay ending every live session, idempotent logout and its `204`,
 thirty-day session cap, revocation on deactivation and on password reset, and `no-store` on both token responses.
 The MP-38 tests add the diagnosis/prescription write authorization, appointment-state, encryption and audit matrix;
 the MP-39 tests add the doctor history grant/expiry/ended/wrong-doctor matrix, the patient self-read, the
-forged-patient-id case, paging boundaries, real-protector decryption and both audit proofs. There is still no report
-upload/download endpoint and no audit endpoint, and the frontend is the untouched Angular welcome page.
+forged-patient-id case, paging boundaries, real-protector decryption and both audit proofs. The MP-42 tests add the
+patient audit list (`GET api/me/audit`): own rows only by the affected patient, newest first, default 20 and at most
+50 with `400` for invalid paging, identifiers/action/entity/time/IP only, no self-audit on the list read, exactly one
+row per medical read/write, and an immutability proof against SQL Server (FR-PRV-02, FR-PRV-03, NFR-PRI-03,
+NFR-PRI-05). There is still no report upload/download endpoint, and the frontend is the untouched Angular welcome
+page.
 Everything the README or the planning document describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files and `package.json` over prose.
 
@@ -306,7 +310,7 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
   `POST api/access-grants/{grantId}/end` (Patient), `GET api/appointments/{appointmentId}/history` (Doctor),
-  `GET api/me/history` (Patient), the self-service profile actions
+  `GET api/me/history` (Patient), `GET api/me/audit` (Patient), the self-service profile actions
   `GET api/me/profile` / `PUT api/me/profile` / `POST api/me/change-password` (any authenticated role), and the
   patient appointment actions
   `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
@@ -329,9 +333,11 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   body that breaks the password policy; a successful password change then revokes every live refresh token of the
   account, so the caller's other sessions are refused at their next refresh. The change is also limited to five
   attempts per 15 minutes per account (`ChangePassword` policy, configurable) and answers `429` with `Retry-After`
-  beyond it. Swagger UI adds a topbar link to
+  beyond it. The patient audit list returns the authenticated patient's own rows newest first, paged with the shared
+  default of 20 and maximum of 50, carrying identifiers, action, entity, time and IP only, and reading the list is not
+  itself audited (FR-PRV-02, FR-PRV-03, ADR-0004). Swagger UI adds a topbar link to
   `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
-  report upload/download endpoint and no audit endpoint.
+  report upload/download endpoint.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for
