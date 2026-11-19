@@ -16,6 +16,7 @@ using MediPassPlus.Infrastructure.Email;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Audit;
 using MediPassPlus.Infrastructure.Privacy;
+using MediPassPlus.Infrastructure.Records;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -134,6 +135,15 @@ public static class ServiceCollectionExtensions
         // (FR-REC-02, FR-REC-07, FR-PRV-01, FR-PRV-02, NFR-PRF-04, ADR-0004, ADR-0005).
         services.AddScoped<IRecordHistoryStore, RecordHistoryStore>();
         services.AddScoped<IRecordHistoryService, RecordHistoryService>();
+
+        // Report files: private storage under Reports:Storage:RootPath, which startup refuses to leave inside the
+        // repository or wwwroot. Names are generated and the type/size cap is the validator's (FR-REC-05, FR-REC-06,
+        // FR-PRV-05, NFR-SEC-09, ADR-0015 decision 6).
+        services.AddOptions<ReportStorageOptions>()
+            .Bind(configuration.GetSection(ReportStorageOptions.SectionName))
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<ReportStorageOptions>, ReportStorageOptionsValidator>();
+        services.AddScoped<IReportStorage, LocalReportStorage>();
 
         // Add other infrastructure services here as needed
 

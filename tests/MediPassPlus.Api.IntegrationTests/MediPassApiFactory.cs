@@ -64,6 +64,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     private readonly string _connectionString;
     private readonly string _databaseName;
     private readonly string _dataProtectionKeysPath;
+    private readonly string _reportStoragePath;
     private readonly string _environment;
     private readonly Action<IServiceCollection>? _configureTestServices;
     private readonly Dictionary<string, string?> _previousEnvironment = new(StringComparer.Ordinal);
@@ -123,6 +124,13 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dataProtectionKeysPath);
 
+        _reportStoragePath = Path.Combine(
+            Path.GetTempPath(),
+            "MediPassPlus.IntegrationTests",
+            "report-files",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_reportStoragePath);
+
         // Program reads Jwt and ConnectionStrings before builder.Build(), so the deferred
         // WebApplicationFactory configuration would arrive too late. Environment variables are
         // part of WebApplication.CreateBuilder's configuration from the start.
@@ -136,6 +144,9 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         SetEnvironmentVariable("OpenApi__ExposeOutsideDevelopment", exposeApiReference ? "true" : "false");
         // Production refuses to start without an absolute key-ring path outside the repository (ADR-0007).
         SetEnvironmentVariable("DataProtection__KeysPath", _dataProtectionKeysPath);
+        // The same rule applies to uploaded report files: absolute, outside the repository and outside wwwroot
+        // (ADR-0015 decision 6).
+        SetEnvironmentVariable("Reports__Storage__RootPath", _reportStoragePath);
         SetEnvironmentVariable("Logging__LogLevel__Microsoft.EntityFrameworkCore", "Warning");
 
         ApplyMigrations();
@@ -828,6 +839,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         DropDatabase();
         RestoreEnvironmentVariables();
         DeleteDataProtectionKeys();
+        DeleteReportStorage();
     }
 
     /// <summary>Disposes the host and releases the test database (ADR-0006).</summary>
@@ -973,6 +985,25 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         catch (UnauthorizedAccessException)
         {
             // Same: a read-only temp directory must not turn a green test run red during cleanup.
+        }
+    }
+
+    private void DeleteReportStorage()
+    {
+        try
+        {
+            if (Directory.Exists(_reportStoragePath))
+            {
+                Directory.Delete(_reportStoragePath, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+            // Ephemeral and under the temp path: a lingering file handle must not fail the run.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Same: cleanup never decides the colour of a test run.
         }
     }
 }
