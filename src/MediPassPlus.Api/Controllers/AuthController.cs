@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 
 namespace MediPassPlus.Api.Controllers;
 
@@ -29,8 +30,9 @@ public class AuthController : ControllerBase
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
      private readonly IEmailSender _emailSender;
     private readonly IConfiguration _configuration;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, IAuthTokenService authTokens, RoleManager<IdentityRole<Guid>> roleManager, MediPassDbContext context, IEmailSender emailSender, IConfiguration configuration)
+    public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, IAuthTokenService authTokens, RoleManager<IdentityRole<Guid>> roleManager, MediPassDbContext context, IEmailSender emailSender, IConfiguration configuration, ILogger<AuthController> logger)
     {
         _userManager = userManager;
         _signInManager = signInManager;
@@ -40,6 +42,7 @@ public class AuthController : ControllerBase
         _context = context;
         _emailSender = emailSender;
         _configuration = configuration;
+        _logger = logger;
     }
 
     /// <summary>
@@ -273,6 +276,10 @@ public class AuthController : ControllerBase
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
 
+        // The same synthetic identifier is logged on every path, so the log cannot confirm which addresses are
+        // registered. The correlation id the pipeline already opened as a scope is the only identifier (FR-PRV-08).
+        _logger.LogInformation("Password reset requested.");
+
         // A deactivated account must not be able to take itself back over.
         if (user is not null && user.IsActive)
         {
@@ -299,7 +306,12 @@ public class AuthController : ControllerBase
     /// <param name="request">The email, the reset token and the new password.</param>
     /// <returns>A message confirming the reset.</returns>
     /// <response code="200">The password was reset and every live session was revoked.</response>
-    /// <response code="400">The token is invalid or expired, or the new password was rejected.</response>
+    /// <response code="400">
+    /// The request is refused and the body is a <see cref="ProblemDetails"/>. A body that breaks a validation rule is a
+    /// <see cref="ValidationProblemDetails"/> whose <c>errors</c> bag names the offending member. An unknown email, an
+    /// invalid, expired or already-used token and every Identity refusal share one identical body with no <c>errors</c>
+    /// bag, so the endpoint cannot be used to discover which addresses are registered.
+    /// </response>
     [HttpPost("reset-password")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -318,8 +330,12 @@ public class AuthController : ControllerBase
 
         if (!result.Succeeded)
         {
-            return InvalidResetToken(result.Errors.Select(error => error.Description).ToArray());
+            return InvalidResetToken();
         }
+
+        // Ownership of the mailbox is proven at this point, so the outcome is worth a line; the correlation id of
+        // this request is the only identifier it carries (FR-PRV-08).
+        _logger.LogInformation("Password reset completed.");
 
         // Proving control of the mailbox is enough to clear a lockout: otherwise the owner would still be
         // refused for the rest of the window with a password they have just changed (FR-ACC-05).
@@ -382,7 +398,13 @@ public class AuthController : ControllerBase
         return Unauthorized(problem);
     }
 
-    private ObjectResult InvalidResetToken(string[]? details = null)
+    /// <summary>
+    /// Builds the single <c>400</c> answer used when a reset cannot be completed: an unknown email, an invalid, expired
+    /// or already-used token, or an Identity refusal. The body must stay identical in every case, so the endpoint
+    /// cannot be used to discover which addresses are registered (FR-ACC-11, NFR-SEC-06).
+    /// </summary>
+    /// <returns>The <c>400</c> result.</returns>
+    private ObjectResult InvalidResetToken()
     {
         var problem = new ProblemDetails
         {
@@ -390,11 +412,6 @@ public class AuthController : ControllerBase
             Title = "The reset link is invalid or has expired.",
             Detail = "Request a new password reset email and try again."
         };
-
-        if (details is { Length: > 0 })
-        {
-            problem.Extensions["errors"] = details;
-        }
 
         problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
 

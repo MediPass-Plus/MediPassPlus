@@ -203,6 +203,23 @@ now reads the caller from it instead of parsing the claim itself. `MeProfileEndp
 ignored id/email/role/status body, one user not touching another, the wrong-password and password-policy `400`s, the
 `401` matrix, and a password change ending the refresh tokens of every signed-in device. No migration was needed.
 
+A5 closes the password-reset leaks (FR-ACC-11, FR-PRV-08, NFR-SEC-06). `POST api/Auth/forgot-password` answers the same
+`202` acknowledgement whether the address exists, is deactivated or is unknown, and the token travels by email only:
+no endpoint returns it in any environment, so there is no diagnostic mode that could be switched on in a deployment.
+`POST api/Auth/reset-password` answers one identical `400` `ProblemDetails` for an unknown email, an invalid, expired or
+already-used token and every Identity refusal. The body carries no `errors` bag, which was the enumeration oracle: an
+unknown address answered without one while a known address with a bad token answered with `"Invalid token."`. A body
+that breaks a validation rule still answers the shared `ValidationProblemDetails` with its `errors` bag before any token
+is spent, so a weak password never consumes the link. Both endpoints write one parameterless structured line —
+`Password reset requested.` on every path of the start request and `Password reset completed.` only once the password
+changed — so the only identifier in the log is the correlation id the pipeline already opened as a scope, and the
+start line cannot confirm which addresses are registered. The reset endpoints are still not rate-limited; that stays
+with P5. The new `PasswordResetEndpointTests` cover the emailed token, the missing, invalid, reused and weak-password
+cases, the identical body for a known and an unknown address, and a log capture that proves neither the token nor the
+address reaches a log line and that the correlation id is the only identifier there; `PasswordResetProductionResponseTests`
+runs the production host and proves the acknowledgement carries no token, no reset link and no address. No migration
+was needed.
+
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
 ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed; the platform
