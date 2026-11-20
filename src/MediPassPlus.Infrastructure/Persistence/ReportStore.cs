@@ -32,6 +32,25 @@ public sealed class ReportStore : IReportStore
             .SingleOrDefaultAsync(cancellationToken);
 
     /// <inheritdoc />
+    public Task<ReportDownloadScope?> FindReportForDownloadAsync(
+        Guid reportId,
+        CancellationToken cancellationToken = default) =>
+        _context.Reports
+            .AsNoTracking()
+            .Where(report => report.Id == reportId)
+            .Join(
+                _context.MedicalRecords.AsNoTracking(),
+                report => report.MedicalRecordId,
+                record => record.Id,
+                (report, record) => new ReportDownloadScope(
+                    report.Id,
+                    report.MedicalRecordId,
+                    record.PatientId,
+                    report.StoredFileName,
+                    report.ContentType))
+            .SingleOrDefaultAsync(cancellationToken);
+
+    /// <inheritdoc />
     public void Add(Report report)
     {
         ArgumentNullException.ThrowIfNull(report);

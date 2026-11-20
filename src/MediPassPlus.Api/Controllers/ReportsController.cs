@@ -10,10 +10,10 @@ using Microsoft.AspNetCore.Mvc;
 namespace MediPassPlus.Api.Controllers;
 
 /// <summary>
-/// The report upload endpoint (FR-REC-05, UC-16). A patient uploads to their own record and a doctor to a record
-/// covered by an active grant; the record owner and the grant are resolved on the server, and a caller can never
-/// supply a patient id. Every refusal for a record the caller may not use answers the same <c>404</c>, so the response
-/// never confirms that another patient's record exists (NFR-PRI-01, ADR-0015).
+/// Report upload and download endpoints (FR-REC-05, FR-REC-08, UC-16). A patient uses their own record/report and a
+/// doctor acts only while holding an active grant for the record owner; the owner and the grant are resolved on the
+/// server, and a caller can never supply a patient id. Every refusal for a record or report the caller may not use
+/// answers the same <c>404</c>, so the response never confirms existence (NFR-PRI-01, FR-PRV-05, ADR-0015).
 /// </summary>
 [ApiController]
 [Route("api/records")]
@@ -29,17 +29,24 @@ public sealed class ReportsController : ControllerBase
     private const string NotFoundDetail = "No record is available to this caller.";
 
     private readonly IReportUploadService _uploadService;
+    private readonly IReportDownloadService _downloadService;
     private readonly ICurrentUser _currentUser;
 
     /// <summary>Initializes a new instance of the <see cref="ReportsController"/> class.</summary>
     /// <param name="uploadService">The upload application service.</param>
+    /// <param name="downloadService">The download application service.</param>
     /// <param name="currentUser">The authenticated caller of this request.</param>
-    public ReportsController(IReportUploadService uploadService, ICurrentUser currentUser)
+    public ReportsController(
+        IReportUploadService uploadService,
+        IReportDownloadService downloadService,
+        ICurrentUser currentUser)
     {
         ArgumentNullException.ThrowIfNull(uploadService);
+        ArgumentNullException.ThrowIfNull(downloadService);
         ArgumentNullException.ThrowIfNull(currentUser);
 
         _uploadService = uploadService;
+        _downloadService = downloadService;
         _currentUser = currentUser;
     }
 
@@ -160,6 +167,75 @@ public sealed class ReportsController : ControllerBase
         userId = _currentUser.UserId.GetValueOrDefault();
 
         return userId != Guid.Empty;
+    }
+
+    /// <summary>
+    /// Streams a stored report file (FR-REC-08, FR-PRV-05). A patient may download their own report and a doctor may
+    /// open a report only while holding an active grant for the patient who owns the record. The stored file name and
+    /// path are never exposed, and every successful download writes a <c>ReportDownloaded</c> audit row (ADR-0004,
+    /// ADR-0015).
+    /// </summary>
+    /// <param name="reportId">The report identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The report file stream.</returns>
+    /// <response code="200">The file stream, with the correct content type and a safe content disposition.</response>
+    /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
+    /// <response code="403">The caller is not a doctor or a patient.</response>
+    /// <response code="404">
+    /// No report is available to this caller: it does not exist, belongs to another patient, the caller holds no active
+    /// grant for its owner, or its file cannot be read. The cases are deliberately indistinguishable.
+    /// </response>
+    [HttpGet("~/api/reports/{reportId:guid}")]
+    [Produces("application/pdf", "image/jpeg", "image/png")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Download(Guid reportId, CancellationToken cancellationToken)
+    {
+        if (!TryGetUserId(out var callerUserId))
+        {
+            return CreateProblem(
+                StatusCodes.Status401Unauthorized,
+                UnauthorizedType,
+                "Authentication required.",
+                "The access token does not identify a user.");
+        }
+
+        // The role comes from the authenticated identity, never from the request (FR-ACS-06).
+        var callerRole = User.IsInRole("Doctor")
+            ? ReportUploaderRole.Doctor
+            : ReportUploaderRole.Patient;
+
+        using var result = await _downloadService.DownloadAsync(
+            reportId,
+            callerUserId,
+            callerRole,
+            HttpContext.GetAuditIpAddress(),
+            cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return result.Failure switch
+            {
+                ReportDownloadFailure.NotFound => CreateProblem(
+                    StatusCodes.Status404NotFound,
+                    NotFoundType,
+                    NotFoundTitle,
+                    NotFoundDetail),
+                _ => throw new InvalidOperationException($"Unexpected report download failure: {result.Failure}.")
+            };
+        }
+
+        var contentType = result.ContentType!;
+        var stream = result.DetachContent();
+        var extension = ReportFileValidator.ExtensionFor(contentType);
+
+        // Medical files are personal data and must not be cached by a browser or a proxy.
+        Response.Headers["Cache-Control"] = "no-store";
+
+        // The download name is generic and derived from the validated type; the stored name and path are never exposed.
+        return File(stream, contentType, "report" + extension);
     }
 
     private ObjectResult CreateProblem(int statusCode, string type, string title, string detail) =>
