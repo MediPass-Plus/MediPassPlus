@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using MediPassPlus.Infrastructure.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
@@ -50,6 +51,40 @@ internal static class JwtExtensions
                     ValidateLifetime = true,
                     ClockSkew = TimeSpan.Zero
                 };
+                options.Events = new JwtBearerEvents
+{
+    OnChallenge = async context =>
+    {
+        context.HandleResponse();
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.ContentType = "application/problem+json";
+        await context.Response.WriteAsJsonAsync(
+            new
+            {
+                type = "https://tools.ietf.org/html/rfc9110#section-15.5.2",
+                title = "Authentication required.",
+                status = StatusCodes.Status401Unauthorized,
+                detail = "A valid access token is required."
+            },
+            options: null,
+            contentType: "application/problem+json");
+    },
+    OnForbidden = async context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/problem+json";
+        await context.Response.WriteAsJsonAsync(
+            new
+            {
+                type = "https://tools.ietf.org/html/rfc9110#section-15.5.4",
+                title = "You cannot access this resource.",
+                status = StatusCodes.Status403Forbidden,
+                detail = "Your role is not allowed to use this endpoint."
+            },
+            options: null,
+            contentType: "application/problem+json");
+    }
+};
             });
 
         services.AddAuthorization();

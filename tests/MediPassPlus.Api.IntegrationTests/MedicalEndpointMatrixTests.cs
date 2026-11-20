@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 
 namespace MediPassPlus.Api.IntegrationTests;
@@ -35,6 +36,7 @@ public sealed class MedicalEndpointMatrixTests : IClassFixture<MediPassApiFactor
         ("GET", "/api/appointments/1/access-state", null, $"{DefaultRoles.Doctor},{DefaultRoles.Patient}"),
         ("POST", "/api/appointments/1/complete", null, DefaultRoles.Doctor),
         ("POST", "/api/access/scan", """{"token":"x"}""", DefaultRoles.Patient),
+        ("POST", "/api/access-requests/scan-image", null, DefaultRoles.Patient),
         ("POST", "/api/access-requests/token/approve", """{"token":"x"}""", DefaultRoles.Patient),
         ("POST", "/api/access-requests/token/reject", """{"token":"x"}""", DefaultRoles.Patient),
         ("POST", $"/api/access-requests/{AnyGuid}/approve", null, DefaultRoles.Patient),
@@ -66,7 +68,7 @@ public sealed class MedicalEndpointMatrixTests : IClassFixture<MediPassApiFactor
 
         using var response = await SendAsync(client, method, path, body);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        await AssertProblemBodyAsync(response, HttpStatusCode.Unauthorized);
     }
 
     [Theory]
@@ -78,7 +80,29 @@ public sealed class MedicalEndpointMatrixTests : IClassFixture<MediPassApiFactor
 
         using var response = await SendAsync(client, method, path, body);
 
-        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        await AssertProblemBodyAsync(response, HttpStatusCode.Forbidden);
+    }
+
+    private static async Task AssertProblemBodyAsync(HttpResponseMessage response, HttpStatusCode expected)
+    {
+        Assert.Equal(expected, response.StatusCode);
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+
+        var body = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(body);
+        Assert.Equal((int)expected, doc.RootElement.GetProperty("status").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("title").GetString()));
+
+        foreach (var marker in new[]
+        {
+            MediPassApiFactory.HistoryDiagnosisPrefix,
+            MediPassApiFactory.HistoryMedicinePrefix,
+            MediPassApiFactory.HistoryDosagePrefix,
+            MediPassApiFactory.HistoryNotesPrefix
+        })
+        {
+            Assert.DoesNotContain(marker, body, StringComparison.Ordinal);
+        }
     }
 
     private static Task<HttpResponseMessage> SendAsync(HttpClient client, string method, string path, string? body)
