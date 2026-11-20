@@ -54,14 +54,16 @@ caller who has already passed the grant check is the one who learns the record i
    are `[Authorize(Roles = "Doctor,Patient")]`; clinic staff and admins never reach them (FR-PRV-06).
 
 2. **A doctor's record access is authorized by a patient-scoped grant re-check.** `IAccessGrantChecker` gains a
-   second method — `RequireActiveGrantForPatientAsync(doctorUserId, patientUserId, ct)` — that resolves the doctor
-   profile from the authenticated user account (as `VisitAccessScopeService` already does), loads that doctor's grants
-   for that patient **from the database on that request**, and succeeds when at least one of them is active under
-   ADR-0011's lifecycle rules (`now < EndedAtUtc ?? ExpiresAtUtc`, never past `GrantedAtUtc + 2 hours`, terminal
-   states never reused by FR-ACS-11). It returns the grant it used, so the audit row can carry its id. The stored
-   triple is re-verified exactly as the appointment-scoped method does: a grant whose `PatientId` or `DoctorId` does
-   not match the resolved scope authorizes nothing. The store needs one additional read — grants by
-   `(DoctorId, PatientId)` — and the status rules stay in the checker, so there is no schema change and no migration.
+   second method - `RequireActiveGrantForPatientAsync(doctorUserId, patientUserId, ct)` - that loads that doctor's
+   grants for that patient **from the database on that request** and succeeds when at least one of them is active
+   under ADR-0011's lifecycle rules (`now < EndedAtUtc ?? ExpiresAtUtc`, never past `GrantedAtUtc + 2 hours`,
+   terminal states never reused by FR-ACS-11). The doctor binding lives in the store's read: `AccessGrant` stores a
+   `DoctorId` profile, and the lookup joins `Doctors` on `UserId`, so a caller cannot ask for another doctor's
+   grants without resolving a profile first. The checker re-verifies the patient on every candidate row, so a grant
+   whose `PatientId` does not match the record owner authorizes nothing (defence in depth, NFR-PRI-01). It returns
+   the grant it used, so the audit row can carry its id. The store needs one additional read - grants by
+   `(doctor user account, patient)` - and the status rules stay in the checker, so there is no schema change and no
+   migration.
 
 3. **The record id is a capability, not a lookup key.** There is no route that lists records, no route that takes a
    patient id, and no way to search by patient (FR-ACS-10's first sentence). The only way to obtain a record id is a

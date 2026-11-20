@@ -30,4 +30,23 @@ public sealed class AccessGrantStore : IAccessGrantStore
                     && grant.DoctorId == doctorId
                     && grant.PatientId == patientId,
                 cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<AccessGrant>> FindGrantsForDoctorUserAsync(
+        Guid doctorUserId,
+        Guid patientUserId,
+        CancellationToken cancellationToken)
+    {
+        // The join is the doctor binding: a grant stores a doctor profile, and that profile belongs to exactly one user
+        // account, so a caller cannot ask for grants that belong to another doctor (ADR-0015 decision 2).
+        var grants = await _context.AccessGrants
+            .AsNoTracking()
+            .Where(grant => grant.PatientId == patientUserId
+                && _context.Doctors.Any(
+                    doctor => doctor.Id == grant.DoctorId && doctor.UserId == doctorUserId))
+            .OrderByDescending(grant => grant.GrantedAtUtc)
+            .ToListAsync(cancellationToken);
+
+        return grants;
+    }
 }

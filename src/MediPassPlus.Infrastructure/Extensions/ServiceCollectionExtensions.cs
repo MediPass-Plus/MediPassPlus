@@ -145,6 +145,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IValidateOptions<ReportStorageOptions>, ReportStorageOptionsValidator>();
         services.AddScoped<IReportStorage, LocalReportStorage>();
 
+        // Report upload: one service for both callers, a doctor resolved against an active grant for the patient, a
+        // patient against the owner of the record, and the row plus its audit entry in one unit of work (FR-REC-05,
+        // FR-REC-06, FR-PRV-02, ADR-0004, ADR-0015).
+        services.AddScoped<IReportStore, ReportStore>();
+        services.AddScoped<IReportUploadService, ReportUploadService>();
+
         // Add other infrastructure services here as needed
 
         // Admin management: clinics (MP-29).

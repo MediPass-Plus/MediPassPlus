@@ -988,6 +988,12 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         }
     }
 
+    /// <summary>
+    /// The private storage root this factory's host writes report files to. A test reads it to prove that an accepted
+    /// upload landed and that a refused one left no bytes behind.
+    /// </summary>
+    public string ReportStorageRootPath => _reportStoragePath;
+
     private void DeleteReportStorage()
     {
         try

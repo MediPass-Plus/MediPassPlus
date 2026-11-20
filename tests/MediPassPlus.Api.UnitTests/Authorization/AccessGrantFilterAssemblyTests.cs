@@ -58,5 +58,11 @@ public class AccessGrantFilterAssemblyTests
             int appointmentId,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(AccessGrantCheckResult.Denied(AccessGrantCheckFailure.GrantNotFound));
+
+        public Task<AccessGrantCheckResult> RequireActiveGrantForPatientAsync(
+            Guid doctorUserId,
+            Guid patientUserId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(AccessGrantCheckResult.Denied(AccessGrantCheckFailure.GrantNotFound));
     }
 }
