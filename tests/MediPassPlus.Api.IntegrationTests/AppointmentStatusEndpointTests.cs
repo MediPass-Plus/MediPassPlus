@@ -91,10 +91,13 @@ public sealed class AppointmentStatusEndpointTests : IClassFixture<MediPassApiFa
         Assert.Equal(StatusCodes.Status400BadRequest, problem.Status);
     }
 
-    [Fact]
-    public async Task CheckIn_WhenTheAppointmentIsNotBooked_ReturnsBadRequest()
+    [Theory]
+    [InlineData(AppointmentStatus.CheckedIn)]
+    [InlineData(AppointmentStatus.Cancelled)]
+    [InlineData(AppointmentStatus.Completed)]
+    public async Task CheckIn_WhenTheAppointmentIsNotBooked_ReturnsBadRequest(AppointmentStatus status)
     {
-        var scenario = await _factory.CreateAppointmentStatusScenarioAsync(AppointmentStatus.CheckedIn);
+        var scenario = await _factory.CreateAppointmentStatusScenarioAsync(status);
         using var client = _factory.CreateAuthenticatedClient(scenario.StaffUser);
 
         using var response = await client.PostAsync(
