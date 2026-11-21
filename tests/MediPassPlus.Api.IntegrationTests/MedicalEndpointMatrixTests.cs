@@ -31,6 +31,7 @@ public sealed class MedicalEndpointMatrixTests : IClassFixture<MediPassApiFactor
         ("GET", "/api/appointments/1/history", null, DefaultRoles.Doctor),
         ("GET", "/api/me/history", null, DefaultRoles.Patient),
         ("POST", $"/api/records/{AnyGuid}/reports", null, $"{DefaultRoles.Doctor},{DefaultRoles.Patient}"),
+        ("GET", $"/api/reports/{AnyGuid}", null, $"{DefaultRoles.Doctor},{DefaultRoles.Patient}"),
         ("POST", "/api/appointments/1/start-visit", null, DefaultRoles.Doctor),
         ("POST", "/api/appointments/1/access-code", null, DefaultRoles.Patient),
         ("POST", "/api/appointments/1/verify-code", """{"code":"123456"}""", DefaultRoles.Doctor),

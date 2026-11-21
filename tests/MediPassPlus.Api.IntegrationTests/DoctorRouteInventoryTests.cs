@@ -8,19 +8,20 @@ namespace MediPassPlus.Api.IntegrationTests;
 /// <summary>
 /// MP-55 / FR-ACS-10: the route inventory exposes no patient list or patient search to a Doctor. Every route a
 /// Doctor can call is scoped by an appointment or a diagnosis id (verified by the grant filter), is the doctor's own
-/// schedule, or is the one record-scoped report upload accepted by ADR-0015. A new route that breaks this rule fails
-/// here.
+/// schedule, or is one of the two record-scoped report routes accepted by ADR-0015 (MP-47 upload, MP-48 download). A
+/// new route that breaks this rule fails here.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
 public sealed class DoctorRouteInventoryTests : IClassFixture<MediPassApiFactory>
 {
     // ADR-0015 decision 9: the record id is a capability disclosed only by an appointment-scoped response, and the
-    // upload re-checks a patient-scoped grant on every request. A third record-scoped route requires an ADR amendment
-    // before it may be added here.
+    // upload and download both re-check a patient-scoped grant on every request. A third record-scoped route requires
+    // an ADR amendment before it may be added here.
     private static readonly string[] AllowedRoutesOutsideAppointmentScope =
     [
         "api/doctors/me/schedule",
-        "api/records/{recordId:guid}/reports"
+        "api/records/{recordId:guid}/reports",
+        "api/reports/{reportId:guid}"
     ];
 
     private readonly MediPassApiFactory _factory;
