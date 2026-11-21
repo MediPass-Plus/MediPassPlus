@@ -226,13 +226,14 @@ was needed.
 
 MP-45 hardens booking with the HTTP edge-case matrix (FR-BKG-04..09, NFR-SEC-06, NFR-REL-03). The negative tests cover
 a past slot, an inactive doctor and an inactive patient, a slot of another doctor, a concurrent double booking,
-cancelling an unknown appointment and cancelling as an inactive patient (`400`), while cancelling the appointment of a
-deactivated doctor still answers `200` and frees the slot because FR-BKG-04 only requires the appointment not to have
-started. Rescheduling is refused for a past target slot, an unknown slot or appointment, an inactive doctor or patient,
-and once the current slot has started; two patients rescheduling onto the same slot produce one `200` and one `409`;
-and a cancel racing a reschedule always ends in one of the two consistent states (cancelled with both slots free, or
-booked on the target slot with only the source slot free). Check-in is refused for `CheckedIn`, `Cancelled` and
-`Completed`, and the staff booking route is proved to inherit the same past-slot and inactive-patient refusals from
+cancelling an unknown appointment (`404`) and cancelling as an inactive patient (`400`), while cancelling the
+appointment of a deactivated doctor still answers `200` and frees the slot because FR-BKG-04 only requires the
+appointment not to have started. Rescheduling is refused for a past target slot, an unknown slot or appointment, an
+inactive doctor or patient, and once the current slot has started; two patients rescheduling onto the same slot produce
+one `200` and one `409`; and a cancel racing a reschedule always ends in one of the two consistent states, with the
+final state matched against which request won (cancelled with both slots free, or booked on the target slot with only
+the source slot free). Check-in is refused for every non-`Booked` state (`CheckedIn`, `InVisit`, `Cancelled`,
+`Completed`), and the staff booking route is proved to inherit the same past-slot and inactive-patient refusals from
 `IBookingService`. No booking rule lives in a controller — the patient and staff controllers only map `BookingFailure`
 to `ProblemDetails` — so no production change and no migration were needed.
 

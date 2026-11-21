@@ -93,6 +93,7 @@ public sealed class AppointmentStatusEndpointTests : IClassFixture<MediPassApiFa
 
     [Theory]
     [InlineData(AppointmentStatus.CheckedIn)]
+    [InlineData(AppointmentStatus.InVisit)]
     [InlineData(AppointmentStatus.Cancelled)]
     [InlineData(AppointmentStatus.Completed)]
     public async Task CheckIn_WhenTheAppointmentIsNotBooked_ReturnsBadRequest(AppointmentStatus status)
@@ -105,6 +106,16 @@ public sealed class AppointmentStatusEndpointTests : IClassFixture<MediPassApiFa
             content: null);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+
+        var stored = await db.Appointments.AsNoTracking()
+            .SingleAsync(appointment => appointment.Id == scenario.Appointment.Id);
+        Assert.Equal(status, stored.Status);
+        Assert.Null(stored.CheckedInAtUtc);
+        Assert.Null(stored.InVisitAtUtc);
+        Assert.Null(stored.CompletedAtUtc);
+        Assert.Null(stored.CancelledAtUtc);
     }
 
     [Fact]
@@ -211,6 +222,13 @@ public sealed class AppointmentStatusEndpointTests : IClassFixture<MediPassApiFa
             content: null);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+
+        var stored = await db.Appointments.AsNoTracking()
+            .SingleAsync(appointment => appointment.Id == scenario.Appointment.Id);
+        Assert.Equal(status, stored.Status);
+        Assert.Null(stored.CompletedAtUtc);
     }
 
     [Fact]

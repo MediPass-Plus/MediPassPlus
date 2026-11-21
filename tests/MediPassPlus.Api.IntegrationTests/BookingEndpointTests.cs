@@ -513,6 +513,22 @@ public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
     }
 
     [Fact]
+    public async Task Reschedule_InvalidBody_ReturnsValidationProblem()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = 0 });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.NotEmpty(problem.Errors);
+    }
+
+    [Fact]
     public async Task Reschedule_ToAnOccupiedSlot_ReturnsConflict()
     {
         var scenario = await _factory.CreateBookingScenarioAsync();
@@ -770,14 +786,20 @@ public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
 
         try
         {
-            // The two requests can be serialized either way or truly race; at least one must succeed and every
-            // answer must be one of the documented refusals.
-            Assert.Contains(HttpStatusCode.OK, responses.Select(response => response.StatusCode));
-            Assert.All(
-                responses.Select(response => response.StatusCode),
-                status => Assert.Contains(
-                    status,
-                    new[] { HttpStatusCode.OK, HttpStatusCode.BadRequest, HttpStatusCode.Conflict }));
+            // Task.WhenAll preserves the input order: [0] is the cancel and [1] is the reschedule.
+            var cancelStatus = responses[0].StatusCode;
+            var rescheduleStatus = responses[1].StatusCode;
+
+            // The cancel is never refused on state: it either wins (200) or a concurrent reschedule changed the
+            // row first and the concurrency token refuses it (409). A 400 cancel is not expected because the
+            // reschedule keeps the Booked state, so a later cancel would still succeed.
+            Assert.Contains(cancelStatus, new[] { HttpStatusCode.OK, HttpStatusCode.Conflict });
+            Assert.Contains(
+                rescheduleStatus,
+                new[] { HttpStatusCode.OK, HttpStatusCode.BadRequest, HttpStatusCode.Conflict });
+            Assert.True(
+                cancelStatus == HttpStatusCode.OK || rescheduleStatus == HttpStatusCode.OK,
+                "At least one of the two requests must succeed.");
 
             await using var db = _factory.CreateDbContext();
 
@@ -790,13 +812,28 @@ public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
 
             Assert.True(originalSlot.IsAvailable);
 
-            if (appointment.Status == AppointmentStatus.Cancelled)
+            if (cancelStatus == HttpStatusCode.OK)
             {
-                // A cancelled appointment never holds a slot, whichever request cancelled it.
+                // The cancel won: the appointment is cancelled and holds no slot, whatever the reschedule answered.
+                Assert.Equal(AppointmentStatus.Cancelled, appointment.Status);
                 Assert.True(targetSlot.IsAvailable);
+
+                if (rescheduleStatus == HttpStatusCode.OK)
+                {
+                    // The reschedule ran first and moved the appointment; the cancel then freed the target slot.
+                    Assert.Equal(scenario.TargetSlot.Id, appointment.DoctorSlotId);
+                }
+                else
+                {
+                    // The cancel ran first, so the reschedule was refused and the appointment never moved.
+                    Assert.Equal(scenario.AppointmentSlot.Id, appointment.DoctorSlotId);
+                }
             }
             else
             {
+                // The reschedule won the race and the cancel lost on a concurrency token: the appointment is
+                // still Booked on the target slot and only the source slot is free.
+                Assert.Equal(HttpStatusCode.OK, rescheduleStatus);
                 Assert.Equal(AppointmentStatus.Booked, appointment.Status);
                 Assert.Equal(scenario.TargetSlot.Id, appointment.DoctorSlotId);
                 Assert.False(targetSlot.IsAvailable);
