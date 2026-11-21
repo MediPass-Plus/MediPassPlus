@@ -145,6 +145,44 @@ public sealed class LocalReportStorage : IReportStorage
         return Task.FromResult(true);
     }
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// The same path-safety rule as deletion applies: a name that is not a plain file name is refused instead of
+    /// resolved, so a stored name can never escape the private root. A missing file returns <see langword="null"/>
+    /// rather than throwing, so the caller can answer with a uniform refusal.
+    /// </remarks>
+    public Task<Stream?> OpenReadAsync(string storedFileName, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(storedFileName);
+
+        if (!IsPlainFileName(storedFileName))
+        {
+            throw new ArgumentException(
+                "A stored file name is a plain file name inside the storage root.",
+                nameof(storedFileName));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var path = Path.Combine(_rootPath, storedFileName);
+
+        if (!File.Exists(path))
+        {
+            return Task.FromResult<Stream?>(null);
+        }
+
+        Stream stream = new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.Open,
+            Access = FileAccess.Read,
+            Share = FileShare.Read,
+            Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+            BufferSize = CopyBufferSize
+        });
+
+        return Task.FromResult<Stream?>(stream);
+    }
+
     private static bool IsPlainFileName(string name)
     {
         if (name is "." or "..")

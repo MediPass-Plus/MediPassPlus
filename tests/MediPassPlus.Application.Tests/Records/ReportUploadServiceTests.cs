@@ -541,6 +541,11 @@ public class ReportUploadServiceTests
             return Task.FromResult(Scope);
         }
 
+        public Task<ReportDownloadScope?> FindReportForDownloadAsync(
+            Guid reportId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<ReportDownloadScope?>(null);
+
         public void Add(Report report) => Reports.Add(report);
 
         public Task SaveChangesAsync(CancellationToken cancellationToken = default)
@@ -640,5 +645,8 @@ public class ReportUploadServiceTests
 
             return Task.FromResult(true);
         }
+
+        public Task<Stream?> OpenReadAsync(string storedFileName, CancellationToken cancellationToken = default) =>
+            Task.FromResult<Stream?>(null);
     }
 }

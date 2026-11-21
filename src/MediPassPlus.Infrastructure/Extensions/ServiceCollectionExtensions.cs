@@ -150,6 +150,7 @@ public static class ServiceCollectionExtensions
         // FR-REC-06, FR-PRV-02, ADR-0004, ADR-0015).
         services.AddScoped<IReportStore, ReportStore>();
         services.AddScoped<IReportUploadService, ReportUploadService>();
+        services.AddScoped<IReportDownloadService, ReportDownloadService>();
 
         // Add other infrastructure services here as needed
 
