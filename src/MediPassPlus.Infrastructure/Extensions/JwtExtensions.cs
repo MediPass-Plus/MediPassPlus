@@ -52,39 +52,40 @@ internal static class JwtExtensions
                     ClockSkew = TimeSpan.Zero
                 };
                 options.Events = new JwtBearerEvents
-{
-    OnChallenge = async context =>
-    {
-        context.HandleResponse();
-        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        context.Response.ContentType = "application/problem+json";
-        await context.Response.WriteAsJsonAsync(
-            new
-            {
-                type = "https://tools.ietf.org/html/rfc9110#section-15.5.2",
-                title = "Authentication required.",
-                status = StatusCodes.Status401Unauthorized,
-                detail = "A valid access token is required."
-            },
-            options: null,
-            contentType: "application/problem+json");
-    },
-    OnForbidden = async context =>
-    {
-        context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        context.Response.ContentType = "application/problem+json";
-        await context.Response.WriteAsJsonAsync(
-            new
-            {
-                type = "https://tools.ietf.org/html/rfc9110#section-15.5.4",
-                title = "You cannot access this resource.",
-                status = StatusCodes.Status403Forbidden,
-                detail = "Your role is not allowed to use this endpoint."
-            },
-            options: null,
-            contentType: "application/problem+json");
-    }
-};
+                {
+                    OnChallenge = async context =>
+                    {
+                        context.HandleResponse();
+                        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                        context.Response.Headers["WWW-Authenticate"] = "Bearer";
+                        context.Response.ContentType = "application/problem+json";
+                        await context.Response.WriteAsJsonAsync(
+                            new
+                            {
+                                type = "https://tools.ietf.org/html/rfc9110#section-15.5.2",
+                                title = "Authentication required.",
+                                status = StatusCodes.Status401Unauthorized,
+                                detail = "A valid access token is required."
+                            },
+                            options: null,
+                            contentType: "application/problem+json");
+                    },
+                    OnForbidden = async context =>
+                    {
+                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        context.Response.ContentType = "application/problem+json";
+                        await context.Response.WriteAsJsonAsync(
+                            new
+                            {
+                                type = "https://tools.ietf.org/html/rfc9110#section-15.5.4",
+                                title = "You cannot access this resource.",
+                                status = StatusCodes.Status403Forbidden,
+                                detail = "Your role is not allowed to use this endpoint."
+                            },
+                            options: null,
+                            contentType: "application/problem+json");
+                    }
+                };
             });
 
         services.AddAuthorization();

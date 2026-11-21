@@ -88,6 +88,13 @@ public sealed class MedicalEndpointMatrixTests : IClassFixture<MediPassApiFactor
         Assert.Equal(expected, response.StatusCode);
         Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
 
+        if (expected == HttpStatusCode.Unauthorized)
+        {
+            Assert.Contains(
+                response.Headers.WwwAuthenticate,
+                header => string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase));
+        }
+
         var body = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
         Assert.Equal((int)expected, doc.RootElement.GetProperty("status").GetInt32());
