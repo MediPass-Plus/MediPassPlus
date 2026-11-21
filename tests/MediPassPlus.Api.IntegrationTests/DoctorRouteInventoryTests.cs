@@ -7,13 +7,21 @@ namespace MediPassPlus.Api.IntegrationTests;
 
 /// <summary>
 /// MP-55 / FR-ACS-10: the route inventory exposes no patient list or patient search to a Doctor. Every route a
-/// Doctor can call is scoped by an appointment or a diagnosis id (verified by the grant filter) or is the
-/// doctor's own schedule. A new route that breaks this rule fails here.
+/// Doctor can call is scoped by an appointment or a diagnosis id (verified by the grant filter), is the doctor's own
+/// schedule, or is the one record-scoped report upload accepted by ADR-0015. A new route that breaks this rule fails
+/// here.
 /// </summary>
 [Collection(IntegrationTestCollection.Name)]
 public sealed class DoctorRouteInventoryTests : IClassFixture<MediPassApiFactory>
 {
-    private static readonly string[] AllowedUnscopedRoutes = ["api/doctors/me/schedule"];
+    // ADR-0015 decision 9: the record id is a capability disclosed only by an appointment-scoped response, and the
+    // upload re-checks a patient-scoped grant on every request. A third record-scoped route requires an ADR amendment
+    // before it may be added here.
+    private static readonly string[] AllowedRoutesOutsideAppointmentScope =
+    [
+        "api/doctors/me/schedule",
+        "api/records/{recordId:guid}/reports"
+    ];
 
     private readonly MediPassApiFactory _factory;
 
@@ -48,9 +56,11 @@ public sealed class DoctorRouteInventoryTests : IClassFixture<MediPassApiFactory
 
             var scoped = template.Contains("{appointmentId", StringComparison.OrdinalIgnoreCase)
                 || template.Contains("{diagnosisId", StringComparison.OrdinalIgnoreCase)
-                || AllowedUnscopedRoutes.Contains(template, StringComparer.OrdinalIgnoreCase);
+                || AllowedRoutesOutsideAppointmentScope.Contains(template, StringComparer.OrdinalIgnoreCase);
 
-            Assert.True(scoped, $"Doctor route is not scoped to an appointment or diagnosis: {template}");
+            Assert.True(
+                scoped,
+                $"Doctor route is not scoped to an appointment, a diagnosis, or an ADR-0015 record capability: {template}");
         }
     }
 

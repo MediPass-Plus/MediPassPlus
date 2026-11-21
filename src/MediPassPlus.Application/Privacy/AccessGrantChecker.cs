@@ -87,28 +87,87 @@ public sealed class AccessGrantChecker : IAccessGrantChecker
 
         var utcNow = _timeProvider.GetUtcNow().UtcDateTime;
 
-        // Both bounds are absolute: the stored expiry and the two-hour cap. Checking ExpiresAtUtc separately
-        // keeps a corrupted EndedAtUtc from extending access past the expiry, and the cap protects against a
-        // corrupted ExpiresAtUtc (FR-ACS-07, UC-24).
+        var failure = EvaluateLifetime(grant, utcNow);
+
+        return failure is null
+            ? AccessGrantCheckResult.Allowed(grant)
+            : AccessGrantCheckResult.Denied(failure.Value);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A report route carries a record, not an appointment, so the grant is resolved from the patient instead: the store
+    /// returns every grant this doctor holds for that patient, and each one is evaluated with the same ADR-0011 rules as
+    /// the appointment-scoped check. The newest active grant authorizes the request. The stored patient is re-verified
+    /// here and the doctor binding is enforced by the store's join on the doctor's user account, so another patient's
+    /// grant authorizes nothing (ADR-0015 decision 2).
+    /// </remarks>
+    public async Task<AccessGrantCheckResult> RequireActiveGrantForPatientAsync(
+        Guid doctorUserId,
+        Guid patientUserId,
+        CancellationToken cancellationToken = default)
+    {
+        if (doctorUserId == Guid.Empty)
+        {
+            throw new ArgumentException("A doctor user identifier is required.", nameof(doctorUserId));
+        }
+
+        if (patientUserId == Guid.Empty)
+        {
+            throw new ArgumentException("A patient user identifier is required.", nameof(patientUserId));
+        }
+
+        var grants = await _store.FindGrantsForDoctorUserAsync(doctorUserId, patientUserId, cancellationToken);
+        var utcNow = _timeProvider.GetUtcNow().UtcDateTime;
+
+        AccessGrantCheckFailure? refusal = null;
+
+        foreach (var grant in grants)
+        {
+            if (grant.PatientId != patientUserId)
+            {
+                refusal ??= AccessGrantCheckFailure.ScopeMismatch;
+                continue;
+            }
+
+            var failure = EvaluateLifetime(grant, utcNow);
+
+            if (failure is null)
+            {
+                return AccessGrantCheckResult.Allowed(grant);
+            }
+
+            refusal ??= failure;
+        }
+
+        return AccessGrantCheckResult.Denied(refusal ?? AccessGrantCheckFailure.GrantNotFound);
+    }
+
+    /// <summary>
+    /// Applies the ADR-0011 lifecycle to one stored grant and returns the refusal reason, or null when it is still
+    /// active. Both bounds are absolute: the stored expiry and the two-hour cap, so a corrupted timestamp can never
+    /// extend access (FR-ACS-07, UC-24).
+    /// </summary>
+    private static AccessGrantCheckFailure? EvaluateLifetime(AccessGrant grant, DateTime utcNow)
+    {
         if (utcNow >= grant.ExpiresAtUtc)
         {
-            return AccessGrantCheckResult.Denied(AccessGrantCheckFailure.GrantExpired);
+            return AccessGrantCheckFailure.GrantExpired;
         }
 
         if (utcNow >= grant.GrantedAtUtc.Add(MaximumLifetime))
         {
-            return AccessGrantCheckResult.Denied(AccessGrantCheckFailure.GrantExpired);
+            return AccessGrantCheckFailure.GrantExpired;
         }
 
         if (!grant.IsActiveAt(utcNow))
         {
-            return AccessGrantCheckResult.Denied(
-                grant.StatusAt(utcNow) == AccessGrantStatus.Ended
-                    ? AccessGrantCheckFailure.GrantEnded
-                    : AccessGrantCheckFailure.GrantExpired);
+            return grant.StatusAt(utcNow) == AccessGrantStatus.Ended
+                ? AccessGrantCheckFailure.GrantEnded
+                : AccessGrantCheckFailure.GrantExpired;
         }
 
-        return AccessGrantCheckResult.Allowed(grant);
+        return null;
     }
 
     private static AccessGrantCheckFailure MapScopeFailure(VisitAccessScopeFailure failure) =>

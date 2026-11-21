@@ -163,8 +163,9 @@ forged-patient-id case, paging boundaries, real-protector decryption and both au
 patient audit list (`GET api/me/audit`): own rows only by the affected patient, newest first, default 20 and at most
 50 with `400` for invalid paging, identifiers/action/entity/time/IP only, no self-audit on the list read, exactly one
 row per medical read/write, and an immutability proof against SQL Server (FR-PRV-02, FR-PRV-03, NFR-PRI-03,
-NFR-PRI-05). There is still no report upload/download endpoint, and the frontend is the untouched Angular welcome
-page.
+NFR-PRI-05). The MP-47 tests add the upload type and size boundaries, the private-storage and audit proofs, and the
+record-scope refusal matrix. There is still no report download endpoint (MP-48), and the frontend is the untouched
+Angular welcome page.
 Everything the README or the planning document describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files and `package.json` over prose.
 
@@ -177,6 +178,22 @@ three secrets — the key ring, `Jwt:SecretKey` and
 `AccessCode:HmacKey` — are documented in `docs/operations/deployment-keys.md`, and
 `DiagnosisProtectorTests`, `DataProtectionOptionsValidatorTests` and `DataProtectionRegistrationTests` cover the
 round trip, the outside-repository rule and the Production startup failure. No migration was needed.
+
+MP-47 adds the private report upload (FR-REC-05, FR-REC-06, FR-PRV-05, NFR-SEC-09). `POST
+api/records/{recordId}/reports` accepts one multipart part named `file` from a Patient who owns the record or a Doctor
+who holds an active grant for its owner; the record owner comes from the stored record, the doctor's grant is re-checked
+in the database on the request, and every record-level refusal is the same `404` (NFR-PRI-01). The file must be PDF,
+JPEG or PNG by declared media type and leading-byte signature, at most 10 MB, and the size is counted again while the
+bytes are copied. The stored name is a v7 GUID in `N` format plus the validated extension (`{Guid:N}{ext}`); the client's
+file name is never read. `Reports:Storage:RootPath` must be absolute and outside the repository and `wwwroot`, and
+Production refuses to start without it. The `ReportUploaded` audit row commits in the same unit of work as the `Report`
+row; a failed staging or commit deletes the file. ADR-0015 accepts the record-scoped route as a narrow exception to
+FR-ACS-10: the record id is a capability disclosed only by an appointment-scoped response, no endpoint lists or
+searches patients, and the guardrails in ADR-0015 decision 9 close the exception. A frontend caller takes the id from
+`RecordHistoryResponse.MedicalRecordId` (doctor) or `GET api/me/history` (patient) on the screen that already passed the
+grant check; it never builds a record list or a patient lookup from it. No migration was needed. The MP-47
+tests cover the allowed and rejected types, the exact 10 MB and 10 MB + 1 boundaries, an 11 MB body refused before form
+binding, a traversal file name, the 401/403/404/grant matrix, the audit row and private storage.
 
 MP-54 adds the platform observability (decision record 0013). `GET /health` is anonymous and reports the `api`
 and `database` checks as a status-only JSON body (`200` when every check is healthy, `503` otherwise, including
@@ -292,6 +309,10 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   - it is never valid for **more than 2 hours from creation**, even if the visit is never completed (UC-24, US-25);
   - the patient can end it **immediately**, and the doctor's next request is refused (UC-19, US-25).
 - A new visit needs a new approval, and an ended grant is never reused (FR-ACS-11).
+- Report uploads are PDF, JPEG or PNG by media type **and** leading-byte signature, at most 10 MB, stored under a
+  random name outside the repository and `wwwroot`; the client file name is never used as a path, the stored name is
+  never a public link, and the `ReportUploaded` audit row commits with the report row. The record-scoped report route
+  is the only exception to the appointment-scoped doctor rule; ADR-0015 decision 9 is its review checklist.
 - Never log or print medical content, passwords, tokens, codes or file bytes — identifiers only.
 - Never commit secrets, connection strings, keys, certificates or real patient data. Use user-secrets or environment
   variables. An API key pasted into a chat or a file is a leaked key: rotate it, do not "clean it up later".
@@ -327,7 +348,8 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   `POST api/access-requests/token/approve` / `/token/reject` (Patient),
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
   `POST api/access-grants/{grantId}/end` (Patient), `GET api/appointments/{appointmentId}/history` (Doctor),
-  `GET api/me/history` (Patient), `GET api/me/audit` (Patient), the self-service profile actions
+  `GET api/me/history` (Patient), `POST api/records/{recordId}/reports` (Doctor or Patient), `GET api/me/audit`
+  (Patient), the self-service profile actions
   `GET api/me/profile` / `PUT api/me/profile` / `POST api/me/change-password` (any authenticated role), and the
   patient appointment actions
   `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
@@ -352,9 +374,13 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   attempts per 15 minutes per account (`ChangePassword` policy, configurable) and answers `429` with `Retry-After`
   beyond it. The patient audit list returns the authenticated patient's own rows newest first, paged with the shared
   default of 20 and maximum of 50, carrying identifiers, action, entity, time and IP only, and reading the list is not
-  itself audited (FR-PRV-02, FR-PRV-03, ADR-0004). Swagger UI adds a topbar link to
+  itself audited (FR-PRV-02, FR-PRV-03, ADR-0004). The report upload takes one multipart `file` part for a record the
+  patient owns or a doctor holds a live grant for, validates the type by declared media type and leading bytes and the
+  size at 10 MB, stores the file under a random name outside the repository and `wwwroot`, and answers `400` for a
+  missing or empty part, `413` for an oversized file or request body, `415` for a refused type or mismatched bytes, and
+  `404` for every record the caller may not use. Swagger UI adds a topbar link to
   `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
-  report upload/download endpoint.
+  report download endpoint (MP-48).
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for

@@ -475,6 +475,14 @@ public class DiagnosisWriteServiceTests
 
             return Task.FromResult(Result);
         }
+
+        // The write path this harness covers resolves access from an appointment, so the record-scoped overload is
+        // never used here. It fails loudly instead of quietly returning a grant, so a future misuse cannot pass.
+        public Task<AccessGrantCheckResult> RequireActiveGrantForPatientAsync(
+            Guid doctorUserId,
+            Guid patientUserId,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("This harness only covers the appointment-scoped grant check.");
     }
 
     private sealed class FakeDiagnosisScopeReader : IDiagnosisScopeReader
