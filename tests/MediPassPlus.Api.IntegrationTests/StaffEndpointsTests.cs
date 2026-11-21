@@ -311,6 +311,35 @@ public sealed class StaffEndpointsTests : IClassFixture<MediPassApiFactory>
     }
 
     [Fact]
+    public async Task Book_ThroughTheStaffRoute_ForASlotInThePast_ReturnsBadRequest()
+    {
+        var scenario = await _factory.CreateAppointmentStatusScenarioAsync();
+        var slot = await CreateSlotAsync(scenario.Doctor.Id, DateTime.UtcNow.AddHours(-1));
+        using var client = _factory.CreateAuthenticatedClient(scenario.StaffUser);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/staff/appointments",
+            new StaffBookAppointmentDto(scenario.PatientUser.Email, scenario.Doctor.Id, slot.Id));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Book_ThroughTheStaffRoute_ForAnInactivePatient_ReturnsBadRequest()
+    {
+        var scenario = await _factory.CreateAppointmentStatusScenarioAsync();
+        var slot = await CreateFreeSlotAsync(scenario.Doctor.Id, day: 43);
+        await SetUserActiveAsync(scenario.PatientUser.Id, isActive: false);
+        using var client = _factory.CreateAuthenticatedClient(scenario.StaffUser);
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/staff/appointments",
+            new StaffBookAppointmentDto(scenario.PatientUser.Email, scenario.Doctor.Id, slot.Id));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
     public async Task CheckIn_ThroughTheStaffRoute_ChecksInOwnClinicAndHidesOtherClinic()
     {
         var scenario = await _factory.CreateAppointmentStatusScenarioAsync();
@@ -422,16 +451,30 @@ public sealed class StaffEndpointsTests : IClassFixture<MediPassApiFactory>
     private async Task<DoctorSlot> CreateFreeSlotAsync(int doctorId, int day)
     {
         var body = NewSlotBody(day);
+        return await CreateSlotAsync(doctorId, body.StartTimeUtc);
+    }
+
+    private async Task<DoctorSlot> CreateSlotAsync(int doctorId, DateTime startUtc)
+    {
         await using var db = _factory.CreateDbContext();
         var slot = new DoctorSlot
         {
             DoctorId = doctorId,
-            StartTimeUtc = body.StartTimeUtc,
-            EndTimeUtc = body.EndTimeUtc,
+            StartTimeUtc = startUtc,
+            EndTimeUtc = startUtc.AddMinutes(30),
             IsAvailable = true
         };
         db.DoctorSlots.Add(slot);
         await db.SaveChangesAsync();
         return slot;
+    }
+
+    private async Task SetUserActiveAsync(Guid userId, bool isActive)
+    {
+        await using var db = _factory.CreateDbContext();
+
+        var user = await db.Users.SingleAsync(user => user.Id == userId);
+        user.IsActive = isActive;
+        await db.SaveChangesAsync();
     }
 }

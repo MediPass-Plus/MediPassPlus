@@ -375,6 +375,67 @@ public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
     }
 
     [Fact]
+    public async Task Cancel_UnknownAppointment_ReturnsNotFound()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{int.MaxValue}/cancel",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cancel_InactivePatient_ReturnsBadRequest()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        await SetUserActiveAsync(scenario.PatientUser.Id, isActive: false);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+
+        Assert.Equal(
+            AppointmentStatus.Booked,
+            (await db.Appointments.AsNoTracking()
+                .SingleAsync(a => a.Id == scenario.Appointment.Id)).Status);
+        Assert.False(
+            (await db.DoctorSlots.AsNoTracking()
+                .SingleAsync(s => s.Id == scenario.AppointmentSlot.Id)).IsAvailable);
+    }
+
+    [Fact]
+    public async Task Cancel_WhenTheDoctorIsInactive_StillCancelsAndFreesTheSlot()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        await SetUserActiveAsync(scenario.DoctorUser.Id, isActive: false);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/cancel",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+
+        Assert.Equal(
+            AppointmentStatus.Cancelled,
+            (await db.Appointments.AsNoTracking()
+                .SingleAsync(a => a.Id == scenario.Appointment.Id)).Status);
+        Assert.True(
+            (await db.DoctorSlots.AsNoTracking()
+                .SingleAsync(s => s.Id == scenario.AppointmentSlot.Id)).IsAvailable);
+    }
+
+    [Fact]
     public async Task Cancel_WithoutToken_ReturnsUnauthorized()
     {
         var scenario = await _factory.CreateBookingScenarioAsync();
@@ -452,6 +513,22 @@ public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
     }
 
     [Fact]
+    public async Task Reschedule_InvalidBody_ReturnsValidationProblem()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = 0 });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.NotEmpty(problem.Errors);
+    }
+
+    [Fact]
     public async Task Reschedule_ToAnOccupiedSlot_ReturnsConflict()
     {
         var scenario = await _factory.CreateBookingScenarioAsync();
@@ -523,6 +600,255 @@ public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
     }
 
     [Fact]
+    public async Task Reschedule_ToASlotInThePast_ReturnsBadRequest()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        var pastSlot = await AddSlotAsync(
+            scenario.Doctor.Id,
+            DateTime.UtcNow.AddHours(-1),
+            isAvailable: true);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = pastSlot.Id });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reschedule_ToAnUnknownSlot_ReturnsNotFound()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = 999_999 });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reschedule_UnknownAppointment_ReturnsNotFound()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{int.MaxValue}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reschedule_WhenTheDoctorIsInactive_ReturnsBadRequest()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        await SetUserActiveAsync(scenario.DoctorUser.Id, isActive: false);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+
+        Assert.Equal(
+            scenario.AppointmentSlot.Id,
+            (await db.Appointments.AsNoTracking()
+                .SingleAsync(a => a.Id == scenario.Appointment.Id)).DoctorSlotId);
+        Assert.True(
+            (await db.DoctorSlots.AsNoTracking()
+                .SingleAsync(s => s.Id == scenario.TargetSlot.Id)).IsAvailable);
+    }
+
+    [Fact]
+    public async Task Reschedule_WhenThePatientIsInactive_ReturnsBadRequest()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        await SetUserActiveAsync(scenario.PatientUser.Id, isActive: false);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        await using var db = _factory.CreateDbContext();
+
+        Assert.Equal(
+            scenario.AppointmentSlot.Id,
+            (await db.Appointments.AsNoTracking()
+                .SingleAsync(a => a.Id == scenario.Appointment.Id)).DoctorSlotId);
+        Assert.True(
+            (await db.DoctorSlots.AsNoTracking()
+                .SingleAsync(s => s.Id == scenario.TargetSlot.Id)).IsAvailable);
+    }
+
+    [Fact]
+    public async Task Reschedule_WhenTheCurrentSlotHasStarted_ReturnsBadRequest()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync(
+            slotStartUtc: DateTime.UtcNow.AddHours(-2));
+        var futureSlot = await AddSlotAsync(
+            scenario.Doctor.Id,
+            DateTime.UtcNow.AddDays(2),
+            isAvailable: true);
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+            new RescheduleAppointmentRequest { NewSlotId = futureSlot.Id });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Reschedule_TwoPatientsRescheduleToTheSameSlot_OnlyOneSucceeds()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        var secondPatient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        var secondSlot = await AddSlotAsync(
+            scenario.Doctor.Id,
+            scenario.TargetSlot.StartTimeUtc.AddHours(1),
+            isAvailable: false);
+        var secondAppointment = await AddAppointmentAsync(
+            secondPatient.Id,
+            scenario.Doctor.Id,
+            secondSlot.Id);
+
+        using var firstClient = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+        using var secondClient = _factory.CreateAuthenticatedClient(secondPatient);
+        var request = new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id };
+
+        var responses = await Task.WhenAll(
+            firstClient.PutAsJsonAsync(
+                $"/api/me/appointments/{scenario.Appointment.Id}/reschedule",
+                request),
+            secondClient.PutAsJsonAsync(
+                $"/api/me/appointments/{secondAppointment.Id}/reschedule",
+                request));
+
+        try
+        {
+            var statuses = responses.Select(response => response.StatusCode).OrderBy(status => status).ToArray();
+            Assert.Equal(
+                new[] { HttpStatusCode.OK, HttpStatusCode.Conflict },
+                statuses);
+
+            await using var db = _factory.CreateDbContext();
+
+            var moved = await db.Appointments.AsNoTracking()
+                .Where(a => a.DoctorSlotId == scenario.TargetSlot.Id
+                    && a.Status != AppointmentStatus.Cancelled)
+                .ToListAsync();
+
+            Assert.Single(moved);
+            Assert.Contains(
+                moved[0].Id,
+                new[] { scenario.Appointment.Id, secondAppointment.Id });
+            Assert.False(
+                (await db.DoctorSlots.AsNoTracking()
+                    .SingleAsync(s => s.Id == scenario.TargetSlot.Id)).IsAvailable);
+
+            // Exactly one of the two source slots was freed by the winner; the loser kept its appointment.
+            var sourceSlots = await db.DoctorSlots.AsNoTracking()
+                .Where(s => s.Id == scenario.AppointmentSlot.Id || s.Id == secondSlot.Id)
+                .ToListAsync();
+            Assert.Single(sourceSlots, slot => slot.IsAvailable);
+        }
+        finally
+        {
+            foreach (var response in responses)
+            {
+                response.Dispose();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Cancel_WhileRescheduling_LeavesAConsistentState()
+    {
+        var scenario = await _factory.CreateBookingScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.PatientUser);
+        var path = $"/api/me/appointments/{scenario.Appointment.Id}";
+
+        var responses = await Task.WhenAll(
+            client.PutAsync($"{path}/cancel", content: null),
+            client.PutAsJsonAsync(
+                $"{path}/reschedule",
+                new RescheduleAppointmentRequest { NewSlotId = scenario.TargetSlot.Id }));
+
+        try
+        {
+            // Task.WhenAll preserves the input order: [0] is the cancel and [1] is the reschedule.
+            var cancelStatus = responses[0].StatusCode;
+            var rescheduleStatus = responses[1].StatusCode;
+
+            // The cancel is never refused on state: it either wins (200) or a concurrent reschedule changed the
+            // row first and the concurrency token refuses it (409). A 400 cancel is not expected because the
+            // reschedule keeps the Booked state, so a later cancel would still succeed.
+            Assert.Contains(cancelStatus, new[] { HttpStatusCode.OK, HttpStatusCode.Conflict });
+            Assert.Contains(
+                rescheduleStatus,
+                new[] { HttpStatusCode.OK, HttpStatusCode.BadRequest, HttpStatusCode.Conflict });
+            Assert.True(
+                cancelStatus == HttpStatusCode.OK || rescheduleStatus == HttpStatusCode.OK,
+                "At least one of the two requests must succeed.");
+
+            await using var db = _factory.CreateDbContext();
+
+            var appointment = await db.Appointments.AsNoTracking()
+                .SingleAsync(a => a.Id == scenario.Appointment.Id);
+            var originalSlot = await db.DoctorSlots.AsNoTracking()
+                .SingleAsync(s => s.Id == scenario.AppointmentSlot.Id);
+            var targetSlot = await db.DoctorSlots.AsNoTracking()
+                .SingleAsync(s => s.Id == scenario.TargetSlot.Id);
+
+            Assert.True(originalSlot.IsAvailable);
+
+            if (cancelStatus == HttpStatusCode.OK)
+            {
+                // The cancel won: the appointment is cancelled and holds no slot, whatever the reschedule answered.
+                Assert.Equal(AppointmentStatus.Cancelled, appointment.Status);
+                Assert.True(targetSlot.IsAvailable);
+
+                if (rescheduleStatus == HttpStatusCode.OK)
+                {
+                    // The reschedule ran first and moved the appointment; the cancel then freed the target slot.
+                    Assert.Equal(scenario.TargetSlot.Id, appointment.DoctorSlotId);
+                }
+                else
+                {
+                    // The cancel ran first, so the reschedule was refused and the appointment never moved.
+                    Assert.Equal(scenario.AppointmentSlot.Id, appointment.DoctorSlotId);
+                }
+            }
+            else
+            {
+                // The reschedule won the race and the cancel lost on a concurrency token: the appointment is
+                // still Booked on the target slot and only the source slot is free.
+                Assert.Equal(HttpStatusCode.OK, rescheduleStatus);
+                Assert.Equal(AppointmentStatus.Booked, appointment.Status);
+                Assert.Equal(scenario.TargetSlot.Id, appointment.DoctorSlotId);
+                Assert.False(targetSlot.IsAvailable);
+            }
+        }
+        finally
+        {
+            foreach (var response in responses)
+            {
+                response.Dispose();
+            }
+        }
+    }
+
+    [Fact]
     public async Task Reschedule_WithoutToken_ReturnsUnauthorized()
     {
         var scenario = await _factory.CreateBookingScenarioAsync();
@@ -570,19 +896,22 @@ public sealed class BookingEndpointTests : IClassFixture<MediPassApiFactory>
         return slot;
     }
 
-    private async Task AddAppointmentAsync(Guid patientId, int doctorId, int slotId)
+    private async Task<Appointment> AddAppointmentAsync(Guid patientId, int doctorId, int slotId)
     {
         await using var db = _factory.CreateDbContext();
 
-        db.Appointments.Add(new Appointment
+        var appointment = new Appointment
         {
             PatientId = patientId,
             DoctorId = doctorId,
             DoctorSlotId = slotId,
             Status = AppointmentStatus.Booked,
             CreatedAtUtc = DateTime.UtcNow
-        });
+        };
+        db.Appointments.Add(appointment);
         await db.SaveChangesAsync();
+
+        return appointment;
     }
 
     private async Task SetUserActiveAsync(Guid userId, bool isActive)
