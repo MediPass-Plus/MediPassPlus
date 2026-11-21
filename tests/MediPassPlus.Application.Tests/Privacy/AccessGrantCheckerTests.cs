@@ -252,6 +252,113 @@ public class AccessGrantCheckerTests
         Assert.Equal(AccessGrantCheckFailure.ScopeMismatch, result.Failure);
     }
 
+    [Fact]
+    public async Task RequireActiveGrantForPatientAsync_WhenAnActiveGrantExists_ReturnsItAndPassesBothIdentities()
+    {
+        var grant = CreateGrant(Start);
+        var store = new FakeAccessGrantStore { GrantsForDoctor = [grant] };
+        var checker = CreateChecker(store, FakeVisitAccessScopeService.Allowing(Scope), Start.AddMinutes(30));
+
+        var result = await checker.RequireActiveGrantForPatientAsync(DoctorUserId, PatientId);
+
+        Assert.True(result.IsAllowed);
+        Assert.Same(grant, result.Grant);
+        Assert.True(store.WasPatientLookupCalled);
+        Assert.Equal(DoctorUserId, store.LastLookupDoctorUserId);
+        Assert.Equal(PatientId, store.LastLookupPatientUserId);
+    }
+
+    [Fact]
+    public async Task RequireActiveGrantForPatientAsync_WhenTheDoctorHasNoGrant_ReturnsGrantNotFound()
+    {
+        var store = new FakeAccessGrantStore();
+        var checker = CreateChecker(store, FakeVisitAccessScopeService.Allowing(Scope), Start.AddMinutes(1));
+
+        var result = await checker.RequireActiveGrantForPatientAsync(DoctorUserId, PatientId);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(AccessGrantCheckFailure.GrantNotFound, result.Failure);
+    }
+
+    [Fact]
+    public async Task RequireActiveGrantForPatientAsync_WhenTheNewestGrantIsEnded_ReturnsAnOlderActiveOne()
+    {
+        // A record-level route has no appointment, so an ended grant for an earlier visit must not hide a live grant
+        // for a later one (ADR-0015 decision 2, FR-ACS-11).
+        var ended = CreateGrant(Start);
+        ended.EndByPatient(Start.AddMinutes(5));
+        var active = CreateGrant(Start.AddMinutes(20));
+
+        var store = new FakeAccessGrantStore { GrantsForDoctor = [active, ended] };
+        var checker = CreateChecker(store, FakeVisitAccessScopeService.Allowing(Scope), Start.AddMinutes(30));
+
+        var result = await checker.RequireActiveGrantForPatientAsync(DoctorUserId, PatientId);
+
+        Assert.True(result.IsAllowed);
+        Assert.Same(active, result.Grant);
+    }
+
+    [Fact]
+    public async Task RequireActiveGrantForPatientAsync_WhenTheGrantWasEndedByThePatient_ReturnsGrantEnded()
+    {
+        var grant = CreateGrant(Start);
+        grant.EndByPatient(Start.AddMinutes(5));
+
+        var store = new FakeAccessGrantStore { GrantsForDoctor = [grant] };
+        var checker = CreateChecker(store, FakeVisitAccessScopeService.Allowing(Scope), Start.AddMinutes(6));
+
+        var result = await checker.RequireActiveGrantForPatientAsync(DoctorUserId, PatientId);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(AccessGrantCheckFailure.GrantEnded, result.Failure);
+    }
+
+    [Fact]
+    public async Task RequireActiveGrantForPatientAsync_PastTheTwoHourCap_ReturnsGrantExpired()
+    {
+        var grant = CreateGrant(Start);
+
+        var store = new FakeAccessGrantStore { GrantsForDoctor = [grant] };
+        var checker = CreateChecker(store, FakeVisitAccessScopeService.Allowing(Scope), Start.AddHours(2));
+
+        var result = await checker.RequireActiveGrantForPatientAsync(DoctorUserId, PatientId);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(AccessGrantCheckFailure.GrantExpired, result.Failure);
+    }
+
+    [Fact]
+    public async Task RequireActiveGrantForPatientAsync_WhenTheGrantBelongsToAnotherPatient_ReturnsScopeMismatch()
+    {
+        // Defence in depth: the store is asked for this patient only, and a row for another patient authorizes nothing
+        // even if the lookup returned it (NFR-PRI-01).
+        var otherPatient = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var grant = CreateGrant(Start, Scope with { PatientId = otherPatient });
+        var store = new FakeAccessGrantStore { GrantsForDoctor = [grant] };
+        var checker = CreateChecker(store, FakeVisitAccessScopeService.Allowing(Scope), Start.AddMinutes(1));
+
+        var result = await checker.RequireActiveGrantForPatientAsync(DoctorUserId, PatientId);
+
+        Assert.False(result.IsAllowed);
+        Assert.Equal(AccessGrantCheckFailure.ScopeMismatch, result.Failure);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RequireActiveGrantForPatientAsync_WithAnEmptyIdentity_Throws(bool emptyDoctor)
+    {
+        var checker = CreateChecker(
+            new FakeAccessGrantStore(),
+            FakeVisitAccessScopeService.Allowing(Scope),
+            Start.AddMinutes(1));
+
+        await Assert.ThrowsAnyAsync<ArgumentException>(() =>
+            checker.RequireActiveGrantForPatientAsync(
+                emptyDoctor ? Guid.Empty : DoctorUserId,
+                emptyDoctor ? PatientId : Guid.Empty));
+    }
+
     private static AccessGrantChecker CreateChecker(
         FakeAccessGrantStore store,
         IVisitAccessScopeService scopeService,
@@ -296,6 +403,14 @@ public class AccessGrantCheckerTests
 
         public Guid LastPatientId { get; private set; }
 
+        public IReadOnlyList<AccessGrant> GrantsForDoctor { get; set; } = [];
+
+        public bool WasPatientLookupCalled { get; private set; }
+
+        public Guid LastLookupDoctorUserId { get; private set; }
+
+        public Guid LastLookupPatientUserId { get; private set; }
+
         public Task<AccessGrant?> FindGrantAsync(
             int appointmentId,
             int doctorId,
@@ -308,6 +423,18 @@ public class AccessGrantCheckerTests
             LastPatientId = patientId;
 
             return Task.FromResult(Grant);
+        }
+
+        public Task<IReadOnlyList<AccessGrant>> FindGrantsForDoctorUserAsync(
+            Guid doctorUserId,
+            Guid patientUserId,
+            CancellationToken cancellationToken)
+        {
+            WasPatientLookupCalled = true;
+            LastLookupDoctorUserId = doctorUserId;
+            LastLookupPatientUserId = patientUserId;
+
+            return Task.FromResult(GrantsForDoctor);
         }
     }
 }

@@ -1,7 +1,8 @@
-# Deployment keys and the Data Protection ring
+# Deployment keys, the Data Protection ring and report storage
 
-This page is the deployment note for the three secrets MediPass+ separates, and for the one infrastructure path that
-holds the Data Protection key ring (ADR-0007 decisions 5 and 6, ADR-0005, FR-PRV-04, NFR-SEC-05).
+This page is the deployment note for the three secrets MediPass+ separates, for the one infrastructure path that holds
+the Data Protection key ring, and for the report storage root (ADR-0007 decisions 5 and 6, ADR-0005, ADR-0015
+decision 6, FR-PRV-04, FR-PRV-05, NFR-SEC-05, NFR-SEC-09).
 
 Nothing on this page is ever committed. Locally the values live in `dotnet user-secrets` or environment variables;
 in a deployment they come from the platform secret store and the mounted key volume.
@@ -41,13 +42,33 @@ configuration needs no migration and no schema step (ADR-0009 is not involved).
   (`DiagnosisProtector.Purpose`). The purpose is part of every stored payload: bumping it is a data migration that
   re-protects existing rows, not a configuration change.
 
+## Report storage root
+
+Report files live under `Reports:Storage:RootPath`. It is not a secret, but it is required production configuration
+and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SEC-09):
+
+- **Production must configure it.** An empty value is an `OptionsValidationException` at startup, exactly like a
+  missing `DataProtection:KeysPath`.
+- **Absolute, outside the repository and outside `wwwroot`.** A relative path, a path inside the checkout or the
+  application directory, and a path under `wwwroot` are refused in every environment. A file under the static root is
+  a public link with no grant check.
+- **Development and Testing may omit it.** They fall back to `medipass-report-storage` under the operating system's
+  temporary path, so a fresh clone starts with no local setup.
+- **Back it up with the database.** The `Report` row stores only the random stored name and metadata. A restored
+  database without this directory has report rows whose bytes are gone; the two are one recovery unit.
+- **The client's file name is never used as a path.** Files are stored as `{Guid:N}{ext}`, the stored name is never a
+  URL, and no static-file mapping points at this directory.
+
 ## Failure behaviour
 
 | Situation | Result |
 |---|---|
 | `Production` and `DataProtection:KeysPath` empty | Startup fails (`OptionsValidationException`) |
 | `DataProtection:KeysPath` relative or inside the repository / application directory | Startup fails in every environment |
-| `Development` or `Testing` and no path | Starts, ring under the OS temp path |
+| `Development` or `Testing` and no key path | Starts, ring under the OS temp path |
+| `Production` and `Reports:Storage:RootPath` empty | Startup fails (`OptionsValidationException`) |
+| `Reports:Storage:RootPath` relative or inside the repository / application directory / `wwwroot` | Startup fails in every environment |
+| `Development` or `Testing` and no report path | Starts, files under the OS temp path |
 | `Jwt:SecretKey` missing or shorter than 32 characters | Startup fails |
 | `AccessCode:HmacKey` missing, not Base64 or shorter than 32 bytes | Startup fails |
 | Missing `ConnectionStrings:DefaultConnection` | The API starts; the first request that opens the database fails |
@@ -56,5 +77,7 @@ configuration needs no migration and no schema step (ADR-0009 is not involved).
 
 - [ ] `DataProtection:KeysPath` points at a persistent, mounted, access-restricted directory outside the image.
 - [ ] The key volume is included in the backup and restore procedure, together with the database.
+- [ ] `Reports:Storage:RootPath` points at a persistent, access-restricted directory outside the image and outside
+      `wwwroot`, and it is backed up with the database.
 - [ ] `Jwt:SecretKey` and `AccessCode:HmacKey` are set from the secret store, not from `appsettings*.json`.
 - [ ] No secret value appears in logs, images, build output or the repository.

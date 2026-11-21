@@ -404,6 +404,14 @@ public class DiagnosisAccessGrantFilterTests
 
             return Task.FromResult(Result);
         }
+
+        // The filter these tests exercise resolves access from an appointment route, so the record-scoped overload is
+        // never used here. It fails loudly instead of quietly allowing a request.
+        public Task<AccessGrantCheckResult> RequireActiveGrantForPatientAsync(
+            Guid doctorUserId,
+            Guid patientUserId,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("This harness only covers the appointment-scoped grant check.");
     }
 
     private sealed class FakeDiagnosisScopeReader : IDiagnosisScopeReader

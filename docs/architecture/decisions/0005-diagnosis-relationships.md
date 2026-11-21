@@ -1,6 +1,7 @@
 # ADR-0005: Diagnosis relationships (record, appointment, prescriptions)
 
-- **Status:** Accepted (2026-11-11; revised 2026-10-29 for required `AppointmentId`; amended 2026-11-11 after review)
+- **Status:** Accepted (2026-11-11; revised 2026-10-29 for required `AppointmentId`; amended 2026-11-11 after review;
+  amended 2026-11-21 for record-scoped report routes)
 - **Date:** 2026-10-29 (amended 2026-11-11)
 - **Affects:** Medical Record module, ERD/schema in D4, record queries
 
@@ -97,8 +98,12 @@ boundary and the write invariants that make the relationships safe.
   window (ADR-0011). The grant checker is the authority; the status check is a second, cheap guard.
 - The diagnosis, its prescriptions and their audit rows (`DiagnosisCreated`, one `PrescriptionCreated` per
   prescription — ADR-0004) commit in one transaction. A refused grant writes no medical row.
-- Doctor reads stay appointment-scoped; there is no doctor route that takes a patient id (FR-ACS-10). The patient's own
-  read route is separate and always scoped to the authenticated user.
+- A doctor route never takes a patient id, and no endpoint lists or searches patients (FR-ACS-10). A doctor route may
+  take an opaque medical record id only when (a) the id was returned by a response that already passed the grant
+  check and (b) a patient-scoped grant re-check succeeds on that request. MP-47 `POST api/records/{recordId}/reports`
+  and MP-48 `GET api/reports/{reportId}` are the only such routes today; adding another requires amending ADR-0015.
+  Every other doctor read stays appointment-scoped, and the patient's own read route is separate and always scoped to
+  the authenticated user.
 
 ## Consequences
 
@@ -152,3 +157,13 @@ Accepted after review. The required-FK core is unchanged. The review:
   audit, server-derived keys) and the registration-time record creation with its backfill;
 - refreshed the Part 3 class diagram and added its reproducible source
   (`Diagrams/src/render_class_diagram_part3.py`), which shows the new fields, encryption markers and append-only rules.
+
+## Amendment 2026-11-21 — record-scoped report routes
+
+Accepted with ADR-0015. Reports are record-level (see "Reports"), so MP-47 and MP-48 address a report by its record or
+its own id instead of an appointment. The doctor-read bullet in "Write invariants" is amended accordingly: the record
+id is a capability disclosed only by a response that already passed an appointment-scoped grant check, and every
+record-scoped request still re-checks a live patient-scoped grant. No patient id is accepted, no record is listed or
+searched, and diagnoses and prescriptions stay appointment-scoped. ADR-0015 decision 9 holds the guardrails, the
+closed list of record-scoped routes, and the review triggers; adding a third route requires amending that ADR, not
+this one.
