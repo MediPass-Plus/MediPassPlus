@@ -23,7 +23,7 @@ be resolved by the team, not silently.
 | [0012](0012-swagger-single-document-generator.md) | Swashbuckle as the single Swagger document generator | **Accepted** (2026-11-11) | Every endpoint PR, Swagger configuration |
 | [0013](0013-observability-health-logging-and-ci-gates.md) | Built-in structured logging, correlation ids, `/health` and CI gates | Proposed (2026-11-17) | Logging, health endpoint, CI |
 | [0014](0014-staff-schedule-appointment-id.md) | Staff schedule returns the appointment id with the four FR-STF-04 fields | **Accepted** (2026-11-18) | Staff schedule contract, MP-41 refusal tests |
-| [0015](0015-record-scoped-report-routes.md) | Record-scoped report routes and record-level grant scope | Proposed (2026-11-20) | MP-47 upload, MP-48 download, Record module |
+| [0015](0015-record-scoped-report-routes.md) | Record-scoped report routes and record-level grant scope | **Accepted** (2026-11-21) | MP-47 upload, MP-48 download, Record module |
 
 ## How to use these records
 

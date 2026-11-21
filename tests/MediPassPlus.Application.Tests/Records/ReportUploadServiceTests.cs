@@ -258,7 +258,7 @@ public class ReportUploadServiceTests
     public async Task UploadAsync_WhenTheStorageFindsMoreBytesThanDeclared_AnswersTooLarge()
     {
         var harness = new Harness();
-        harness.Storage.ThrowOnSave = true;
+        harness.Storage.ThrowSizeOnSave = ReportFileValidationFailure.TooLarge;
 
         var result = await harness.Service.UploadAsync(
             RecordId,
@@ -274,10 +274,85 @@ public class ReportUploadServiceTests
     }
 
     [Fact]
+    public async Task UploadAsync_WhenTheStorageFindsNoBytes_AnswersEmptyFile()
+    {
+        var harness = new Harness();
+        harness.Storage.ThrowSizeOnSave = ReportFileValidationFailure.EmptyFile;
+
+        var result = await harness.Service.UploadAsync(
+            RecordId,
+            PatientId,
+            ReportUploaderRole.Patient,
+            new FakeUploadedFile(PdfBytes, ReportFileValidator.PdfContentType),
+            IpAddress);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ReportUploadFailure.EmptyFile, result.Failure);
+        Assert.Empty(harness.Store.Reports);
+    }
+
+    [Fact]
+    public async Task UploadAsync_WhenTheStorageFailsUnexpectedly_PropagatesTheFailure()
+    {
+        // Only the dedicated size exception is a client refusal; an I/O or configuration failure must not be
+        // mislabeled as 413 (FR-REC-05, NFR-SEC-09).
+        var harness = new Harness();
+        harness.Storage.ThrowUnexpectedOnSave = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Service.UploadAsync(
+                RecordId,
+                PatientId,
+                ReportUploaderRole.Patient,
+                new FakeUploadedFile(PdfBytes, ReportFileValidator.PdfContentType),
+                IpAddress));
+
+        Assert.Empty(harness.Store.Reports);
+        Assert.Empty(harness.Audit.AddedEntries);
+    }
+
+    [Fact]
     public async Task UploadAsync_WhenTheCommitFails_DeletesTheStoredFileAndRethrows()
     {
         var harness = new Harness();
         harness.Store.ThrowOnSave = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Service.UploadAsync(
+                RecordId,
+                PatientId,
+                ReportUploaderRole.Patient,
+                new FakeUploadedFile(PdfBytes, ReportFileValidator.PdfContentType),
+                IpAddress));
+
+        var stored = Assert.Single(harness.Storage.Saved);
+        Assert.Equal([stored.StoredFileName], harness.Storage.Deleted);
+    }
+
+    [Fact]
+    public async Task UploadAsync_WhenTheCommitFailsAndCleanupFails_RethrowsTheCommitFailure()
+    {
+        var harness = new Harness();
+        harness.Store.ThrowOnSave = true;
+        harness.Storage.ThrowOnDelete = true;
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            harness.Service.UploadAsync(
+                RecordId,
+                PatientId,
+                ReportUploaderRole.Patient,
+                new FakeUploadedFile(PdfBytes, ReportFileValidator.PdfContentType),
+                IpAddress));
+
+        // Cleanup is best effort: the original commit failure must be the one the caller sees.
+        Assert.Equal("The commit failed.", exception.Message);
+    }
+
+    [Fact]
+    public async Task UploadAsync_WhenTheAuditWriterThrows_DeletesTheStoredFileAndRethrows()
+    {
+        var harness = new Harness();
+        harness.Audit.ThrowOnAdd = true;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             harness.Service.UploadAsync(
@@ -518,16 +593,25 @@ public class ReportUploadServiceTests
 
         public string? LastContentType { get; private set; }
 
-        public bool ThrowOnSave { get; set; }
+        public bool ThrowUnexpectedOnSave { get; set; }
+
+        public ReportFileValidationFailure? ThrowSizeOnSave { get; set; }
+
+        public bool ThrowOnDelete { get; set; }
 
         public async Task<StoredReportFile> SaveAsync(
             Stream content,
             string contentType,
             CancellationToken cancellationToken = default)
         {
-            if (ThrowOnSave)
+            if (ThrowUnexpectedOnSave)
             {
-                throw new InvalidOperationException("The stream is longer than the limit.");
+                throw new InvalidOperationException("The storage is unavailable.");
+            }
+
+            if (ThrowSizeOnSave is { } failure)
+            {
+                throw new ReportFileSizeException(failure, "The stream disagreed with the declared size.");
             }
 
             using var buffer = new MemoryStream();
@@ -547,6 +631,11 @@ public class ReportUploadServiceTests
 
         public Task<bool> DeleteAsync(string storedFileName, CancellationToken cancellationToken = default)
         {
+            if (ThrowOnDelete)
+            {
+                throw new IOException("The file is locked.");
+            }
+
             Deleted.Add(storedFileName);
 
             return Task.FromResult(true);

@@ -2,9 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
+using MediPassPlus.Api.Records;
 using MediPassPlus.Application.Records;
 using MediPassPlus.Domain.Audit;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -30,6 +32,9 @@ public sealed class ReportUploadEndpointTests : IClassFixture<MediPassApiFactory
 
     private static readonly byte[] PngBytes =
         [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x01, 0x02, 0x03, 0x04];
+
+    private static readonly byte[] JpegBytes =
+        [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01];
 
     private readonly MediPassApiFactory _factory;
 
@@ -285,7 +290,7 @@ public sealed class ReportUploadEndpointTests : IClassFixture<MediPassApiFactory
         var before = FilesOnDisk();
         using var client = _factory.CreateAuthenticatedClient(scenario.Visit.PatientUser);
         using var content = Upload(
-            new byte[ReportFileValidator.MaxSizeBytes + 1],
+            PdfBytesOfSize(ReportFileValidator.MaxSizeBytes + 1),
             ReportFileValidator.PdfContentType);
 
         using var response = await client.PostAsync(
@@ -293,7 +298,89 @@ public sealed class ReportUploadEndpointTests : IClassFixture<MediPassApiFactory
             content);
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        await AssertPayloadTooLargeProblemAsync(response);
         await AssertNothingWasStoredAsync(scenario.Record.Id, before);
+    }
+
+    [Fact]
+    public async Task Upload_WhenTheBodyExceedsTheRequestLimit_ReturnsPayloadTooLarge()
+    {
+        // The multipart body is larger than the controller's request window (10 MB + 64 KB), so the refusal must
+        // happen before the form reader can turn it into a generic model-binding 400 (FR-REC-05, NFR-SEC-09).
+        var scenario = await _factory.CreateDiagnosisWriteScenarioAsync();
+        var before = FilesOnDisk();
+        using var client = _factory.CreateAuthenticatedClient(scenario.Visit.PatientUser);
+        using var content = Upload(
+            PdfBytesOfSize(11 * 1024 * 1024),
+            ReportFileValidator.PdfContentType);
+
+        using var response = await client.PostAsync(
+            $"/api/records/{scenario.Record.Id}/reports",
+            content);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        await AssertPayloadTooLargeProblemAsync(response);
+        await AssertNothingWasStoredAsync(scenario.Record.Id, before);
+    }
+
+    [Fact]
+    public async Task Upload_WhenTheFileIsExactlyTenMegabytes_ReturnsCreated()
+    {
+        var scenario = await _factory.CreateDiagnosisWriteScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.Visit.PatientUser);
+        using var content = Upload(
+            PdfBytesOfSize(ReportFileValidator.MaxSizeBytes),
+            ReportFileValidator.PdfContentType);
+
+        using var response = await client.PostAsync(
+            $"/api/records/{scenario.Record.Id}/reports",
+            content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var metadata = await response.Content.ReadFromJsonAsync<ReportMetadataResponse>();
+        Assert.NotNull(metadata);
+        Assert.Equal(ReportFileValidator.MaxSizeBytes, metadata.SizeBytes);
+    }
+
+    [Fact]
+    public async Task Upload_WhenTheFileIsAJpeg_ReturnsCreated()
+    {
+        var scenario = await _factory.CreateDiagnosisWriteScenarioAsync();
+        using var client = _factory.CreateAuthenticatedClient(scenario.Visit.PatientUser);
+        using var content = Upload(JpegBytes, ReportFileValidator.JpegContentType);
+
+        using var response = await client.PostAsync(
+            $"/api/records/{scenario.Record.Id}/reports",
+            content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var metadata = await response.Content.ReadFromJsonAsync<ReportMetadataResponse>();
+        Assert.NotNull(metadata);
+        Assert.Equal(ReportFileValidator.JpegContentType, metadata.ContentType);
+    }
+
+    [Fact]
+    public async Task Upload_WithATraversalFileName_StoresUnderARandomNameInsideTheRoot()
+    {
+        var scenario = await _factory.CreateDiagnosisWriteScenarioAsync();
+        var before = FilesOnDisk();
+        using var client = _factory.CreateAuthenticatedClient(scenario.Visit.PatientUser);
+        using var content = Upload(PdfBytes, ReportFileValidator.PdfContentType, "../../outside.pdf");
+
+        using var response = await client.PostAsync(
+            $"/api/records/{scenario.Record.Id}/reports",
+            content);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var created = Assert.Single(FilesOnDisk().Except(before));
+        Assert.Matches(StoredNamePattern, Path.GetFileName(created));
+        Assert.Equal(
+            Path.GetFullPath(_factory.ReportStorageRootPath),
+            Path.GetFullPath(Path.GetDirectoryName(created)!));
+        Assert.False(File.Exists(Path.Combine(_factory.ReportStorageRootPath, "..", "outside.pdf")));
     }
 
     [Theory]
@@ -345,21 +432,48 @@ public sealed class ReportUploadEndpointTests : IClassFixture<MediPassApiFactory
         Assert.Equal(missing.Detail, foreign.Detail);
     }
 
-    private static MultipartFormDataContent Upload(byte[] bytes, string contentType)
+    private static MultipartFormDataContent Upload(
+        byte[] bytes,
+        string contentType,
+        string fileName = "upload.bin")
     {
         var file = new ByteArrayContent(bytes);
         file.Headers.ContentType = new MediaTypeHeaderValue(contentType);
 
         return new MultipartFormDataContent
         {
-            { file, "file", "upload.bin" }
+            { file, "file", fileName }
         };
+    }
+
+    /// <summary>
+    /// Builds a PDF of exactly <paramref name="sizeBytes"/> bytes with a valid leading signature, so a boundary test
+    /// exercises the size rule rather than the content check.
+    /// </summary>
+    /// <param name="sizeBytes">The total file length, including the PDF signature.</param>
+    private static byte[] PdfBytesOfSize(long sizeBytes)
+    {
+        var bytes = new byte[checked((int)sizeBytes)];
+        PdfBytes.AsSpan(0, Math.Min(PdfBytes.Length, bytes.Length)).CopyTo(bytes);
+
+        return bytes;
     }
 
     private string[] FilesOnDisk() =>
         Directory.Exists(_factory.ReportStorageRootPath)
             ? Directory.GetFiles(_factory.ReportStorageRootPath)
             : [];
+
+    /// <summary>Asserts the shared <c>413</c> envelope, so both size refusals answer the same contract.</summary>
+    /// <param name="response">The oversized upload response.</param>
+    private static async Task AssertPayloadTooLargeProblemAsync(HttpResponseMessage response)
+    {
+        var problem = await response.Content.ReadFromJsonAsync<ProblemDetails>();
+        Assert.NotNull(problem);
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, problem.Status);
+        Assert.Equal(ReportUploadRequestLimits.PayloadTooLargeType, problem.Type);
+        Assert.Contains("10 MB", problem.Detail, StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// Asserts that a refused request stored no file and appended no report row for the affected record.

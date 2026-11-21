@@ -36,21 +36,25 @@ public sealed class ReportStorageOptionsValidator : IValidateOptions<ReportStora
                 : ValidateOptionsResult.Success;
         }
 
-        if (!Path.IsPathFullyQualified(options.RootPath))
+        // Trim once and validate the same value the resolver will use. A path pasted with surrounding spaces is a
+        // configuration typo, not a different directory, and must not fail a deployment (ADR-0015 decision 6).
+        var rootPath = options.RootPath.Trim();
+
+        if (!Path.IsPathFullyQualified(rootPath))
         {
             return ValidateOptionsResult.Fail(
                 "Reports:Storage:RootPath must be an absolute directory outside the repository and outside wwwroot; "
                 + "a relative path resolves inside the checkout during development (ADR-0015 decision 6).");
         }
 
-        if (ReportStoragePath.IsInsideWebRoot(options.RootPath, _environment.ContentRootPath))
+        if (ReportStoragePath.IsInsideWebRoot(rootPath, _environment.ContentRootPath))
         {
             return ValidateOptionsResult.Fail(
                 "Reports:Storage:RootPath points inside wwwroot, where static files are served without any grant "
                 + "check. Choose a directory outside the web root (FR-PRV-05, ADR-0015 decision 6).");
         }
 
-        if (ReportStoragePath.IsRefused(options.RootPath, _environment.ContentRootPath))
+        if (ReportStoragePath.IsRefused(rootPath, _environment.ContentRootPath))
         {
             return ValidateOptionsResult.Fail(
                 "Reports:Storage:RootPath points inside the repository or the application directory. Choose a "

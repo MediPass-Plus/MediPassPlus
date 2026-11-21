@@ -24,9 +24,9 @@ public interface IReportStorage
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="contentType"/> is not one of the three supported formats.
     /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// The stream is empty, or longer than <see cref="ReportFileValidator.MaxSizeBytes"/>. The partial file is removed
-    /// before the exception leaves, so a refusal never leaves bytes behind.
+    /// <exception cref="ReportFileSizeException">
+    /// The stream is empty or longer than <see cref="ReportFileValidator.MaxSizeBytes"/>; the exception carries the
+    /// exact reason. The partial file is removed before the exception leaves, so a refusal never leaves bytes behind.
     /// </exception>
     Task<StoredReportFile> SaveAsync(
         Stream content,

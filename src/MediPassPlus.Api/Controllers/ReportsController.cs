@@ -1,5 +1,6 @@
 using System.IO;
 using MediPassPlus.Api.Extensions;
+using MediPassPlus.Api.Records;
 using MediPassPlus.Application.Identity;
 using MediPassPlus.Application.Records;
 using Microsoft.AspNetCore.Authorization;
@@ -22,14 +23,7 @@ public sealed class ReportsController : ControllerBase
     private const string BadRequestType = "https://tools.ietf.org/html/rfc9110#section-15.5.1";
     private const string UnauthorizedType = "https://tools.ietf.org/html/rfc9110#section-15.5.2";
     private const string NotFoundType = "https://tools.ietf.org/html/rfc9110#section-15.5.5";
-    private const string PayloadTooLargeType = "https://tools.ietf.org/html/rfc9110#section-15.5.14";
     private const string UnsupportedMediaTypeType = "https://tools.ietf.org/html/rfc9110#section-15.5.16";
-
-    // The form limit leaves room for the multipart headers and boundaries, so a file exactly at the 10 MB limit is
-    // always accepted and the size rule is answered by the service instead of by the framework (NFR-SEC-09). A body
-    // past this window is refused by the multipart reader with a 400 before the action runs; both answers are client
-    // errors and neither stores a byte.
-    private const long MaxRequestBytes = ReportFileValidator.MaxSizeBytes + (64 * 1024);
 
     private const string NotFoundTitle = "Not found.";
     private const string NotFoundDetail = "No record is available to this caller.";
@@ -59,19 +53,29 @@ public sealed class ReportsController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The stored report's metadata.</returns>
     /// <response code="201">The file was stored and the report row with its audit entry was committed.</response>
-    /// <response code="400">The request carries no <c>file</c> part, or the part is empty.</response>
+    /// <response code="400">
+    /// The request carries no <c>file</c> part, the part is empty, or a chunked or malformed multipart body cannot be
+    /// read within the form limit.
+    /// </response>
     /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
     /// <response code="403">The caller is not a doctor or a patient.</response>
     /// <response code="404">
     /// No record has that identifier, the caller may not use it, or a doctor holds no active grant for its owner. The
     /// three cases are deliberately indistinguishable.
     /// </response>
-    /// <response code="413">The file is larger than 10 MB.</response>
+    /// <response code="413">
+    /// The file is larger than 10 MB, or the request declares a body larger than the upload request window.
+    /// </response>
     /// <response code="415">The media type is not PDF, JPEG or PNG, or the bytes do not match the declared type.</response>
+    // The request window leaves room for the multipart headers and boundaries, so a file exactly at the 10 MB limit is
+    // always accepted and the size rule is answered by the service instead of by the framework (NFR-SEC-09). The
+    // resource filter refuses a body past this window before model binding; the attributes below are the second,
+    // framework-level guard.
     [HttpPost("{recordId:guid}/reports")]
     [Consumes("multipart/form-data")]
-    [RequestSizeLimit(MaxRequestBytes)]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxRequestBytes)]
+    [ReportUploadRequestLimit]
+    [RequestSizeLimit(ReportUploadRequestLimits.MaxRequestBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = ReportUploadRequestLimits.MaxRequestBytes)]
     [Produces("application/json")]
     [ProducesResponseType(typeof(ReportMetadataResponse), StatusCodes.Status201Created)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
@@ -138,7 +142,7 @@ public sealed class ReportsController : ControllerBase
                 "Upload a PDF, JPEG or PNG file up to 10 MB."),
             ReportUploadFailure.TooLarge => CreateProblem(
                 StatusCodes.Status413PayloadTooLarge,
-                PayloadTooLargeType,
+                ReportUploadRequestLimits.PayloadTooLargeType,
                 "The uploaded file is too large.",
                 "The maximum size for a report is 10 MB."),
             ReportUploadFailure.UnsupportedContentType or

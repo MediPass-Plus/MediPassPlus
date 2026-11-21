@@ -1,3 +1,4 @@
+using System.IO;
 using MediPassPlus.Application.Audit;
 using MediPassPlus.Application.Privacy;
 using MediPassPlus.Domain.Audit;
@@ -7,10 +8,11 @@ namespace MediPassPlus.Application.Records;
 
 /// <summary>
 /// Implements the report upload for both callers. The order is fixed and each step is a refusal, not an exception: the
-/// record is resolved from the database, the caller is authorized for it (a tenant of the record id, never a patient id
-/// from the request), the file is validated against the bytes, the file is stored under a random name, and finally the
-/// append-only row and its <c>ReportUploaded</c> audit entry commit together. A failed commit deletes the file, so the
-/// record and the disk never disagree (FR-REC-05, FR-REC-06, FR-PRV-02, FR-PRV-05, ADR-0004, ADR-0015).
+/// record is resolved from the database, the caller is authorized for it (the record id comes from the route, never a
+/// patient id from the request), the file is validated against the bytes, the file is stored under a random name, and
+/// finally the append-only row and its <c>ReportUploaded</c> audit entry commit together. A failed staging or commit
+/// deletes the file; a process crash between the file move and the commit is the one window where an orphan can
+/// remain, and it is never served (FR-REC-05, FR-REC-06, FR-PRV-02, FR-PRV-05, ADR-0004, ADR-0015).
 /// </summary>
 public sealed class ReportUploadService : IReportUploadService
 {
@@ -91,43 +93,46 @@ public sealed class ReportUploadService : IReportUploadService
             await using var content = file.OpenReadStream();
             stored = await _storage.SaveAsync(content, validation.ContentType, cancellationToken);
         }
-        catch (InvalidOperationException)
+        catch (ReportFileSizeException exception)
         {
             // The validator accepted the declared length and the bytes then disagreed with it. The client's claim was
-            // false, so the upload is refused with the size rule instead of surfacing an internal error.
-            return ReportUploadResult.Denied(ReportUploadFailure.TooLarge);
+            // false, so the upload is refused with the exact size rule instead of surfacing an internal error.
+            return ReportUploadResult.Denied(MapSizeFailure(exception.Failure));
         }
 
         var uploadedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        var report = Report.Create(
-            scope.RecordId,
-            callerUserId,
-            stored.StoredFileName,
-            validation.ContentType,
-            stored.SizeBytes,
-            uploadedAtUtc);
-
-        _store.Add(report);
-
-        // The audit entry names the grant that authorized a doctor's upload and stays null for a patient's own upload
-        // (ADR-0004 decision 1, ADR-0005).
-        _auditWriter.Add(new AuditEntry(
-            callerUserId,
-            scope.PatientId,
-            AuditAction.ReportUploaded,
-            AuditEntityType.Report,
-            report.Id.ToString(),
-            ipAddress,
-            authorization.GrantId));
+        Report report;
 
         try
         {
+            report = Report.Create(
+                scope.RecordId,
+                callerUserId,
+                stored.StoredFileName,
+                validation.ContentType,
+                stored.SizeBytes,
+                uploadedAtUtc);
+
+            _store.Add(report);
+
+            // The audit entry names the grant that authorized a doctor's upload and stays null for a patient's own
+            // upload (ADR-0004 decision 1, ADR-0005).
+            _auditWriter.Add(new AuditEntry(
+                callerUserId,
+                scope.PatientId,
+                AuditAction.ReportUploaded,
+                AuditEntityType.Report,
+                report.Id.ToString(),
+                ipAddress,
+                authorization.GrantId));
+
             await _store.SaveChangesAsync(cancellationToken);
         }
         catch
         {
-            // The row and its audit entry are one unit of work. If it does not commit, the file must not survive.
-            await _storage.DeleteAsync(stored.StoredFileName, CancellationToken.None);
+            // The row and its audit entry are one unit of work. If anything before or during the commit fails, the
+            // file must not survive. Cleanup is best effort so the original failure is the one that surfaces.
+            await TryDeleteAsync(stored.StoredFileName);
             throw;
         }
 
@@ -208,6 +213,27 @@ public sealed class ReportUploadService : IReportUploadService
             cancellationToken);
 
         return ReportFileValidator.Validate(file.ContentType, file.Length, header.AsSpan(0, read));
+    }
+
+    private static ReportUploadFailure MapSizeFailure(ReportFileValidationFailure failure) =>
+        failure switch
+        {
+            ReportFileValidationFailure.EmptyFile => ReportUploadFailure.EmptyFile,
+            ReportFileValidationFailure.TooLarge => ReportUploadFailure.TooLarge,
+            _ => throw new InvalidOperationException($"Unexpected storage size failure: {failure}.")
+        };
+
+    private async Task TryDeleteAsync(string storedFileName)
+    {
+        try
+        {
+            await _storage.DeleteAsync(storedFileName, CancellationToken.None);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            // Best effort: the original failure must surface, and the orphaned file is never served.
+        }
     }
 
     private static ReportUploadFailure MapValidationFailure(ReportFileValidationFailure failure) =>

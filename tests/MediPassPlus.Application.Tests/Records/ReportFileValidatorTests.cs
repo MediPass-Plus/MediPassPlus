@@ -39,6 +39,17 @@ public sealed class ReportFileValidatorTests
         Assert.Equal(".pdf", result.FileExtension);
     }
 
+    [Fact]
+    public void Jpeg_Alias_Is_Normalized_To_The_Registered_Media_Type()
+    {
+        // Some clients send "image/jpg"; the signature is still the authority, and the stored metadata is canonical.
+        var result = ReportFileValidator.Validate("image/jpg", 1_024, JpegHeader);
+
+        Assert.True(result.IsValid);
+        Assert.Equal(ReportFileValidator.JpegContentType, result.ContentType);
+        Assert.Equal(".jpg", result.FileExtension);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -152,6 +163,7 @@ public sealed class ReportFileValidatorTests
     [Theory]
     [InlineData(ReportFileValidator.PdfContentType, ".pdf")]
     [InlineData(ReportFileValidator.JpegContentType, ".jpg")]
+    [InlineData("image/jpg", ".jpg")]
     [InlineData(ReportFileValidator.PngContentType, ".png")]
     public void Extension_For_Returns_The_Storage_Extension(string contentType, string expected)
     {

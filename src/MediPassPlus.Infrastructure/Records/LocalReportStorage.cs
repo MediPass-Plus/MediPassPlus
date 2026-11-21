@@ -80,7 +80,8 @@ public sealed class LocalReportStorage : IReportStorage
 
                     if (written > ReportFileValidator.MaxSizeBytes)
                     {
-                        throw new InvalidOperationException(
+                        throw new ReportFileSizeException(
+                            ReportFileValidationFailure.TooLarge,
                             "The uploaded file is larger than the 10 MB limit; nothing was stored.");
                     }
 
@@ -96,7 +97,9 @@ public sealed class LocalReportStorage : IReportStorage
 
             if (written == 0)
             {
-                throw new InvalidOperationException("The uploaded file is empty; nothing was stored.");
+                throw new ReportFileSizeException(
+                    ReportFileValidationFailure.EmptyFile,
+                    "The uploaded file is empty; nothing was stored.");
             }
 
             // Move only after the bytes are durable enough to read: a reader never sees a half-written file, and

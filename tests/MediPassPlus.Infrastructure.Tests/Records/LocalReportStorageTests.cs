@@ -90,8 +90,10 @@ public sealed class LocalReportStorageTests
         var storage = CreateStorage(root.StoragePath);
         var oversized = new MemoryStream(new byte[ReportFileValidator.MaxSizeBytes + 1]);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<ReportFileSizeException>(
             () => storage.SaveAsync(oversized, ReportFileValidator.PdfContentType));
+
+        Assert.Equal(ReportFileValidationFailure.TooLarge, exception.Failure);
 
         // No final file and no temporary file: a refused upload is invisible on disk.
         Assert.Empty(FilesIn(root.StoragePath));
@@ -116,9 +118,10 @@ public sealed class LocalReportStorageTests
         using var root = new TemporaryStorageRoot();
         var storage = CreateStorage(root.StoragePath);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<ReportFileSizeException>(
             () => storage.SaveAsync(new MemoryStream(), ReportFileValidator.PdfContentType));
 
+        Assert.Equal(ReportFileValidationFailure.EmptyFile, exception.Failure);
         Assert.Empty(FilesIn(root.StoragePath));
     }
 

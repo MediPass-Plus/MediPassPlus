@@ -1,9 +1,8 @@
 # ADR-0015: Record-scoped report routes and record-level grant scope
 
-- **Status:** Proposed (2026-11-20). Needs a team decision before the MP-47/MP-48 routes are written. On acceptance it
-  also amends the doctor-read rule in ADR-0005 (§ "Write invariants"), so both changes land in the same PR as the
-  route code.
-- **Date:** 2026-11-20
+- **Status:** **Accepted** (2026-11-21). Amends the doctor-read rule in ADR-0005 (§ "Write invariants"); both landed
+  in the same PR as the route code. Revisit only under the conditions in "Review and expiry".
+- **Date:** 2026-11-20 (accepted 2026-11-21)
 - **Affects:** MP-47 `POST api/records/{recordId}/reports`, MP-48 `GET api/reports/{reportId}`,
   `IAccessGrantChecker`, the report storage boundary, ADR-0005
 
@@ -78,8 +77,12 @@ caller who has already passed the grant check is the one who learns the record i
 
 5. **Order of the upload pipeline**, so an unauthorized caller learns nothing and a bad file leaves nothing behind:
    authenticate → resolve the record and authorize it (404) → validate the file (413/415/400) → write the file → stage
-   the `Report` row and its audit row in one `SaveChanges`. A failed `SaveChanges` deletes the stored file before the
-   failure is returned; a failed file write stages no row.
+   the `Report` row and its audit row in one `SaveChanges`. A failed `SaveChanges` attempts to delete the stored file
+   before the failure is returned; cleanup is best effort so the original failure is the one that surfaces. A failed
+   file write stages no row. A process crash between the file move and the commit can leave an orphan file, which is
+   never served; a periodic sweep is a deployment concern, not a reason to weaken the commit order. A request body that
+   declares more than the 10 MB file limit plus the multipart envelope is refused with `413` before model binding, so
+   an oversized upload never surfaces as a generic model-binding `400`.
 
 6. **Storage boundary.** Files live under `Reports:Storage:RootPath`, which must be absolute and outside the
    repository **and** outside `wwwroot` — the same rule ADR-0007 decision 5 applies to the key ring. The stored name is
@@ -91,13 +94,54 @@ caller who has already passed the grant check is the one who learns the record i
    record owner, the caller as the actor, and `AccessGrantId` set to the grant that authorized a doctor's upload and
    `null` for a patient's own upload — the same attribution ADR-0005 already fixed for reports (ADR-0004).
 
-8. **Amendment to ADR-0005** (applied on acceptance, in the PR that adds the routes). The final bullet of
+8. **Amendment to ADR-0005** (applied in this PR, 2026-11-21). The final bullet of
    "Write invariants" becomes:
 
    > A doctor route never takes a patient id and no endpoint lists or searches patients (FR-ACS-10). A doctor route may
    > take an opaque medical record id only when (a) the id was returned by a response that already passed the grant
    > check and (b) a patient-scoped grant re-check succeeds on that request. MP-47 and MP-48 are the only such routes
    > today.
+
+9. **Guardrails for every future record-scoped route.** These are part of the decision, not advice. A reviewer can
+   reject a PR that breaks one of them without reopening the FR-ACS-10 debate:
+
+   1. **The exception is closed.** MP-47 (`POST api/records/{recordId}/reports`) and MP-48
+      (`GET api/reports/{reportId}`) are the only record-scoped routes. Diagnoses, prescriptions and every other
+      medical resource stay appointment-scoped. A third record-scoped route needs an amendment to this ADR before it
+      is written.
+   2. **No patient-id route, no listing, no search.** No endpoint accepts a patient id to reach a record, lists
+      records, searches records, or maps a patient to a record. The record id is the only handle, and it is opaque.
+   3. **The record id is a capability, not a lookup key.** The only disclosures are a response that already passed
+      ownership or an active grant: `RecordHistoryResponse.MedicalRecordId` on the appointment-scoped doctor history
+      route, and the patient's own `GET api/me/history`. If either contract changes, it must keep an authorized way
+      for the doctor and the patient to learn the id; otherwise MP-47/MP-48 become unreachable.
+   4. **Knowing the id is never authorization.** Every record-scoped request re-checks the grant in the database on
+      that request. A doctor who keeps a record id after the grant ends can still guess the URL; the next request is
+      refused. A grant for patient B never authorizes record A, because the patient in the check is the stored record
+      owner, not a request field.
+   5. **Refusals stay uniform.** Unknown record, another patient's record, a record whose owner the doctor has no
+      active grant for, and a report outside the caller's scope all answer the same `404`. `403` is reserved for a
+      role that may never call the endpoint. This is what makes the capability safe to hand out: a wrong id is
+      indistinguishable from a forbidden one.
+   6. **MP-48 follows the same rule.** The download resolves the report, then the record owner, then the same
+      patient-scoped grant re-check. The stored file is streamed only after that check; the stored name is never a
+      URL, and no static-file mapping points at the storage root (FR-PRV-05).
+   7. **A new requirement does not silently widen this.** A request for patient search, a patient-to-record lookup,
+      or a record list is a new decision with its own privacy review, not an implementation detail of a report
+      ticket.
+
+## Review and expiry
+
+This acceptance is reviewed if any of these happens:
+
+- FR-ACS-10 is clarified or changed in the requirements document.
+- A requirement or a ticket asks for patient search, a record list, or a patient-to-record lookup.
+- A third record-scoped route is proposed.
+- `RecordHistoryResponse.MedicalRecordId` is removed or stops being returned after the grant check.
+- A security or privacy review finds a way to enumerate records or to reach one without a live grant.
+
+If a review is triggered, the default is the appointment-scoped alternative in "Alternatives considered"; widening the
+record-scoped exception requires a new team decision, not an edit to a controller.
 
 ## Consequences
 
@@ -111,9 +155,10 @@ caller who has already passed the grant check is the one who learns the record i
 - The safety net is the route list, not a filter: adding a third record-scoped route later needs this ADR to be
   updated, otherwise a reviewer has no rule to check it against.
 - **Cost / residual risk:** FR-ACS-10 says "a record can be reached only through an appointment", and a record-id
-  route reads that sentence against its stated intent. The intent (no enumeration, no patient search) is preserved;
-  the literal sentence is not. The team accepts that reading or chooses the alternative below — this is the decision
-  this ADR asks for.
+  route reads that sentence against its stated intent. The team accepted that reading on 2026-11-21: the intent (no
+  enumeration, no patient search) is preserved, the record id is disclosed only after an appointment-scoped grant
+  check, and the guardrails in decision 9 keep the exception closed. The literal sentence is narrowed by this decision,
+  and "Review and expiry" says when the team must revisit it.
 
 ## Alternatives considered
 
@@ -121,8 +166,9 @@ caller who has already passed the grant check is the one who learns the record i
   `POST api/me/reports` for a patient, mirroring `DiagnosesController` and `MyHistoryController`. This is the safest
   reading of FR-ACS-10 and reuses `RequireActiveGrantAsync` unchanged. Rejected as the primary design because MP-47,
   MP-48 and the frontend contract name a record-level resource, and because MP-48's `api/reports/{reportId}` needs the
-  patient-scoped check anyway — the extra method is not avoided, only moved. It stays the fallback if the team prefers
-  the literal reading; swapping the upload route before any code exists costs one route attribute.
+  patient-scoped check anyway — the extra method is not avoided, only moved. It remains the fallback if a trigger in
+  "Review and expiry" fires; switching the upload route costs one route attribute, and the validator, storage, audit
+  and most tests are unchanged.
 - **Add `Report.AppointmentId`** so every report route is appointment-scoped. Rejected by ADR-0005: a report is
   record-level, and adding a visit FK is a new ADR plus a migration, not a side effect of MP-47.
 - **Serve the files from `wwwroot` under unguessable names.** Rejected: FR-PRV-05 forbids public links outright, and a
@@ -141,6 +187,26 @@ caller who has already passed the grant check is the one who learns the record i
   states are the same code path.
 - **ADR-0007 decision 5** — the storage root follows the key-ring rule (absolute, outside the repository) with
   `wwwroot` added, because a file under the static root is a public link.
-- **FR-ACS-10** — the second sentence conflicts with a record-id route. Recorded in Consequences; the team decides.
+- **FR-ACS-10** — the second sentence is read as an authorization-origin rule, not a URL-shape rule. The team accepted
+  that interpretation on 2026-11-21, subject to decision 9: the record id is disclosed only by an appointment-scoped
+  response, no route lists or searches patients, and every record-scoped request re-checks a live grant.
 - **FR-ACS-11** — respected: the lookup returns active grants only, so a new visit still needs a new approval and an
   ended grant never authorizes an upload.
+
+## Dependencies and follow-ups
+
+- **P5 (MP-51)** is not a backend dependency of this route. The relevant part is the browser-to-API origin (CORS or
+  same-origin hosting) that F1 (MP-56) uses; the endpoint is reachable and safe without it. MP-47 adds no upload rate
+  limit, and P5 does not add one either: a per-user quota or an upload limiter is a separate follow-up if the demo
+  needs it.
+- **MP-48** is the read half. It must use the same record-id capability and the same patient-scoped grant re-check;
+  no public link and no route that serves a stored name.
+- **Report storage operations** are documented in `docs/operations/deployment-keys.md`. Production refuses to start
+  without an absolute root outside the repository and outside `wwwroot`.
+- No migration: `Report` already has `StoredFileName`, `ContentType`, `SizeBytes` and `UploadedByUserId`.
+
+## Acceptance record
+
+Accepted 2026-11-21. The team accepted the record-id capability interpretation of FR-ACS-10, subject to the guardrails
+in decision 9. ADR-0005 was amended in the same PR. The appointment-scoped alternative was considered and remains the
+fallback under "Review and expiry"; it would require a new ADR or an amendment to this one.

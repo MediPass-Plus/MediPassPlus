@@ -101,6 +101,33 @@ public sealed class ReportStorageOptionsValidatorTests
     }
 
     [Fact]
+    public void Path_With_Surrounding_Whitespace_Is_Accepted()
+    {
+        using var layout = new TemporaryLayout();
+        var validator = CreateValidator(Environments.Development, layout.ContentRoot);
+
+        var result = validator.Validate(
+            null,
+            new ReportStorageOptions { RootPath = $"  {layout.OutsideRepositoryPath}  " });
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void Whitespace_Does_Not_Hide_A_Path_Inside_The_Web_Root()
+    {
+        using var layout = new TemporaryLayout();
+        var validator = CreateValidator(Environments.Development, layout.ContentRoot);
+
+        var result = validator.Validate(
+            null,
+            new ReportStorageOptions { RootPath = $"  {layout.InsideWebRootPath}  " });
+
+        Assert.True(result.Failed);
+        Assert.Contains("wwwroot", result.FailureMessage);
+    }
+
+    [Fact]
     public void The_Content_Root_Itself_Is_Refused()
     {
         using var layout = new TemporaryLayout();

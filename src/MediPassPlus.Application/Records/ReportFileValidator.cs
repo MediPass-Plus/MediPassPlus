@@ -40,7 +40,8 @@ public static class ReportFileValidator
     /// </summary>
     /// <param name="declaredContentType">
     /// The media type the client declared for the part. Case is ignored and a parameter suffix such as
-    /// <c>; charset=binary</c> is dropped before the comparison; nothing else is inferred from it.
+    /// <c>; charset=binary</c> is dropped before the comparison; <c>image/jpg</c> is accepted as an alias for
+    /// <c>image/jpeg</c> and normalized to it. Nothing else is inferred from the declaration.
     /// </param>
     /// <param name="sizeBytes">The reported file length. Zero, a negative value or a length past the limit is refused.</param>
     /// <param name="header">
@@ -89,7 +90,7 @@ public static class ReportFileValidator
         {
             throw new ArgumentOutOfRangeException(
                 nameof(contentType),
-                "Only application/pdf, image/jpeg and image/png have a storage extension.");
+                "Only the PDF, JPEG and PNG media types have a storage extension.");
         }
 
         return format.Extension;
@@ -103,6 +104,10 @@ public static class ReportFileValidator
         {
             PdfContentType => new ReportFileFormat(PdfContentType, ".pdf", PdfSignature),
             JpegContentType => new ReportFileFormat(JpegContentType, ".jpg", JpegSignature),
+
+            // "image/jpg" is not the registered JPEG media type, but clients send it often. It is accepted and
+            // normalized to "image/jpeg" so the stored metadata and the extension stay canonical (FR-REC-06).
+            "image/jpg" => new ReportFileFormat(JpegContentType, ".jpg", JpegSignature),
             PngContentType => new ReportFileFormat(PngContentType, ".png", PngSignature),
             _ => default
         };
