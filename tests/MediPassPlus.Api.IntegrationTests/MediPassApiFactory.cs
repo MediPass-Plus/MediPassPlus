@@ -34,7 +34,13 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
 {
     private const string JwtIssuer = "MediPassPlus";
     private const string JwtAudience = "MediPassPlus.Client";
-    private const string TestPassword = "Integration1!";
+
+    /// <summary>
+    /// The password every account this factory creates is given. It is public so a test can sign in through
+    /// <c>POST api/Auth/login</c> with an account created by <see cref="CreateUserAsync"/> and prove the real login
+    /// path instead of only a pre-minted token.
+    /// </summary>
+    public const string TestPassword = "Integration1!";
     private const string DataProtectionApplicationName = "MediPassPlus.IntegrationTests";
 
     // A placeholder ciphertext for seeded rows. Integration tests never store plain medical text, and encryption

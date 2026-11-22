@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace MediPassPlus.Api.IntegrationTests;
@@ -133,6 +134,33 @@ public sealed class AdminEndpointsAuthorizationTests : IAsyncLifetime, IClassFix
         var response = await SendAsync("GET", "/api/admin/clinics", body: null, _tokens["Admin"]);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// An Identity refusal from admin creation uses the shared <c>ProblemDetails</c> envelope, not a raw string or a
+    /// private anonymous object (ADR-0010), and it never repeats the submitted password.
+    /// </summary>
+    [Fact]
+    public async Task CreateAdmin_WithAnExistingEmail_ReturnsTheSharedProblemEnvelope()
+    {
+        // Minting the token creates the admin account this request will duplicate.
+        await _factory.CreateTokenForRoleAsync("Admin");
+
+        const string password = "DuplicateAdm1n!";
+        using var response = await SendAsync(
+            "POST",
+            "/api/Auth/create-admin",
+            $$"""{"fullName":"Duplicate Admin","email":"admin@integration.medipass.test","password":"{{password}}"}""",
+            _tokens["Admin"]);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(body);
+        Assert.Equal((int)HttpStatusCode.BadRequest, document.RootElement.GetProperty("status").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("title").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(document.RootElement.GetProperty("detail").GetString()));
+        Assert.DoesNotContain(password, body, StringComparison.Ordinal);
     }
 
     private async Task<HttpResponseMessage> SendAsync(
