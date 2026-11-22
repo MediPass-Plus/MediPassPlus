@@ -53,15 +53,21 @@ public class AuthController : ControllerBase
     /// <response code="200">The account was created with the requested role.</response>
     /// <response code="400">
     /// The payload is invalid, the role does not exist or cannot be self-assigned, or Identity rejected the account.
+    /// The body is the shared <see cref="ProblemDetails"/> envelope (ADR-0010).
     /// </response>
     [HttpPost("register")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register(RegisterDto request)
     {
-        // Validate registration data
+        // The global validation filter normally answers first; this guard keeps a body that skipped it in the same
+        // envelope instead of a second error shape (ADR-0010, NFR-REL-04).
         if (!ModelState.IsValid)
-            return BadRequest("Invalid registration data.");
+        {
+            return AccountRefusal(
+                "Invalid registration data.",
+                "The registration payload does not match the contract.");
+        }
 
         // Identity resolves a role name case-insensitively through NormalizedName, so "admin", "Admin"
         // and "ADMIN" are the same role and must reach the same branch. Resolve the canonical role first
@@ -70,10 +76,11 @@ public class AuthController : ControllerBase
         var role = await _roleManager.FindByNameAsync(request.Role);
 
         if (role is null)
-            return BadRequest(new
-            {
-                message = $"Role '{request.Role}' does not exist"
-            });
+        {
+            return AccountRefusal(
+                "The requested role does not exist.",
+                $"Role '{request.Role}' does not exist.");
+        }
 
         var user = new ApplicationUser
         {
@@ -89,10 +96,9 @@ public class AuthController : ControllerBase
         switch (role.NormalizedName)
         {
             case "ADMIN":
-                return BadRequest(new
-                {
-                    message = "This role cannot be self-assigned"
-                });
+                return AccountRefusal(
+                    "This role cannot be self-assigned.",
+                    "The Admin role is granted by an existing administrator, never by public registration.");
 
             case "DOCTOR":
             case "STAFF":
@@ -118,8 +124,9 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(
-                    result.Errors.Select(e => e.Description));
+                return AccountRefusal(
+                    "The account could not be created.",
+                    Describe(result));
             }
 
             // Step 2: Assign the role in the UserRoles table
@@ -130,11 +137,10 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(new
-                {
-                    message = "Failed to assign role. Registration was cancelled.",
-                    errors = roleResult.Errors.Select(e => e.Description)
-                });
+                return AccountRefusal(
+                    "The account could not be created.",
+                    "Registration was cancelled because the role could not be assigned. "
+                        + Describe(roleResult));
             }
 
             await AddMedicalRecordIfPatientAsync(user);
@@ -418,6 +424,36 @@ public class AuthController : ControllerBase
         return BadRequest(problem);
     }
 
+    /// <summary>
+    /// Builds the shared <c>400</c> envelope for a refused registration or admin creation (ADR-0010). The title is
+    /// stable for each branch and the detail never includes a submitted password, token or stored hash.
+    /// </summary>
+    /// <param name="title">A short description of the refused request.</param>
+    /// <param name="detail">The safe, caller-facing reason for the refusal.</param>
+    /// <returns>The <c>400</c> result.</returns>
+    private ObjectResult AccountRefusal(string title, string detail)
+    {
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Title = title,
+            Detail = detail
+        };
+
+        problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+        return BadRequest(problem);
+    }
+
+    /// <summary>
+    /// Joins Identity's refusal descriptions into one safe detail. Identity reports rule violations, never the
+    /// submitted password or token, and the caller's identifier is already in the correlation id (FR-PRV-08).
+    /// </summary>
+    /// <param name="result">The failed Identity operation.</param>
+    /// <returns>The descriptions separated by semicolons.</returns>
+    private static string Describe(IdentityResult result) =>
+        string.Join("; ", result.Errors.Select(error => error.Description));
+
     // Endpoint to create an admin user, accessible only by existing admins
 
     /// <summary>
@@ -427,28 +463,34 @@ public class AuthController : ControllerBase
     /// <returns>A message confirming the creation.</returns>
     /// <response code="200">The admin account was created.</response>
     /// <response code="400">
-    /// The payload is invalid, the Admin role does not exist, or Identity rejected the account.
+    /// The payload is invalid, the Admin role does not exist, or Identity rejected the account. The body is the shared
+    /// <see cref="ProblemDetails"/> envelope (ADR-0010).
     /// </response>
     /// <response code="401">Missing, invalid or expired token.</response>
     /// <response code="403">The caller is not an admin.</response>
     [Authorize(Roles = "Admin")]
     [HttpPost("create-admin")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> CreateAdmin(CreateAdminDto request)
     {
         // Validate request data
         if (!ModelState.IsValid)
-            return BadRequest("Invalid registration data.");
+        {
+            return AccountRefusal(
+                "Invalid registration data.",
+                "The account payload does not match the contract.");
+        }
 
         // Check if Admin role exists
         if (!await _roleManager.RoleExistsAsync("Admin"))
-            return BadRequest(new
-            {
-                message = "Admin role does not exist"
-            });
+        {
+            return AccountRefusal(
+                "The Admin role does not exist.",
+                "This environment has no Admin role, so an administrator cannot be created here.");
+        }
 
         var user = new ApplicationUser
         {
@@ -475,8 +517,9 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(
-                    result.Errors.Select(e => e.Description));
+                return AccountRefusal(
+                    "The admin account could not be created.",
+                    Describe(result));
             }
 
             // Step 2 Assign the Admin role in the UserRoles table
@@ -487,11 +530,10 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(new
-                {
-                    message = "Failed to assign Admin role. Admin creation was cancelled.",
-                    errors = roleResult.Errors.Select(e => e.Description)
-                });
+                return AccountRefusal(
+                    "The admin account could not be created.",
+                    "Admin creation was cancelled because the role could not be assigned. "
+                        + Describe(roleResult));
             }
 
             // Both operations succeeded, commit the transaction

@@ -164,8 +164,20 @@ patient audit list (`GET api/me/audit`): own rows only by the affected patient, 
 50 with `400` for invalid paging, identifiers/action/entity/time/IP only, no self-audit on the list read, exactly one
 row per medical read/write, and an immutability proof against SQL Server (FR-PRV-02, FR-PRV-03, NFR-PRI-03,
 NFR-PRI-05). The MP-47 tests add the upload type and size boundaries, the private-storage and audit proofs, and the
-record-scope refusal matrix. There is still no report download endpoint (MP-48), and the frontend is the untouched
-Angular welcome page.
+record-scope refusal matrix. `AccountAuthorizationMatrixTests` is the accounts counterpart of that matrix: one table
+lists every Auth, Admin and self-service action with the roles allowed to call it, a route-inventory test fails when a
+new action has no row, and each protected row gets a no-token `401` with its Bearer challenge, a garbage-token `401`, a
+wrong-role `403` and a positive case for the allowed role, while the six anonymous Auth endpoints are called with a
+token of every role and must not be challenged. The same class proves the five-attempt lockout for all four roles, a
+replayed refresh token ending every live session, logout ending only the presented session, and that a role supplied in
+a registration body buys nothing (Admin refused, Doctor and Staff created inactive and unable to sign in). Every
+refusal is checked for the problem envelope and for a submitted password, a refresh token or a stored hash echoed back,
+and deactivation is proved to block login and refresh immediately while an already-issued access token keeps working
+until it expires (ADR-0003 decision 5). The same PR folds the remaining raw `400` bodies of public registration and
+admin creation into the shared `ProblemDetails` envelope (ADR-0010); validation failures keep the
+`ValidationProblemDetails` `errors` bag, and every controller-level refusal has a stable title and a safe detail.
+There is still no report download endpoint (MP-48), and the frontend is the
+untouched Angular welcome page.
 Everything the README or the planning document describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files and `package.json` over prose.
 
