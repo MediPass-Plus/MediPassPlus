@@ -33,8 +33,8 @@ Secrets stay on your machine and never enter Git:
 
 ```powershell
 # The Api project already has a UserSecretsId, so no `user-secrets init` is needed.
-dotnet user-secrets set "ConnectionStrings:Default" "<your SQL Server connection string>" --project src/MediPassPlus.Api
-dotnet user-secrets set "Jwt:Key" "<at least 32 random characters>" --project src/MediPassPlus.Api
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "<your SQL Server connection string>" --project src/MediPassPlus.Api
+dotnet user-secrets set "Jwt:SecretKey" "<at least 32 random characters>" --project src/MediPassPlus.Api
 
 # Base64 of at least 32 random bytes. The API validates it at startup and refuses to run without it.
 $key = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
@@ -181,7 +181,7 @@ Do not ask an agent for a full repository audit again. The audit lives in `AGENT
 
 | Symptom | What to do |
 |---|---|
-| No secrets / no SQL Server | The API still starts and the build and tests pass. Anything that opens the database will fail until `ConnectionStrings:Default` is set. Say so in your report; do not hard-code a connection string |
+| No secrets / no SQL Server | The API still starts and the build and tests pass. Anything that opens the database will fail until `ConnectionStrings:DefaultConnection` is set. Say so in your report; do not hard-code a connection string |
 | Build fails after pulling | Check `dotnet --version` against `global.json`, run `dotnet restore` once, and read the first error. If the failure is inside another module, report it — never "fix" it by reverting or rewriting someone else's code |
 | `dotnet ef database update` fails creating `IX_Appointments_DoctorSlotId_Active` | The database already has duplicate non-cancelled appointments for one slot. Follow the [MP-27 booking index rollout](mp-27-booking-index-rollout.md) and clean the data before rerunning; do not edit the merged migration |
 | `npm ci` fails | Check the Node version (`node -v`) against `frontend/package.json`; delete `node_modules` and retry once |
