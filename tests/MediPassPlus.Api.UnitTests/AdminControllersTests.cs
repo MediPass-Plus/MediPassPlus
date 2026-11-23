@@ -14,11 +14,12 @@ public class AdminControllersTests
     private static readonly Guid AdminId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid TargetId = Guid.Parse("22222222-2222-2222-2222-222222222222");
 
-    private static readonly Type[] AdminControllers =
+      private static readonly Type[] AdminControllers =
     [
         typeof(AdminClinicsController),
         typeof(AdminAccountsController),
-        typeof(AdminUsersController)
+        typeof(AdminUsersController),
+        typeof(AdminDashboardController)
     ];
 
     // ---------- Authorization: only Admin ----------
@@ -27,6 +28,7 @@ public class AdminControllersTests
     [InlineData(typeof(AdminClinicsController))]
     [InlineData(typeof(AdminAccountsController))]
     [InlineData(typeof(AdminUsersController))]
+    [InlineData(typeof(AdminDashboardController))]
     public void EveryAdminController_RequiresTheAdminRole(Type controllerType)
     {
         var authorize = controllerType.GetCustomAttribute<AuthorizeAttribute>();
