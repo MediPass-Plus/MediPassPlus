@@ -1,14 +1,40 @@
 using System.ComponentModel.DataAnnotations;
 using MediPassPlus.Api.Security;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace MediPassPlus.Api.UnitTests.Security;
 
 public class CorsSettingsTests
 {
     [Fact]
-    public void Defaults_AreValid()
+    public void Defaults_AreRejectedBecauseNoOriginIsConfigured()
     {
-        Assert.True(IsValid(new CorsSettings()));
+        // There is no committed localhost fallback: a host that forgot its Cors section must fail startup rather than
+        // answer a developer origin (NFR-SEC-07).
+        Assert.False(IsValid(new CorsSettings()));
+    }
+
+    [Fact]
+    public void AMissingSection_BindsToAnEmptyListAndFailsValidation()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>())
+            .Build();
+        var services = new ServiceCollection();
+        services.AddOptions<CorsSettings>()
+            .Bind(configuration.GetSection(CorsSettings.SectionName))
+            .ValidateDataAnnotations();
+
+        using var provider = services.BuildServiceProvider();
+
+        var exception = Assert.Throws<OptionsValidationException>(
+            () => _ = provider.GetRequiredService<IOptions<CorsSettings>>().Value);
+
+        Assert.Contains(
+            exception.Failures,
+            failure => failure.Contains("must list at least one origin", StringComparison.Ordinal));
     }
 
     [Fact]

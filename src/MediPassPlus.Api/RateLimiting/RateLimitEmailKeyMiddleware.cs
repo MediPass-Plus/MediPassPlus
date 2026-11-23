@@ -12,7 +12,9 @@ namespace MediPassPlus.Api.RateLimiting;
 /// <remarks>
 /// Only the endpoints whose policy is in <see cref="RateLimitEmailKey"/> are touched: sign-in, the start of the
 /// password-reset flow and its completion. The read is bounded to <see cref="MaximumBodyBytes"/> and the stream is
-/// always rewound, so model binding sees the original body. The email value is never logged.
+/// always rewound, so model binding sees the original body. When the body repeats the <c>email</c> property, the last
+/// occurrence wins, exactly like System.Text.Json model binding, so the limiter and the action always agree on which
+/// address is spending the budget. The email value is never logged.
 /// </remarks>
 public sealed class RateLimitEmailKeyMiddleware
 {
@@ -97,16 +99,23 @@ public sealed class RateLimitEmailKeyMiddleware
                 return null;
             }
 
+            // A JSON object may repeat a property name and System.Text.Json (and therefore MVC model binding) keeps
+            // the last occurrence. The limiter must read the same value the action will see; taking the first
+            // occurrence would let a caller pair a throwaway decoy email with the address the action actually uses
+            // and get a fresh budget per request, defeating the limit (FR-PRV-07).
+            string? email = null;
+
             foreach (var property in document.RootElement.EnumerateObject())
             {
-                if (string.Equals(property.Name, EmailPropertyName, StringComparison.OrdinalIgnoreCase)
-                    && property.Value.ValueKind == JsonValueKind.String)
+                if (string.Equals(property.Name, EmailPropertyName, StringComparison.OrdinalIgnoreCase))
                 {
-                    return RateLimitEmailKey.Normalize(property.Value.GetString());
+                    email = property.Value.ValueKind == JsonValueKind.String
+                        ? property.Value.GetString()
+                        : null;
                 }
             }
 
-            return null;
+            return RateLimitEmailKey.Normalize(email);
         }
         catch (JsonException)
         {

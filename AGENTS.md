@@ -272,19 +272,27 @@ to `ProblemDetails` — so no production change and no migration were needed.
 MP-51 closes the HTTP-edge controls (FR-PRV-07, NFR-SEC-01, NFR-SEC-06, NFR-SEC-07, NFR-SEC-08).
 `POST api/Auth/login` now carries the `Login` fixed-window policy: 5 attempts per 15 minutes per normalized email plus
 client address, configurable under `RateLimiting:Login` and validated at startup. The partition needs the email before
-the limiter runs, so `RateLimitEmailKeyMiddleware` reads the login body only, bounded to 8 KiB, and rewinds it; a
-missing, oversized or unparseable body falls back to the client address alone, so a malformed request cannot escape the
-limiter. The same middleware now captures the email for the password-reset policies too (`PasswordResetRequest`: 3 per
-15 minutes starting the flow; `PasswordResetSubmit`: 5 per 15 minutes completing it), per normalized email plus client
-address. The per-account lockout stays authoritative (ADR-0007 decision 1), which is why the shared integration host
-raises the limit to 100 while `LoginRateLimitTests` proves the real 429 on its own host. A rejection is `429` with
-`Retry-After` and the shared `ProblemDetails` envelope, carrying no account identifier or medical content.
-CORS is one named `Frontend` policy whose origins come from `Cors:AllowedOrigins` (default
-`http://localhost:4200`) and are validated at startup, so a wildcard, a relative value or a path fails the process
-instead of widening the policy; the preflight is answered before authentication and rate limiting.
+the limiter runs, so `RateLimitEmailKeyMiddleware` reads the bodies of the three body-keyed policies (login,
+`forgot-password`, `reset-password`), bounded to 8 KiB, and rewinds them; a missing, oversized or unparseable body falls
+back to the client address alone, so a malformed request cannot escape the limiter. A repeated `email` property spends
+the budget of the last occurrence, because that is the value MVC binds, so a decoy cannot buy a fresh bucket. The
+password-reset policies are `PasswordResetRequest` (3 per 15 minutes starting the flow) and `PasswordResetSubmit`
+(5 per 15 minutes completing it), per normalized email plus client address. The email is folded into one of 16,384
+shards (`email:b1a2f:ip:…`) so the never-evicting limiter's key set cannot grow with invented addresses, and an address
+longer than 254 characters falls back to the client address. The per-account lockout stays authoritative (ADR-0007
+decision 1), which is why the shared integration host raises the limit to 100 while `LoginRateLimitTests` proves the
+real 429 on its own host. A rejection is `429` with `Retry-After` and the shared `ProblemDetails` envelope, carrying no
+account identifier or medical content. CORS is one named `Frontend` policy whose origins come from
+`Cors:AllowedOrigins` (the API's own `appsettings.json` names `http://localhost:4200`, but there is no code fallback, so
+a missing section fails startup) and are validated at startup, so a wildcard, a relative value or a path fails the
+process instead of widening the policy; `CorsStartupValidationTests` proves the host refusal, the preflight is answered
+before authentication and rate limiting, and `Retry-After` is an exposed response header so the Angular client can read
+it on a `429` (the F1/MP-56 handoff is recorded in `platform-hardening.md`).
 `SecurityHeadersMiddleware` adds `nosniff`, `DENY`, `no-referrer`, `camera=(self)` and a CSP from the response's
 `OnStarting` callback, so a `429` and a `500` keep them, and `'unsafe-inline'` stays until the Swagger UI and camera
-helper drop their inline blocks. HSTS is a one-year `includeSubDomains` policy enabled outside Development only, with
+helper drop their inline blocks. The header values, the CSP and HSTS are code constants on purpose, not configuration —
+they are one policy for every deployment; only rate limits, CORS origins and forwarded-header trust are config-backed.
+HSTS is a one-year `includeSubDomains` policy enabled outside Development only, with
 `preload` off, and the framework's `localhost`/`127.0.0.1`/`[::1]` exclusion is kept deliberately; Kestrel's `Server`
 header is off. Forwarded headers are opt-in: enabling them requires a `KnownProxies` list or an explicit
 `TrustAllProxies`, because a spoofable address would defeat every IP-keyed limit. The committed development connection

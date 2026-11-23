@@ -4,11 +4,12 @@ using Microsoft.AspNetCore.Http;
 namespace MediPassPlus.Api.RateLimiting;
 
 /// <summary>
-/// Builds the <c>Login</c> rate-limit partition and its rejection response. The partition is the email address
-/// together with the client address, as ADR-0007 decision 2 requires: one caller cannot spend another account's
-/// budget, a shared network does not throttle unrelated users, and an unknown address is still bounded by the client
-/// address. The email is captured by <see cref="RateLimitEmailKeyMiddleware"/> before the limiter runs, because the
-/// limiter executes before MVC model binding.
+/// Builds the <c>Login</c> rate-limit partition and its rejection response. The partition is the normalized email
+/// address — represented by its bounded shard, see <see cref="RateLimitEmailKey.Bucket"/> — together with the client
+/// address, as ADR-0007 decision 2 requires: one caller cannot spend another account's budget, a shared network does
+/// not throttle unrelated users, and an unknown address is still bounded by the client address. The email is captured
+/// by <see cref="RateLimitEmailKeyMiddleware"/> before the limiter runs, because the limiter executes before MVC model
+/// binding.
 /// </summary>
 public static class LoginRateLimitPolicy
 {
@@ -36,9 +37,11 @@ public static class LoginRateLimitPolicy
         var email = RateLimitEmailKey.Read(context);
         var ip = context.Connection.RemoteIpAddress?.ToString() ?? UnknownPartitionValue;
 
+        // The address is folded into a bounded shard so the limiter's never-evicted key set cannot grow with invented
+        // addresses; the client address still separates callers, as ADR-0007 decision 2 requires.
         var partitionKey = string.IsNullOrWhiteSpace(email)
             ? string.Concat(IpPartitionPrefix, ip)
-            : string.Concat(EmailPartitionPrefix, email, ":", IpPartitionPrefix, ip);
+            : string.Concat(EmailPartitionPrefix, RateLimitEmailKey.Bucket(email), ":", IpPartitionPrefix, ip);
 
         return RateLimitPartition.GetFixedWindowLimiter(partitionKey, _ => new FixedWindowRateLimiterOptions
         {

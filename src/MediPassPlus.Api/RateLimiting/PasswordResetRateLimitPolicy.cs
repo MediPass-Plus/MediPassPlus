@@ -5,10 +5,12 @@ namespace MediPassPlus.Api.RateLimiting;
 
 /// <summary>
 /// Builds the two password-reset partitions and their rejection responses (FR-PRV-07, ADR-0007 decision 2). The
-/// partition is the email address together with the client address, exactly like <see cref="LoginRateLimitPolicy"/>,
-/// so one caller cannot spend another account's budget and a shared network does not throttle unrelated users. The two
-/// endpoints keep separate budgets: starting the flow sends an email and mints a token, while completing it only
-/// spends a token, so they are different kinds of work and ADR-0007 gives each policy group its own numbers.
+/// partition is the normalized email address — represented by its bounded shard, see
+/// <see cref="RateLimitEmailKey.Bucket"/> — together with the client address, exactly like
+/// <see cref="LoginRateLimitPolicy"/>, so one caller cannot spend another account's budget and a shared network does
+/// not throttle unrelated users. The two endpoints keep separate budgets: starting the flow sends an email and mints a
+/// token, while completing it only spends a token, so they are different kinds of work and ADR-0007 gives each policy
+/// group its own numbers.
 /// </summary>
 /// <remarks>
 /// The email is captured by <see cref="RateLimitEmailKeyMiddleware"/> before the limiter runs, because the limiter
@@ -105,8 +107,16 @@ public static class PasswordResetRateLimitPolicy
         var email = RateLimitEmailKey.Read(context);
         var ip = context.Connection.RemoteIpAddress?.ToString() ?? UnknownPartitionValue;
 
+        // The address is folded into a bounded shard so the limiter's never-evicted key set cannot grow with invented
+        // addresses; the client address still separates callers, as ADR-0007 decision 2 requires.
         return string.IsNullOrWhiteSpace(email)
             ? string.Concat(policyPrefix, IpPartitionPrefix, ip)
-            : string.Concat(policyPrefix, EmailPartitionPrefix, email, ":", IpPartitionPrefix, ip);
+            : string.Concat(
+                policyPrefix,
+                EmailPartitionPrefix,
+                RateLimitEmailKey.Bucket(email),
+                ":",
+                IpPartitionPrefix,
+                ip);
     }
 }

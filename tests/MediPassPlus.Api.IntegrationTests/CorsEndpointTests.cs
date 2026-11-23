@@ -58,6 +58,23 @@ public sealed class CorsEndpointTests : IClassFixture<MediPassApiFactory>
     }
 
     [Fact]
+    public async Task AnActualRequestFromTheAngularOrigin_ExposesRetryAfter()
+    {
+        // Retry-After is not a CORS-safelisted response header, so the Angular client can only read it on a 429 when the
+        // policy exposes it (ADR-0007 decision 3).
+        using var client = _factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/health");
+        request.Headers.Add("Origin", AngularOrigin);
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Contains(
+            "Retry-After",
+            response.Headers.GetValues("Access-Control-Expose-Headers"),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task AnActualRequestFromAForeignOrigin_IsNotAllowed()
     {
         using var client = _factory.CreateClient();

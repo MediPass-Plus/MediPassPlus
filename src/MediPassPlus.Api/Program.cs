@@ -22,6 +22,7 @@ using MediPassPlus.Infrastructure.Persistence.Seeding;
 using MediPassPlus.Infrastructure.VisitAccess;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
+using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -130,6 +131,9 @@ builder.Services.AddOptions<CorsOptions>()
             CorsSettings.PolicyName,
             policy => policy
                 .WithOrigins(settings.Value.AllowedOrigins ?? [])
+                // The Angular client is cross-origin, and Retry-After is not a CORS-safelisted response header: without
+                // this line response.headers.get('Retry-After') would be null on every 429 (ADR-0007 decision 3).
+                .WithExposedHeaders(HeaderNames.RetryAfter)
                 .AllowAnyHeader()
                 .AllowAnyMethod());
     });

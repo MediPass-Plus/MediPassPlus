@@ -19,9 +19,9 @@ password, no code or token value and no account identifier (ADR-0007 decision 3,
 
 | Policy | Endpoints | Partition key | Default | Configuration |
 |---|---|---|---|---|
-| `Login` | `POST api/Auth/login` | normalized email + client address | 5 per 15 min | `RateLimiting:Login:PermitLimit`, `RateLimiting:Login:WindowMinutes` |
-| `PasswordResetRequest` | `POST api/Auth/forgot-password` | normalized email + client address | 3 per 15 min | `RateLimiting:PasswordResetRequest:*` |
-| `PasswordResetSubmit` | `POST api/Auth/reset-password` | normalized email + client address | 5 per 15 min | `RateLimiting:PasswordResetSubmit:*` |
+| `Login` | `POST api/Auth/login` | email shard + client address | 5 per 15 min | `RateLimiting:Login:PermitLimit`, `RateLimiting:Login:WindowMinutes` |
+| `PasswordResetRequest` | `POST api/Auth/forgot-password` | email shard + client address | 3 per 15 min | `RateLimiting:PasswordResetRequest:*` |
+| `PasswordResetSubmit` | `POST api/Auth/reset-password` | email shard + client address | 5 per 15 min | `RateLimiting:PasswordResetSubmit:*` |
 | `QrApprove` | approve/reject, by request id and by token | patient id | 5 per 15 min | `RateLimiting:QrApprove:*` |
 | `CodeGeneration` | `POST api/appointments/{id}/access-code` | patient id | 3 per 15 min | `RateLimiting:CodeGeneration:*` |
 | `CodeVerification` | `POST api/appointments/{id}/verify-code` | doctor id + appointment id | 5 per 15 min | `RateLimiting:CodeVerification:*` |
@@ -33,12 +33,23 @@ keyed is not tunable without a new decision.
 ### The login partition
 
 ADR-0007 decision 2 fixes the login partition as **email + IP**. That needs the email before the limiter runs, and the
-limiter runs before MVC model binding, so `LoginRateLimitKeyMiddleware` reads the body for the login endpoint only,
-bounded to 8 KiB, and rewinds the stream. Rules that follow from it:
+limiter runs before MVC model binding, so `RateLimitEmailKeyMiddleware` reads the body of the three body-keyed
+endpoints (login, `forgot-password` and `reset-password`), bounded to 8 KiB, and rewinds the stream. Rules that follow
+from it:
 
 - The email is normalized (trimmed, lower-cased) so `Patient@Example.com` and `patient@example.com` share one budget.
   Identity itself compares addresses case-insensitively; a case-sensitive limiter would let one account be guessed
   through a second spelling.
+- A body that repeats the `email` property spends the budget of the **last** occurrence, because that is the value
+  System.Text.Json and MVC model binding use. Reading the first occurrence would let a caller keep the account the
+  action sees and rotate a decoy value per request; against `forgot-password`, which has no lockout, that was an
+  unlimited reset-email loop.
+- The normalized address is folded into one of 16,384 shards (`email:b1a2f:ip:…`). `PartitionedRateLimiter` caches one
+  window per key and never evicts it, so an anonymous caller sending one request per invented address would otherwise
+  grow the limiter's dictionary without limit. A shard collision makes two addresses share one budget, which can only
+  make the limit stricter, never escape it; 16,384 shards keep the cached email windows at roughly 6 MB in the worst
+  case per client address, and the raw address never reaches the dictionary. Addresses longer than 254 characters (the
+  RFC 5321 limit) are not legal addresses and fall back to the client address.
 - A body that is missing, larger than the bound, not JSON, or has no `email` string falls back to the client address
   alone (`ip:{address}`). A malformed body can therefore not escape the limiter.
 - The value is never logged.
@@ -46,7 +57,10 @@ bounded to 8 KiB, and rewinds the stream. Rules that follow from it:
   the reason a shared NAT does not throttle unrelated accounts (each account keeps its own email+IP bucket).
 
 The partition is in-memory and per instance, which ADR-0007 decision 4 records as a single-instance scaling
-limitation. Behind more than one instance, each replica enforces its own window.
+limitation. Behind more than one instance, each replica enforces its own window. The residual growth dimension is the
+number of distinct client addresses: sharding bounds what one address can create, while an attacker who rotates source
+addresses is the same caller who defeats every IP-keyed limit in ADR-0007 decision 2, which is why the forwarded-header
+trust list below matters.
 
 One honest consequence of the default numbers: the login budget (5) and the lockout threshold (5) coincide, so the
 sixth attempt from the same email and address is a `429` and never reaches Identity to be recorded or answered as a
@@ -63,20 +77,20 @@ different kinds of abuse: the start endpoint mails a reset link and mints a toke
 and the completion endpoint spends a token — so an attacker campaigns through mail volume there and through token
 spam here, and the buckets do not accumulate against each other.
 
-The partition and the normalization are the login partition's (`email + client address`, case-insensitive; the
+The partition and the normalization are the login partition's (email shard + client address, case-insensitive; the
 middleware was generalized from login-only into `RateLimitEmailKeyMiddleware`). The budgets are deliberately small
 numbers, and every caller under the budget keeps the honest answer: `202` when the flow starts, the shared `400` when
 a reset token is bad or the address is unknown, so the limit never turns a legal attempt into a different error.
 
 The first attempt beyond a budget is the rejection: `429` with `Retry-After` and the shared ProblemDetails envelope,
-with no token, no password, no account identifier and no medical content. The integration proof
-(`PasswordResetRateLimitTests`) covers the 429 plus `Retry-After` on both endpoints, the case-variant budget sharing,
-another email being unaffected, and that the under-budget bad-token `400` stays the shared envelope.
+with no token, no password, no account identifier and no medical content. `PasswordResetRateLimitTests` covers both
+endpoints symmetrically: the 429 plus `Retry-After`, the case-variant budget sharing, another email in a different shard
+being unaffected, the under-budget `202`/`400`, and the duplicate-`email` bypass in both property orders.
 
 ## 2. CORS
 
-Only the origins in `Cors:AllowedOrigins` may call the API from a browser (NFR-SEC-07). The default is the local
-Angular server:
+Only the origins in `Cors:AllowedOrigins` may call the API from a browser (NFR-SEC-07). The API's own
+`appsettings.json` names the local Angular server:
 
 ```json
 "Cors": { "AllowedOrigins": [ "http://localhost:4200" ] }
@@ -84,11 +98,26 @@ Angular server:
 
 - The list is validated at startup. A wildcard, a relative value, a value with a path, query or fragment, a
   non-HTTP scheme, a user-info component or an empty list fails startup instead of silently widening the policy.
+  `CorsStartupValidationTests` boots the real host with an empty list and with `*` and asserts the startup failure, so
+  `ValidateOnStart()` is proved and not only the validator.
+- **There is no built-in default.** A missing `Cors` section binds to an empty list and fails startup like an empty
+  list; `CorsSettingsTests` proves the binding, `CorsStartupValidationTests` proves the host refusal. A committed
+  localhost fallback would let a deployment that forgot the section start and answer a developer origin, which is the
+  silent widening the validator exists to stop.
 - Credentials are not allowed; the API authenticates with a bearer token, not a browser cookie, so `AllowCredentials`
   is deliberately absent.
+- `Retry-After` is an exposed response header (`WithExposedHeaders`). It is not a CORS-safelisted header, so without the
+  exposure the Angular client would read `null` on every `429`; `CorsEndpointTests` proves the header on an actual
+  response from the Angular origin and `PasswordResetRateLimitTests` proves it on a real `429`.
 - A preflight is answered before authentication and rate limiting, so an `OPTIONS` request never spends a login budget
   and never reaches an action.
 - The policy name is `Frontend`, applied once with `UseCors` in the pipeline.
+
+**Handoff to the frontend (F1 / MP-56).** The Angular client is a separate origin and may read only the exposed
+`Retry-After` header on a `429`; it must treat any other header on a cross-origin refusal as unreadable. Any new
+rate-limit or authentication endpoint the frontend adds inherits this contract, and the `Login`/reset forms should back
+off for the number of seconds the header reports instead of retrying immediately. The same note belongs on the MP-56
+ticket; this page is the API-side record of it.
 
 ## 3. Response headers
 
@@ -109,13 +138,22 @@ never overwritten.
 means replacing the inline blocks in those development-only pages first, so it is a change to those pages, not a header
 edit. `data:` and `blob:` in `img-src` are needed for the rendered QR data URI and the camera preview.
 
+**Configuration boundary (decided).** Rate limits, CORS origins and forwarded-header trust are configuration because
+each deployment legitimately needs a different number, origin or proxy. The header values above, the CSP and the HSTS
+policy are **code constants on purpose**: they are one security policy for every deployment, and making them
+configuration would turn a reviewed constant into a value an operator can weaken without a code review or an ADR
+change. A deployment that needs a different CSP or HSTS policy changes the constant in a pull request, where the diff
+is the review. That is also why `HstsOptions` is configured inline in `Program.cs` rather than bound from
+`appsettings.json`.
+
 The Kestrel `Server` header is turned off, so the API does not advertise its product or version.
 
 ## 4. HTTPS and HSTS
 
 `UseHsts()` runs in every environment **except Development**, where the local tools are served over plain HTTP. The
 policy is a one-year `max-age`, `includeSubDomains`, and `preload` **off**: preload is a browser-vendor commitment that
-needs a deliberate decision, not a side effect of a default. HSTS is only emitted on an HTTPS request.
+needs a deliberate decision, not a side effect of a default. The values are code constants, not configuration, for the
+reason recorded in section 3. HSTS is only emitted on an HTTPS request.
 
 Two exclusions are worth knowing before a review claims a bug:
 
@@ -176,8 +214,9 @@ closes the one place that disagreed with it.
 - [ ] `RateLimiting:Login` is set to an approved value for the environment, and the environment is not relying on the
       default by accident.
 - [ ] `RateLimiting:PasswordResetRequest` / `PasswordResetSubmit` are set for the intended abuse budgets (defaults
-      3/15 and 5/15).
-- [ ] `Cors:AllowedOrigins` lists exactly the deployed frontend origin, with no wildcard and no path.
+      3/15 and 5/15) and windows tuned to the mail provider's quota, so a burst cannot burn the reset-mail allowance.
+- [ ] `Cors:AllowedOrigins` lists exactly the deployed frontend origin, with no wildcard and no path, and the section
+      is present: there is no fallback, so a missing section stops the process.
 - [ ] `ForwardedHeaders:Enabled` matches the deployment: `false` with no proxy, otherwise a named proxy list.
 - [ ] HSTS is reachable: the deployment serves HTTPS directly or the proxy sets `X-Forwarded-Proto` and the trust list
       is configured.

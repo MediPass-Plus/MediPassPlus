@@ -25,19 +25,59 @@ public class PasswordResetRateLimitPolicyTests
             context,
             new PasswordResetRequestRateLimitOptions());
 
-        Assert.Equal($"reset-request:email:doctor@example.com:ip:{TestIpAddress}", partition.PartitionKey);
+        Assert.Equal(
+            $"reset-request:email:{RateLimitEmailKey.Bucket("doctor@example.com")}:ip:{TestIpAddress}",
+            partition.PartitionKey);
     }
 
     [Fact]
-    public void CreateSubmitPartition_KeysByFamilyAndClientAddress()
+    public void CreateSubmitPartition_KeysByFamilyAndNormalizedEmailAndClientAddress()
     {
-        var context = CreateContext();
+        var context = CreateContext("Doctor@Example.com");
 
         var partition = PasswordResetRateLimitPolicy.CreateSubmitPartition(
             context,
             new PasswordResetSubmitRateLimitOptions());
 
+        Assert.Equal(
+            $"reset-submit:email:{RateLimitEmailKey.Bucket("doctor@example.com")}:ip:{TestIpAddress}",
+            partition.PartitionKey);
+    }
+
+    [Fact]
+    public void CreateSubmitPartition_FallsBackToTheClientAddressWhenNoEmailWasCaptured()
+    {
+        var partition = PasswordResetRateLimitPolicy.CreateSubmitPartition(
+            CreateContext(),
+            new PasswordResetSubmitRateLimitOptions());
+
         Assert.Equal($"reset-submit:ip:{TestIpAddress}", partition.PartitionKey);
+    }
+
+    [Fact]
+    public void SubmitPartition_SharesOneKeyAcrossSpellingsOfOneAddress()
+    {
+        var lower = PasswordResetRateLimitPolicy.CreateSubmitPartition(
+            CreateContext("patient@example.com"),
+            new PasswordResetSubmitRateLimitOptions());
+        var mixed = PasswordResetRateLimitPolicy.CreateSubmitPartition(
+            CreateContext("  Patient@Example.COM  "),
+            new PasswordResetSubmitRateLimitOptions());
+
+        Assert.Equal(lower.PartitionKey, mixed.PartitionKey);
+    }
+
+    [Fact]
+    public void SubmitPartition_DoesNotShareAKeyBetweenEmails()
+    {
+        var first = PasswordResetRateLimitPolicy.CreateSubmitPartition(
+            CreateContext("first@example.com"),
+            new PasswordResetSubmitRateLimitOptions());
+        var second = PasswordResetRateLimitPolicy.CreateSubmitPartition(
+            CreateContext("second@example.com"),
+            new PasswordResetSubmitRateLimitOptions());
+
+        Assert.NotEqual(first.PartitionKey, second.PartitionKey);
     }
 
     [Fact]
@@ -72,6 +112,19 @@ public class PasswordResetRateLimitPolicyTests
     }
 
     [Fact]
+    public void RequestPartition_SharesOneKeyAcrossSpellingsOfOneAddress()
+    {
+        var lower = PasswordResetRateLimitPolicy.CreateRequestPartition(
+            CreateContext("patient@example.com"),
+            new PasswordResetRequestRateLimitOptions());
+        var mixed = PasswordResetRateLimitPolicy.CreateRequestPartition(
+            CreateContext("  Patient@Example.COM  "),
+            new PasswordResetRequestRateLimitOptions());
+
+        Assert.Equal(lower.PartitionKey, mixed.PartitionKey);
+    }
+
+    [Fact]
     public void RequestPartition_FallsBackToTheClientAddressWhenNoEmailWasCaptured()
     {
         var partition = PasswordResetRateLimitPolicy.CreateRequestPartition(
@@ -99,6 +152,41 @@ public class PasswordResetRateLimitPolicyTests
         Assert.False(third.IsAcquired);
         Assert.True(third.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter));
         Assert.True(retryAfter > TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void SubmitPolicy_AllowsThePermitLimitAndRejectsTheNextAttempt()
+    {
+        using var submitLimiter = PartitionedRateLimiter.Create<HttpContext, string>(
+            context => PasswordResetRateLimitPolicy.CreateSubmitPartition(
+                context,
+                new PasswordResetSubmitRateLimitOptions { PermitLimit = 2, WindowMinutes = 15 }));
+        var context = CreateContext("patient@example.com");
+
+        using var first = submitLimiter.AttemptAcquire(context);
+        using var second = submitLimiter.AttemptAcquire(context);
+        using var third = submitLimiter.AttemptAcquire(context);
+
+        Assert.True(first.IsAcquired);
+        Assert.True(second.IsAcquired);
+        Assert.False(third.IsAcquired);
+        Assert.True(third.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter));
+        Assert.True(retryAfter > TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void SubmitPolicy_DoesNotShareAWindowBetweenEmails()
+    {
+        using var submitLimiter = PartitionedRateLimiter.Create<HttpContext, string>(
+            context => PasswordResetRateLimitPolicy.CreateSubmitPartition(
+                context,
+                new PasswordResetSubmitRateLimitOptions { PermitLimit = 1, WindowMinutes = 15 }));
+
+        using var first = submitLimiter.AttemptAcquire(CreateContext("first@example.com"));
+        using var second = submitLimiter.AttemptAcquire(CreateContext("second@example.com"));
+
+        Assert.True(first.IsAcquired);
+        Assert.True(second.IsAcquired);
     }
 
     [Fact]

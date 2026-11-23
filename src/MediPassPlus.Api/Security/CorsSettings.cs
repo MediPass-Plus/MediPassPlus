@@ -7,6 +7,12 @@ namespace MediPassPlus.Api.Security;
 /// configuration, validated at startup so a wildcard, a relative value, a path or an empty list cannot silently widen
 /// or break the policy.
 /// </summary>
+/// <remarks>
+/// The list has no built-in default on purpose. A committed <c>http://localhost:4200</c> fallback would mean a
+/// deployed host that forgot its <c>Cors</c> section starts and appears healthy while answering the developer origin,
+/// which is exactly the silent widening this validator exists to stop. A missing section binds to an empty list and
+/// fails startup like an empty one, so the deployment has to name its frontend.
+/// </remarks>
 public sealed class CorsSettings : IValidatableObject
 {
     /// <summary>The configuration section that binds these options.</summary>
@@ -16,10 +22,11 @@ public sealed class CorsSettings : IValidatableObject
     public const string PolicyName = "Frontend";
 
     /// <summary>
-    /// Gets or sets the allowed origins. Defaults to the local Angular development server. Each entry is an absolute
-    /// <c>http</c> or <c>https</c> origin without a path, query or fragment.
+    /// Gets or sets the allowed origins. Empty by default, so a missing configuration section fails startup instead of
+    /// silently allowing a development origin. Each entry is an absolute <c>http</c> or <c>https</c> origin without a
+    /// path, query or fragment.
     /// </summary>
-    public string[] AllowedOrigins { get; set; } = ["http://localhost:4200"];
+    public string[] AllowedOrigins { get; set; } = [];
 
     /// <inheritdoc />
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)

@@ -77,7 +77,7 @@ and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SE
 | `Development` or `Testing` and no report path | Starts, files under the OS temp path |
 | `Jwt:SecretKey` missing or shorter than 32 characters | Startup fails |
 | `AccessCode:HmacKey` missing, not Base64 or shorter than 32 bytes | Startup fails |
-| Missing `ConnectionStrings:DefaultConnection` | The API starts; the first request that opens the database fails |
+| Missing `ConnectionStrings:DefaultConnection` | The API fails at startup: the unconditional `SeedDefaultRolesAsync()` opens the database before the pipeline runs, so this is a startup failure, not a first-request failure |
 
 ## Deployment checklist
 

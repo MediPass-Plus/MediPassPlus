@@ -19,11 +19,38 @@ public class LoginRateLimitPolicyTests
     [Fact]
     public void CreatePartition_KeysByNormalizedEmailAndClientAddress()
     {
-        var context = CreateContext("doctor@example.com");
+        var context = CreateContext("Doctor@Example.com");
 
         var partition = LoginRateLimitPolicy.CreatePartition(context, new LoginRateLimitOptions());
 
-        Assert.Equal($"email:doctor@example.com:ip:{TestIpAddress}", partition.PartitionKey);
+        Assert.Equal(
+            $"email:{RateLimitEmailKey.Bucket("doctor@example.com")}:ip:{TestIpAddress}",
+            partition.PartitionKey);
+    }
+
+    [Fact]
+    public void CreatePartition_FoldsTheEmailIntoABoundedShard()
+    {
+        var first = LoginRateLimitPolicy.CreatePartition(
+            CreateContext("patient@example.com"),
+            new LoginRateLimitOptions());
+
+        // The limiter never evicts, so the address must not be the key itself: it is folded into a shard that is one
+        // of RateLimitEmailKey.BucketCount values, and the raw address never reaches the limiter's dictionary.
+        Assert.DoesNotContain("patient", first.PartitionKey, StringComparison.Ordinal);
+        Assert.Equal($"email:{RateLimitEmailKey.Bucket("patient@example.com")}:ip:{TestIpAddress}", first.PartitionKey);
+    }
+
+    [Fact]
+    public void CreatePartition_FallsBackToTheClientAddressWhenTheEmailIsTooLongToBeAnAddress()
+    {
+        var tooLong = $"{new string('a', RateLimitEmailKey.MaximumEmailLength)}@example.com";
+
+        var partition = LoginRateLimitPolicy.CreatePartition(
+            CreateContext(tooLong),
+            new LoginRateLimitOptions());
+
+        Assert.Equal($"ip:{TestIpAddress}", partition.PartitionKey);
     }
 
     [Fact]

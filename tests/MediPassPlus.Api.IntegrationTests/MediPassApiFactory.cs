@@ -107,11 +107,17 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// <param name="configureTestServices">
     /// An optional hook for test-only registrations, such as a log capture or a deliberately broken database.
     /// </param>
+    /// <param name="startHost">
+    /// <c>true</c> to start the host in the constructor. A startup-validation test passes <c>false</c> and calls
+    /// <see cref="EnsureHostStarted"/> itself, so it owns the instance and can clean it up after asserting the
+    /// startup failure.
+    /// </param>
     internal MediPassApiFactory(
         string? databaseNameHint,
         string environment,
         bool exposeApiReference,
-        Action<IServiceCollection>? configureTestServices = null)
+        Action<IServiceCollection>? configureTestServices = null,
+        bool startHost = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(environment);
 
@@ -162,7 +168,10 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
 
         // Build the host while this factory's connection string is the live environment value. WebApplicationFactory
         // caches the built host, so a second live factory cannot retarget this one.
-        EnsureHostStarted();
+        if (startHost)
+        {
+            EnsureHostStarted();
+        }
     }
 
     /// <summary>The catalog this factory created and migrated; unique per test class.</summary>
