@@ -40,15 +40,19 @@ dotnet user-secrets set "Jwt:SecretKey" "<at least 32 random characters>" --proj
 $key = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 dotnet user-secrets set "AccessCode:HmacKey" $key --project src/MediPassPlus.Api
 
-dotnet user-secrets list --project src/MediPassPlus.Api     # confirm what is set, never paste the values anywhere
+# Confirm which keys exist, never their values: plain `user-secrets list` prints every secret to the terminal.
+dotnet user-secrets list --project src/MediPassPlus.Api | ForEach-Object { ($_ -split ' = ')[0] }
 ```
 
 Secrets are local to each developer: user-secrets are not shared through Git, and one developer's store says nothing
-about another's. Check your own store for the values your task needs — `dotnet user-secrets list --project
-src/MediPassPlus.Api` — and add whatever is missing; do not assume it is empty, and do not assume it is complete. The
-API starts without a database connection string until something opens the database, but `AccessCode:HmacKey` is
-validated at startup, so the API does not start without it. The JWT signing key, the Data Protection keys and the
-access-code HMAC key are three **different** secrets (ADR-0007).
+about another's. Check your own store for the keys your task needs with the key-name-only command above and add
+whatever is missing; do not assume it is empty, and do not assume it is complete. Printing the values is itself a leak
+— they end up in scrollback, screenshots and screen recordings — so never run `dotnet user-secrets list` to "check"
+them. The API does not start without a database connection string: `Program.cs` seeds the default roles before the
+pipeline runs, and that query opens the database, so a missing `ConnectionStrings:DefaultConnection` is a startup
+failure rather than a first-request one. `AccessCode:HmacKey` is validated at startup too, so the API does not start
+without it either. The JWT signing key, the Data Protection keys and the access-code HMAC key are three **different**
+secrets (ADR-0007).
 
 ## 3. Open the repository in OpenCode
 
@@ -181,7 +185,7 @@ Do not ask an agent for a full repository audit again. The audit lives in `AGENT
 
 | Symptom | What to do |
 |---|---|
-| No secrets / no SQL Server | The API still starts and the build and tests pass. Anything that opens the database will fail until `ConnectionStrings:DefaultConnection` is set. Say so in your report; do not hard-code a connection string |
+| No secrets / no SQL Server | The build and the unit tests pass, but the API does **not** start: `Program.cs` runs `SeedDefaultRolesAsync()` before the pipeline, so startup itself opens the database and fails without `ConnectionStrings:DefaultConnection`. Integration tests need a SQL Server through `MEDIPASS_TEST_SQLSERVER`. Say so in your report; do not hard-code a connection string |
 | Build fails after pulling | Check `dotnet --version` against `global.json`, run `dotnet restore` once, and read the first error. If the failure is inside another module, report it — never "fix" it by reverting or rewriting someone else's code |
 | `dotnet ef database update` fails creating `IX_Appointments_DoctorSlotId_Active` | The database already has duplicate non-cancelled appointments for one slot. Follow the [MP-27 booking index rollout](mp-27-booking-index-rollout.md) and clean the data before rerunning; do not edit the merged migration |
 | `npm ci` fails | Check the Node version (`node -v`) against `frontend/package.json`; delete `node_modules` and retry once |

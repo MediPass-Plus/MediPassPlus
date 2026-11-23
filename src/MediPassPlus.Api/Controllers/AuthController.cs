@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using MediPassPlus.Api.RateLimiting;
 using MediPassPlus.Application.Auth;
 using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Application.Email;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 
 namespace MediPassPlus.Api.Controllers;
@@ -181,10 +183,17 @@ public class AuthController : ControllerBase
     /// Every one of those answers with the same body on purpose, so the endpoint never confirms which
     /// addresses or accounts exist.
     /// </response>
+    /// <response code="429">
+    /// The email and client address exceeded the configured sign-in budget. The response is the shared
+    /// ProblemDetails envelope with a <c>Retry-After</c> header and carries no account identifier or medical
+    /// content (ADR-0007 decision 3).
+    /// </response>
     [HttpPost("login")]
+    [EnableRateLimiting(LoginRateLimitPolicy.Name)]
     [ProducesResponseType(typeof(AuthTokensResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Login(LoginDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
@@ -269,15 +278,23 @@ public class AuthController : ControllerBase
 
     /// <summary>
     /// Starts the password-reset flow. The answer is the same whether the email exists, so the endpoint never
-    /// confirms which addresses are registered.
+    /// confirms which addresses are registered. The rate limit is per email and client address in front of the
+    /// mail-sending behaviour (FR-PRV-07, ADR-0007 decision 2).
     /// </summary>
     /// <param name="request">The account email.</param>
     /// <returns><c>202</c> whether or not an email was sent.</returns>
     /// <response code="202">The request was accepted; an email is sent only for an active account.</response>
     /// <response code="400">The payload is invalid.</response>
+    /// <response code="429">
+    /// The email and client address exceeded the configured reset-request budget. The response is the shared
+    /// ProblemDetails envelope with a <c>Retry-After</c> header and carries no account identifier (ADR-0007
+    /// decision 3).
+    /// </response>
     [HttpPost("forgot-password")]
+    [EnableRateLimiting(PasswordResetRateLimitPolicy.RequestName)]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> ForgotPassword(ForgotPasswordDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
@@ -307,7 +324,9 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Completes a password reset with the emailed token and revokes every live session.
+    /// Completes a password reset with the emailed token and revokes every live session. The rate limit is per
+    /// email and client address in front of the other anonymous paths, so a caller cannot spend another account's
+    /// budget and an enumeration probe still gets the shared refusal (FR-PRV-07, ADR-0007 decision 2).
     /// </summary>
     /// <param name="request">The email, the reset token and the new password.</param>
     /// <returns>A message confirming the reset.</returns>
@@ -318,9 +337,16 @@ public class AuthController : ControllerBase
     /// invalid, expired or already-used token and every Identity refusal share one identical body with no <c>errors</c>
     /// bag, so the endpoint cannot be used to discover which addresses are registered.
     /// </response>
+    /// <response code="429">
+    /// The email and client address exceeded the configured reset-submit budget. The response is the shared
+    /// ProblemDetails envelope with a <c>Retry-After</c> header and carries no token, no password, no account
+    /// identifier and no medical content (ADR-0007 decision 3, ADR-0010).
+    /// </response>
     [HttpPost("reset-password")]
+    [EnableRateLimiting(PasswordResetRateLimitPolicy.SubmitName)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> ResetPassword(ResetPasswordDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);

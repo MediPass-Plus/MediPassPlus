@@ -18,6 +18,12 @@ in a deployment they come from the platform secret store and the mounted key vol
 These are three different secrets with three different lifetimes. Never reuse one for another purpose, never derive one
 from another, and never log any of them — identifiers only (AGENTS.md §5).
 
+The database connection string is a fourth credential even when it carries no password: it names an instance and a
+database. It comes from user-secrets or `ConnectionStrings__DefaultConnection` and is never committed to
+`appsettings*.json` (MP-51). The four names above and the connection string are the whole list of values a deployment
+must supply from its secret store; nothing else in `appsettings.json` is sensitive, and every other setting there is a
+documented default rather than a secret.
+
 ## Data Protection key ring
 
 The ring is file-based: `PersistKeysToFileSystem` writes XML key files into a directory. It is not a table, so the
@@ -71,7 +77,7 @@ and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SE
 | `Development` or `Testing` and no report path | Starts, files under the OS temp path |
 | `Jwt:SecretKey` missing or shorter than 32 characters | Startup fails |
 | `AccessCode:HmacKey` missing, not Base64 or shorter than 32 bytes | Startup fails |
-| Missing `ConnectionStrings:DefaultConnection` | The API starts; the first request that opens the database fails |
+| Missing `ConnectionStrings:DefaultConnection` | The API fails at startup: the unconditional `SeedDefaultRolesAsync()` opens the database before the pipeline runs, so this is a startup failure, not a first-request failure |
 
 ## Deployment checklist
 
@@ -80,4 +86,9 @@ and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SE
 - [ ] `Reports:Storage:RootPath` points at a persistent, access-restricted directory outside the image and outside
       `wwwroot`, and it is backed up with the database.
 - [ ] `Jwt:SecretKey` and `AccessCode:HmacKey` are set from the secret store, not from `appsettings*.json`.
-- [ ] No secret value appears in logs, images, build output or the repository.
+- [ ] `ConnectionStrings:DefaultConnection` is set from the secret store or user-secrets; `appsettings*.json` in the
+      deployed image carries no connection string (MP-51).
+- [ ] No secret value appears in logs, images, build output or the repository, and the `gitleaks` CI job is green.
+
+The non-secret edge settings that sit next to these — login rate limits, allowed CORS origins, forwarded-header trust
+and the HSTS policy — are documented in `platform-hardening.md`.
