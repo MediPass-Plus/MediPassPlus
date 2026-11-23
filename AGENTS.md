@@ -246,8 +246,11 @@ that breaks a validation rule still answers the shared `ValidationProblemDetails
 is spent, so a weak password never consumes the link. Both endpoints write one parameterless structured line —
 `Password reset requested.` on every path of the start request and `Password reset completed.` only once the password
 changed — so the only identifier in the log is the correlation id the pipeline already opened as a scope, and the
-start line cannot confirm which addresses are registered. The reset endpoints are still not rate-limited; that stays
-with P5. The new `PasswordResetEndpointTests` cover the emailed token, the missing, invalid, reused and weak-password
+start line cannot confirm which addresses are registered. The reset endpoints are now rate-limited as part of MP-51
+(P5): `forgot-password` answers `PasswordResetRequest` and `reset-password` answers `PasswordResetSubmit`, both
+per normalized email + client address with a `429` plus `Retry-After` and the shared ProblemDetails envelope; the
+endpoints are unchanged under the budgets. The new `PasswordResetRateLimitTests` prove the 429, the case-variant
+budget sharing, the per-address isolation and the under-budget `202`/`400` behavior. The new `PasswordResetEndpointTests` cover the emailed token, the missing, invalid, reused and weak-password
 cases, the identical body for a known and an unknown address, and a log capture that proves neither the token nor the
 address reaches a log line and that the correlation id is the only identifier there; `PasswordResetProductionResponseTests`
 runs the production host and proves the acknowledgement carries no token, no reset link and no address. No migration
@@ -269,9 +272,11 @@ to `ProblemDetails` — so no production change and no migration were needed.
 MP-51 closes the HTTP-edge controls (FR-PRV-07, NFR-SEC-01, NFR-SEC-06, NFR-SEC-07, NFR-SEC-08).
 `POST api/Auth/login` now carries the `Login` fixed-window policy: 5 attempts per 15 minutes per normalized email plus
 client address, configurable under `RateLimiting:Login` and validated at startup. The partition needs the email before
-the limiter runs, so `LoginRateLimitKeyMiddleware` reads the login body only, bounded to 8 KiB, and rewinds it; a
+the limiter runs, so `RateLimitEmailKeyMiddleware` reads the login body only, bounded to 8 KiB, and rewinds it; a
 missing, oversized or unparseable body falls back to the client address alone, so a malformed request cannot escape the
-limiter. The per-account lockout stays authoritative (ADR-0007 decision 1), which is why the shared integration host
+limiter. The same middleware now captures the email for the password-reset policies too (`PasswordResetRequest`: 3 per
+15 minutes starting the flow; `PasswordResetSubmit`: 5 per 15 minutes completing it), per normalized email plus client
+address. The per-account lockout stays authoritative (ADR-0007 decision 1), which is why the shared integration host
 raises the limit to 100 while `LoginRateLimitTests` proves the real 429 on its own host. A rejection is `429` with
 `Retry-After` and the shared `ProblemDetails` envelope, carrying no account identifier or medical content.
 CORS is one named `Frontend` policy whose origins come from `Cors:AllowedOrigins` (default
@@ -351,7 +356,8 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   patient; the numbers are tunable). The **lockout duration itself is not settled**: the decision record treats
   15 minutes as an assumption, so do not present it as an approved value.
 - The HTTP edge is part of the security boundary: login is limited per normalized email + client address in front of
-  the lockout, CORS answers only `Cors:AllowedOrigins`, and every response carries the hardening headers. Forwarded
+  the lockout, the password-reset endpoints have their own per-email + client budgets in front of the mail/token flow,
+  CORS answers only `Cors:AllowedOrigins`, and every response carries the hardening headers. Forwarded
   headers are trusted only from a configured proxy, because a spoofable client address defeats every IP-keyed limit.
   The review checklist is `docs/operations/platform-hardening.md`.
 - A grant ends in three independent ways (FR-ACS-07):

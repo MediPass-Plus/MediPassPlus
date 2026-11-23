@@ -20,6 +20,8 @@ password, no code or token value and no account identifier (ADR-0007 decision 3,
 | Policy | Endpoints | Partition key | Default | Configuration |
 |---|---|---|---|---|
 | `Login` | `POST api/Auth/login` | normalized email + client address | 5 per 15 min | `RateLimiting:Login:PermitLimit`, `RateLimiting:Login:WindowMinutes` |
+| `PasswordResetRequest` | `POST api/Auth/forgot-password` | normalized email + client address | 3 per 15 min | `RateLimiting:PasswordResetRequest:*` |
+| `PasswordResetSubmit` | `POST api/Auth/reset-password` | normalized email + client address | 5 per 15 min | `RateLimiting:PasswordResetSubmit:*` |
 | `QrApprove` | approve/reject, by request id and by token | patient id | 5 per 15 min | `RateLimiting:QrApprove:*` |
 | `CodeGeneration` | `POST api/appointments/{id}/access-code` | patient id | 3 per 15 min | `RateLimiting:CodeGeneration:*` |
 | `CodeVerification` | `POST api/appointments/{id}/verify-code` | doctor id + appointment id | 5 per 15 min | `RateLimiting:CodeVerification:*` |
@@ -53,6 +55,23 @@ and a caller on another address, and therefore another partition, still receives
 `RateLimiting:Login:PermitLimit` above 5 makes the `401` visible from the original address as well; that is the reason
 the shared integration host sets it to 100 so the lockout tests stay meaningful, while `LoginRateLimitTests` proves the
 real `429` on a host configured with the production-equivalent budget.
+
+### The password-reset budgets
+
+The two reset endpoints have separate budgets (`PasswordResetRequest` and `PasswordResetSubmit`) because they are
+different kinds of abuse: the start endpoint mails a reset link and mints a token for every active account it names,
+and the completion endpoint spends a token — so an attacker campaigns through mail volume there and through token
+spam here, and the buckets do not accumulate against each other.
+
+The partition and the normalization are the login partition's (`email + client address`, case-insensitive; the
+middleware was generalized from login-only into `RateLimitEmailKeyMiddleware`). The budgets are deliberately small
+numbers, and every caller under the budget keeps the honest answer: `202` when the flow starts, the shared `400` when
+a reset token is bad or the address is unknown, so the limit never turns a legal attempt into a different error.
+
+The first attempt beyond a budget is the rejection: `429` with `Retry-After` and the shared ProblemDetails envelope,
+with no token, no password, no account identifier and no medical content. The integration proof
+(`PasswordResetRateLimitTests`) covers the 429 plus `Retry-After` on both endpoints, the case-variant budget sharing,
+another email being unaffected, and that the under-budget bad-token `400` stays the shared envelope.
 
 ## 2. CORS
 
@@ -156,6 +175,8 @@ closes the one place that disagreed with it.
 
 - [ ] `RateLimiting:Login` is set to an approved value for the environment, and the environment is not relying on the
       default by accident.
+- [ ] `RateLimiting:PasswordResetRequest` / `PasswordResetSubmit` are set for the intended abuse budgets (defaults
+      3/15 and 5/15).
 - [ ] `Cors:AllowedOrigins` lists exactly the deployed frontend origin, with no wildcard and no path.
 - [ ] `ForwardedHeaders:Enabled` matches the deployment: `false` with no proxy, otherwise a named proxy list.
 - [ ] HSTS is reachable: the deployment serves HTTPS directly or the proxy sets `X-Forwarded-Proto` and the trust list

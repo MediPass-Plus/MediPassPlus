@@ -4,17 +4,19 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace MediPassPlus.Api.RateLimiting;
 
 /// <summary>
-/// Captures the email of a login request before the rate limiter runs, so <see cref="LoginRateLimitPolicy"/> can key
-/// the partition by email and client address (ADR-0007 decision 2). The limiter runs before MVC model binding and its
-/// partition delegate is synchronous, so the body is not otherwise available at that point.
+/// Captures the email of a body-keyed request before the rate limiter runs, so <see cref="LoginRateLimitPolicy"/> and
+/// <see cref="PasswordResetRateLimitPolicy"/> can partition by email and client address (ADR-0007 decision 2,
+/// FR-PRV-07). The limiter runs before MVC model binding and its partition delegate is synchronous, so the body is not
+/// otherwise available at that point.
 /// </summary>
 /// <remarks>
-/// Only the login endpoint is touched. The read is bounded to <see cref="MaximumBodyBytes"/> and the stream is always
-/// rewound, so model binding sees the original body. The email value is never logged.
+/// Only the endpoints whose policy is in <see cref="RateLimitEmailKey"/> are touched: sign-in, the start of the
+/// password-reset flow and its completion. The read is bounded to <see cref="MaximumBodyBytes"/> and the stream is
+/// always rewound, so model binding sees the original body. The email value is never logged.
 /// </remarks>
-public sealed class LoginRateLimitKeyMiddleware
+public sealed class RateLimitEmailKeyMiddleware
 {
-    /// <summary>The largest body the middleware buffers. A login body is a few hundred bytes.</summary>
+    /// <summary>The largest body the middleware buffers. Every body-keyed DTO is a few hundred bytes.</summary>
     public const int MaximumBodyBytes = 8 * 1024;
 
     private const string EmailPropertyName = "email";
@@ -23,9 +25,9 @@ public sealed class LoginRateLimitKeyMiddleware
 
     /// <summary>Creates the middleware.</summary>
     /// <param name="next">The next middleware in the pipeline.</param>
-    public LoginRateLimitKeyMiddleware(RequestDelegate next) => _next = next;
+    public RateLimitEmailKeyMiddleware(RequestDelegate next) => _next = next;
 
-    /// <summary>Captures the email for the login policy, then continues the pipeline.</summary>
+    /// <summary>Captures the email for a body-keyed policy, then continues the pipeline.</summary>
     /// <param name="context">The current HTTP context.</param>
     /// <returns>A task that completes when the rest of the pipeline completes.</returns>
     public async Task InvokeAsync(HttpContext context)
@@ -39,14 +41,13 @@ public sealed class LoginRateLimitKeyMiddleware
     }
 
     private static bool AppliesTo(HttpContext context) =>
-        context.GetEndpoint()
-            ?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName
-        == LoginRateLimitPolicy.Name;
+        RateLimitEmailKey.IsBodyKeyed(
+            context.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName);
 
     private static async Task CaptureEmailAsync(HttpContext context)
     {
-        // A declared body larger than a login body is not worth buffering: the limiter falls back to the IP key and
-        // MVC will reject the oversized or malformed body afterwards.
+        // A declared body larger than a DTO is not worth buffering: the limiter falls back to the IP key and MVC will
+        // reject the oversized or malformed body afterwards.
         if (context.Request.ContentLength > MaximumBodyBytes)
         {
             return;
@@ -76,7 +77,7 @@ public sealed class LoginRateLimitKeyMiddleware
             var email = ReadEmail(body.AsMemory(0, length));
             if (email is not null)
             {
-                context.Items[LoginRateLimitPolicy.EmailItemKey] = email;
+                context.Items[RateLimitEmailKey.ItemKey] = email;
             }
         }
         finally
@@ -101,7 +102,7 @@ public sealed class LoginRateLimitKeyMiddleware
                 if (string.Equals(property.Name, EmailPropertyName, StringComparison.OrdinalIgnoreCase)
                     && property.Value.ValueKind == JsonValueKind.String)
                 {
-                    return LoginRateLimitPolicy.NormalizeEmail(property.Value.GetString());
+                    return RateLimitEmailKey.Normalize(property.Value.GetString());
                 }
             }
 
@@ -109,7 +110,7 @@ public sealed class LoginRateLimitKeyMiddleware
         }
         catch (JsonException)
         {
-            // A malformed body is not a login attempt with a usable key; the IP fallback still limits it.
+            // A malformed body is not an attempt with a usable key; the IP fallback still limits it.
             return null;
         }
     }

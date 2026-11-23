@@ -67,7 +67,7 @@ public class LoginRateLimitPolicyTests
     [InlineData("doctor@example.com", "doctor@example.com")]
     public void NormalizeEmail_TrimsAndLowercases(string value, string expected)
     {
-        Assert.Equal(expected, LoginRateLimitPolicy.NormalizeEmail(value));
+        Assert.Equal(expected, RateLimitEmailKey.Normalize(value));
     }
 
     [Theory]
@@ -76,7 +76,7 @@ public class LoginRateLimitPolicyTests
     [InlineData("   ")]
     public void NormalizeEmail_ReturnsNullForAValueThatCannotKeyABucket(string? value)
     {
-        Assert.Null(LoginRateLimitPolicy.NormalizeEmail(value));
+        Assert.Null(RateLimitEmailKey.Normalize(value));
     }
 
     [Fact]
@@ -203,9 +203,9 @@ public class LoginRateLimitPolicyTests
         var context = new DefaultHttpContext();
         context.Connection.RemoteIpAddress = IPAddress.Parse(ipAddress);
 
-        if (LoginRateLimitPolicy.NormalizeEmail(email) is { } normalized)
+        if (RateLimitEmailKey.Normalize(email) is { } normalized)
         {
-            context.Items[LoginRateLimitPolicy.EmailItemKey] = normalized;
+            context.Items[RateLimitEmailKey.ItemKey] = normalized;
         }
 
         return context;

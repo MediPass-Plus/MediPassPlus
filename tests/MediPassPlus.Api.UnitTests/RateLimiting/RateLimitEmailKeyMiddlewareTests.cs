@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.RateLimiting;
 
 namespace MediPassPlus.Api.UnitTests.RateLimiting;
 
-public class LoginRateLimitKeyMiddlewareTests
+public class RateLimitEmailKeyMiddlewareTests
 {
     [Fact]
     public async Task InvokeAsync_CapturesTheEmailAndRewindsTheBody()
@@ -14,7 +14,7 @@ public class LoginRateLimitKeyMiddlewareTests
 
         await CreateMiddleware().InvokeAsync(context);
 
-        Assert.Equal("patient@example.com", context.Items[LoginRateLimitPolicy.EmailItemKey]);
+        Assert.Equal("patient@example.com", context.Items[RateLimitEmailKey.ItemKey]);
         Assert.Equal(0, context.Request.Body.Position);
     }
 
@@ -25,7 +25,7 @@ public class LoginRateLimitKeyMiddlewareTests
 
         await CreateMiddleware().InvokeAsync(context);
 
-        Assert.Equal("doctor@example.com", context.Items[LoginRateLimitPolicy.EmailItemKey]);
+        Assert.Equal("doctor@example.com", context.Items[RateLimitEmailKey.ItemKey]);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public class LoginRateLimitKeyMiddlewareTests
 
         await CreateMiddleware().InvokeAsync(context);
 
-        Assert.False(context.Items.ContainsKey(LoginRateLimitPolicy.EmailItemKey));
+        Assert.False(context.Items.ContainsKey(RateLimitEmailKey.ItemKey));
         Assert.Equal(0, context.Request.Body.Position);
     }
 
@@ -46,32 +46,44 @@ public class LoginRateLimitKeyMiddlewareTests
 
         await CreateMiddleware().InvokeAsync(context);
 
-        Assert.False(context.Items.ContainsKey(LoginRateLimitPolicy.EmailItemKey));
+        Assert.False(context.Items.ContainsKey(RateLimitEmailKey.ItemKey));
+    }
+
+    [Fact]
+    public async Task InvokeAsync_OnThePasswordResetPolicies_CapturesTheEmail()
+    {
+        var context = CreateContext("""{"email":"patient@example.com"}""", PasswordResetRateLimitPolicy.RequestName);
+        await CreateMiddleware().InvokeAsync(context);
+        Assert.Equal("patient@example.com", context.Items[RateLimitEmailKey.ItemKey]);
+
+        context = CreateContext("""{"Email":"patient@example.com","Token":"abc"}""", PasswordResetRateLimitPolicy.SubmitName);
+        await CreateMiddleware().InvokeAsync(context);
+        Assert.Equal("patient@example.com", context.Items[RateLimitEmailKey.ItemKey]);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_OnARateLimitPolicyThatKeysByPatient_DoesNotReadTheBody()
+    {
+        var context = CreateContext("""{"email":"patient@example.com"}""", QrApproveRateLimitPolicy.Name);
+
+        await CreateMiddleware().InvokeAsync(context);
+
+        Assert.False(context.Items.ContainsKey(RateLimitEmailKey.ItemKey));
+        Assert.Equal(0, context.Request.Body.Position);
     }
 
     [Fact]
     public async Task InvokeAsync_WithAnOversizedDeclaredBody_DoesNotReadIt()
     {
-        var context = CreateLoginContext(new string('x', LoginRateLimitKeyMiddleware.MaximumBodyBytes + 1));
+        var context = CreateLoginContext(new string('x', RateLimitEmailKeyMiddleware.MaximumBodyBytes + 1));
 
         await CreateMiddleware().InvokeAsync(context);
 
-        Assert.False(context.Items.ContainsKey(LoginRateLimitPolicy.EmailItemKey));
+        Assert.False(context.Items.ContainsKey(RateLimitEmailKey.ItemKey));
         Assert.Equal(0, context.Request.Body.Position);
     }
 
-    [Fact]
-    public async Task InvokeAsync_OnAnotherEndpoint_DoesNotReadTheBody()
-    {
-        var context = CreateContext("""{"email":"patient@example.com"}""", "CodeVerification");
-
-        await CreateMiddleware().InvokeAsync(context);
-
-        Assert.False(context.Items.ContainsKey(LoginRateLimitPolicy.EmailItemKey));
-        Assert.Equal(0, context.Request.Body.Position);
-    }
-
-    private static LoginRateLimitKeyMiddleware CreateMiddleware() =>
+    private static RateLimitEmailKeyMiddleware CreateMiddleware() =>
         new(_ => Task.CompletedTask);
 
     private static DefaultHttpContext CreateLoginContext(string body) =>

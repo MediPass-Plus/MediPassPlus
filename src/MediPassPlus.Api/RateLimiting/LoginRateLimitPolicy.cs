@@ -7,16 +7,13 @@ namespace MediPassPlus.Api.RateLimiting;
 /// Builds the <c>Login</c> rate-limit partition and its rejection response. The partition is the email address
 /// together with the client address, as ADR-0007 decision 2 requires: one caller cannot spend another account's
 /// budget, a shared network does not throttle unrelated users, and an unknown address is still bounded by the client
-/// address. The email is captured by <see cref="LoginRateLimitKeyMiddleware"/> before the limiter runs, because the
+/// address. The email is captured by <see cref="RateLimitEmailKeyMiddleware"/> before the limiter runs, because the
 /// limiter executes before MVC model binding.
 /// </summary>
 public static class LoginRateLimitPolicy
 {
     /// <summary>The policy name used by <c>EnableRateLimiting</c>.</summary>
     public const string Name = "Login";
-
-    /// <summary>The <see cref="HttpContext.Items"/> key that holds the normalized email for the current request.</summary>
-    internal const string EmailItemKey = "MediPassPlus.Login.Email";
 
     private const string EmailPartitionPrefix = "email:";
     private const string IpPartitionPrefix = "ip:";
@@ -36,7 +33,7 @@ public static class LoginRateLimitPolicy
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(options);
 
-        var email = context.Items.TryGetValue(EmailItemKey, out var captured) ? captured as string : null;
+        var email = RateLimitEmailKey.Read(context);
         var ip = context.Connection.RemoteIpAddress?.ToString() ?? UnknownPartitionValue;
 
         var partitionKey = string.IsNullOrWhiteSpace(email)
@@ -51,15 +48,6 @@ public static class LoginRateLimitPolicy
             AutoReplenishment = true,
         });
     }
-
-    /// <summary>
-    /// Normalizes an email for the partition key. Identity compares addresses case-insensitively, so the limiter must
-    /// too, or the same account could be guessed through a second spelling of its address.
-    /// </summary>
-    /// <param name="email">The value read from the request body.</param>
-    /// <returns>The normalized address, or <c>null</c> when the value is empty or whitespace.</returns>
-    internal static string? NormalizeEmail(string? email) =>
-        string.IsNullOrWhiteSpace(email) ? null : email.Trim().ToLowerInvariant();
 
     /// <summary>
     /// Writes the 429 response: <c>Retry-After</c> plus the shared ProblemDetails envelope. The body carries no email,

@@ -105,6 +105,16 @@ builder.Services.AddOptions<CorsSettings>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+builder.Services.AddOptions<PasswordResetRequestRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(PasswordResetRequestRateLimitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddOptions<PasswordResetSubmitRateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(PasswordResetSubmitRateLimitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 // Forwarded headers are opt-in: a deployment names the proxies it trusts, and an invalid or empty trust list fails
 // startup instead of silently trusting a spoofed address (NFR-SEC-07).
 builder.Services.AddOptions<ForwardedHeadersSettings>()
@@ -174,6 +184,24 @@ builder.Services.AddRateLimiter(options =>
         return LoginRateLimitPolicy.CreatePartition(httpContext, limits);
     });
 
+    options.AddPolicy(PasswordResetRateLimitPolicy.RequestName, httpContext =>
+    {
+        var limits = httpContext.RequestServices
+            .GetRequiredService<IOptions<PasswordResetRequestRateLimitOptions>>()
+            .Value;
+
+        return PasswordResetRateLimitPolicy.CreateRequestPartition(httpContext, limits);
+    });
+
+    options.AddPolicy(PasswordResetRateLimitPolicy.SubmitName, httpContext =>
+    {
+        var limits = httpContext.RequestServices
+            .GetRequiredService<IOptions<PasswordResetSubmitRateLimitOptions>>()
+            .Value;
+
+        return PasswordResetRateLimitPolicy.CreateSubmitPartition(httpContext, limits);
+    });
+
     options.AddPolicy(QrApproveRateLimitPolicy.Name, httpContext =>
     {
         var limits = httpContext.RequestServices
@@ -221,6 +249,14 @@ builder.Services.AddRateLimiter(options =>
         return policyName switch
         {
             LoginRateLimitPolicy.Name => LoginRateLimitPolicy.WriteRejectionAsync(
+                context.HttpContext,
+                context.Lease,
+                cancellationToken),
+            PasswordResetRateLimitPolicy.RequestName => PasswordResetRateLimitPolicy.WriteRequestRejectionAsync(
+                context.HttpContext,
+                context.Lease,
+                cancellationToken),
+            PasswordResetRateLimitPolicy.SubmitName => PasswordResetRateLimitPolicy.WriteSubmitRejectionAsync(
                 context.HttpContext,
                 context.Lease,
                 cancellationToken),
@@ -316,9 +352,10 @@ app.UseCors(CorsSettings.PolicyName);
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Captures the login email before the limiter runs. The limiter itself still runs after authentication so the
-// patient and doctor partitions see the claims (ADR-0007 decisions 2 and 4).
-app.UseMiddleware<LoginRateLimitKeyMiddleware>();
+// The email-keyed policies (login, password reset start and completion) need the email from the body, which the
+// limiter itself cannot see (ADR-0007 decision 2). The limiter still runs after authentication so the authenticated
+// partitions see the claims (ADR-0007 decisions 2 and 4).
+app.UseMiddleware<RateLimitEmailKeyMiddleware>();
 app.UseRateLimiter();
 
 // Anonymous on purpose: a probe has no token, and the body carries statuses only (NFR-REL-06, FR-PRV-08).
