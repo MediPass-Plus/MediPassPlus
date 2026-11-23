@@ -154,6 +154,9 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         // (ADR-0015 decision 6).
         SetEnvironmentVariable("Reports__Storage__RootPath", _reportStoragePath);
         SetEnvironmentVariable("Logging__LogLevel__Microsoft.EntityFrameworkCore", "Warning");
+        // Most tests sign in several times on purpose (the lockout matrix does six attempts on one account). The
+        // production login budget is exercised by LoginRateLimitTests, which overrides this value for its own host.
+        SetEnvironmentVariable("RateLimiting__Login__PermitLimit", "100");
 
         ApplyMigrations();
 

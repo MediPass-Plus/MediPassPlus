@@ -266,6 +266,27 @@ the source slot free). Check-in is refused for every non-`Booked` state (`Checke
 `IBookingService`. No booking rule lives in a controller — the patient and staff controllers only map `BookingFailure`
 to `ProblemDetails` — so no production change and no migration were needed.
 
+MP-51 closes the HTTP-edge controls (FR-PRV-07, NFR-SEC-01, NFR-SEC-06, NFR-SEC-07, NFR-SEC-08).
+`POST api/Auth/login` now carries the `Login` fixed-window policy: 5 attempts per 15 minutes per normalized email plus
+client address, configurable under `RateLimiting:Login` and validated at startup. The partition needs the email before
+the limiter runs, so `LoginRateLimitKeyMiddleware` reads the login body only, bounded to 8 KiB, and rewinds it; a
+missing, oversized or unparseable body falls back to the client address alone, so a malformed request cannot escape the
+limiter. The per-account lockout stays authoritative (ADR-0007 decision 1), which is why the shared integration host
+raises the limit to 100 while `LoginRateLimitTests` proves the real 429 on its own host. A rejection is `429` with
+`Retry-After` and the shared `ProblemDetails` envelope, carrying no account identifier or medical content.
+CORS is one named `Frontend` policy whose origins come from `Cors:AllowedOrigins` (default
+`http://localhost:4200`) and are validated at startup, so a wildcard, a relative value or a path fails the process
+instead of widening the policy; the preflight is answered before authentication and rate limiting.
+`SecurityHeadersMiddleware` adds `nosniff`, `DENY`, `no-referrer`, `camera=(self)` and a CSP from the response's
+`OnStarting` callback, so a `429` and a `500` keep them, and `'unsafe-inline'` stays until the Swagger UI and camera
+helper drop their inline blocks. HSTS is a one-year `includeSubDomains` policy enabled outside Development only, with
+`preload` off, and the framework's `localhost`/`127.0.0.1`/`[::1]` exclusion is kept deliberately; Kestrel's `Server`
+header is off. Forwarded headers are opt-in: enabling them requires a `KnownProxies` list or an explicit
+`TrustAllProxies`, because a spoofable address would defeat every IP-keyed limit. The committed development connection
+string is gone from `appsettings.Development.json`, and the onboarding page now prints only secret key names, never
+values. The controls are documented in `docs/operations/platform-hardening.md`. No package was added and no migration
+was needed; CI's `gitleaks` job from decision record 0013 is the secret-scan execution point.
+
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
 ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed; the platform
@@ -329,6 +350,10 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   rate limiting is defence-in-depth (5 verifications / 15 min per doctor+appointment, 3 generations / 15 min per
   patient; the numbers are tunable). The **lockout duration itself is not settled**: the decision record treats
   15 minutes as an assumption, so do not present it as an approved value.
+- The HTTP edge is part of the security boundary: login is limited per normalized email + client address in front of
+  the lockout, CORS answers only `Cors:AllowedOrigins`, and every response carries the hardening headers. Forwarded
+  headers are trusted only from a configured proxy, because a spoofable client address defeats every IP-keyed limit.
+  The review checklist is `docs/operations/platform-hardening.md`.
 - A grant ends in three independent ways (FR-ACS-07):
   - completing the visit sets its end to **15 minutes after completion** (UC-18, US-25);
   - it is never valid for **more than 2 hours from creation**, even if the visit is never completed (UC-24, US-25);
@@ -358,10 +383,12 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
 - Exposure and security are covered by `ApiReferenceExposureTests` (Development + flag `false`, Production + flag
   `false`, Production + flag `true`; wherever Swagger is served, `/openapi/v1.json` still answers 404) and
   `SwaggerDocumentTests` (the UI configuration points at the document it serves, every operation has a summary and a
-  described response, `login` documents the validation `400` it can return, and every `[Authorize]` operation carries
-  `Bearer` while anonymous operations stay unmarked).
+  described response, `login` documents the validation `400` and the rate-limit `429` it can return, and every
+  `[Authorize]` operation carries `Bearer` while anonymous operations stay unmarked).
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `refresh`, `logout`,
-  `forgot-password`, `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
+  `forgot-password`, `reset-password`) exist. `login` stays anonymous but carries the `Login` policy, so an attempt over
+  the email+address budget answers `429` with `Retry-After`; every response, that `429` included, carries the hardening
+  headers, and CORS answers only the origins in `Cors:AllowedOrigins`. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
   `POST api/appointments/{appointmentId}/access-code` (Patient),
   `POST api/appointments/{appointmentId}/verify-code` (Doctor),

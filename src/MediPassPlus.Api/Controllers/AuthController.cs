@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using MediPassPlus.Api.RateLimiting;
 using MediPassPlus.Application.Auth;
 using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Application.Email;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 
 namespace MediPassPlus.Api.Controllers;
@@ -181,10 +183,17 @@ public class AuthController : ControllerBase
     /// Every one of those answers with the same body on purpose, so the endpoint never confirms which
     /// addresses or accounts exist.
     /// </response>
+    /// <response code="429">
+    /// The email and client address exceeded the configured sign-in budget. The response is the shared
+    /// ProblemDetails envelope with a <c>Retry-After</c> header and carries no account identifier or medical
+    /// content (ADR-0007 decision 3).
+    /// </response>
     [HttpPost("login")]
+    [EnableRateLimiting(LoginRateLimitPolicy.Name)]
     [ProducesResponseType(typeof(AuthTokensResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Login(LoginDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);

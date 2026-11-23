@@ -40,14 +40,16 @@ dotnet user-secrets set "Jwt:SecretKey" "<at least 32 random characters>" --proj
 $key = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 dotnet user-secrets set "AccessCode:HmacKey" $key --project src/MediPassPlus.Api
 
-dotnet user-secrets list --project src/MediPassPlus.Api     # confirm what is set, never paste the values anywhere
+# Confirm which keys exist, never their values: plain `user-secrets list` prints every secret to the terminal.
+dotnet user-secrets list --project src/MediPassPlus.Api | ForEach-Object { ($_ -split ' = ')[0] }
 ```
 
 Secrets are local to each developer: user-secrets are not shared through Git, and one developer's store says nothing
-about another's. Check your own store for the values your task needs — `dotnet user-secrets list --project
-src/MediPassPlus.Api` — and add whatever is missing; do not assume it is empty, and do not assume it is complete. The
-API starts without a database connection string until something opens the database, but `AccessCode:HmacKey` is
-validated at startup, so the API does not start without it. The JWT signing key, the Data Protection keys and the
+about another's. Check your own store for the keys your task needs with the key-name-only command above and add
+whatever is missing; do not assume it is empty, and do not assume it is complete. Printing the values is itself a leak
+— they end up in scrollback, screenshots and screen recordings — so never run `dotnet user-secrets list` to "check"
+them. The API starts without a database connection string until something opens the database, but `AccessCode:HmacKey`
+is validated at startup, so the API does not start without it. The JWT signing key, the Data Protection keys and the
 access-code HMAC key are three **different** secrets (ADR-0007).
 
 ## 3. Open the repository in OpenCode
