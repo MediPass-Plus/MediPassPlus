@@ -300,6 +300,15 @@ string is gone from `appsettings.Development.json`, and the onboarding page now 
 values. The controls are documented in `docs/operations/platform-hardening.md`. No package was added and no migration
 was needed; CI's `gitleaks` job from decision record 0013 is the secret-scan execution point.
 
+MP-52 adds the admin counts dashboard (FR-STF-08, FR-STF-09, FR-PRV-06). `GET api/admin/dashboard` is Admin-only and
+returns numbers only: users per role (`patients`, `doctors`, `staff`, `admins`), the number of clinics, and
+appointments per status (`booked`, `checkedIn`, `inVisit`, `completed`, `cancelled`).
+`AdminDashboardService` counts users from Identity's `UserRoles` and `Roles` (the canonical `Role.Name`), not
+from the duplicate `ApplicationUser.Role` column, because registration stores that column as the caller typed it, so
+a lowercase `patient` would otherwise fall out of the count. Deactivated accounts are included. The service reads
+only the user-role, appointment and clinic tables, so no diagnosis, prescription, report or history row is touched, and
+the response carries no patient identifier. `AdminDashboardController` is listed under `NonMedicalControllers` in
+`StaffAdminRefusalTests`. No package was added and no migration was needed.
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
 ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed; the platform
@@ -415,7 +424,7 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   `GET api/appointments/{appointmentId}/access-state` (Doctor or Patient),
   `POST api/access-grants/{grantId}/end` (Patient), `GET api/appointments/{appointmentId}/history` (Doctor),
   `GET api/me/history` (Patient), `POST api/records/{recordId}/reports` (Doctor or Patient), `GET api/me/audit`
-  (Patient), the self-service profile actions
+  (Patient), `GET api/admin/dashboard` (Admin), the self-service profile actions
   `GET api/me/profile` / `PUT api/me/profile` / `POST api/me/change-password` (any authenticated role), and the
   patient appointment actions
   `GET api/me/appointments` / `POST api/me/appointments` / `PUT {appointmentId}/cancel` /
