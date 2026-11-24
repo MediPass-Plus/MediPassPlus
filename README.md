@@ -126,6 +126,7 @@ The phone camera needs HTTPS (or localhost) to scan the QR code.
 - Requirements Gathering: `Documentations/`
 - UML diagrams and the Gantt chart: `Diagrams/`
 - Deployment keys, the Data Protection ring and report storage: [`docs/operations/deployment-keys.md`](docs/operations/deployment-keys.md)
+- Rate limits, CORS, response headers, HTTPS and secret hygiene: [`docs/operations/platform-hardening.md`](docs/operations/platform-hardening.md)
 
 ## Working on the project
 

@@ -164,8 +164,20 @@ patient audit list (`GET api/me/audit`): own rows only by the affected patient, 
 50 with `400` for invalid paging, identifiers/action/entity/time/IP only, no self-audit on the list read, exactly one
 row per medical read/write, and an immutability proof against SQL Server (FR-PRV-02, FR-PRV-03, NFR-PRI-03,
 NFR-PRI-05). The MP-47 tests add the upload type and size boundaries, the private-storage and audit proofs, and the
-record-scope refusal matrix. There is still no report download endpoint (MP-48), and the frontend is the untouched
-Angular welcome page.
+record-scope refusal matrix. `AccountAuthorizationMatrixTests` is the accounts counterpart of that matrix: one table
+lists every Auth, Admin and self-service action with the roles allowed to call it, a route-inventory test fails when a
+new action has no row, and each protected row gets a no-token `401` with its Bearer challenge, a garbage-token `401`, a
+wrong-role `403` and a positive case for the allowed role, while the six anonymous Auth endpoints are called with a
+token of every role and must not be challenged. The same class proves the five-attempt lockout for all four roles, a
+replayed refresh token ending every live session, logout ending only the presented session, and that a role supplied in
+a registration body buys nothing (Admin refused, Doctor and Staff created inactive and unable to sign in). Every
+refusal is checked for the problem envelope and for a submitted password, a refresh token or a stored hash echoed back,
+and deactivation is proved to block login and refresh immediately while an already-issued access token keeps working
+until it expires (ADR-0003 decision 5). The same PR folds the remaining raw `400` bodies of public registration and
+admin creation into the shared `ProblemDetails` envelope (ADR-0010); validation failures keep the
+`ValidationProblemDetails` `errors` bag, and every controller-level refusal has a stable title and a safe detail.
+There is still no report download endpoint (MP-48), and the frontend is the
+untouched Angular welcome page.
 Everything the README or the planning document describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files and `package.json` over prose.
 
@@ -234,8 +246,11 @@ that breaks a validation rule still answers the shared `ValidationProblemDetails
 is spent, so a weak password never consumes the link. Both endpoints write one parameterless structured line —
 `Password reset requested.` on every path of the start request and `Password reset completed.` only once the password
 changed — so the only identifier in the log is the correlation id the pipeline already opened as a scope, and the
-start line cannot confirm which addresses are registered. The reset endpoints are still not rate-limited; that stays
-with P5. The new `PasswordResetEndpointTests` cover the emailed token, the missing, invalid, reused and weak-password
+start line cannot confirm which addresses are registered. The reset endpoints are now rate-limited as part of MP-51
+(P5): `forgot-password` answers `PasswordResetRequest` and `reset-password` answers `PasswordResetSubmit`, both
+per normalized email + client address with a `429` plus `Retry-After` and the shared ProblemDetails envelope; the
+endpoints are unchanged under the budgets. The new `PasswordResetRateLimitTests` prove the 429, the case-variant
+budget sharing, the per-address isolation and the under-budget `202`/`400` behavior. The new `PasswordResetEndpointTests` cover the emailed token, the missing, invalid, reused and weak-password
 cases, the identical body for a known and an unknown address, and a log capture that proves neither the token nor the
 address reaches a log line and that the correlation id is the only identifier there; `PasswordResetProductionResponseTests`
 runs the production host and proves the acknowledgement carries no token, no reset link and no address. No migration
@@ -253,6 +268,37 @@ the source slot free). Check-in is refused for every non-`Booked` state (`Checke
 `Completed`), and the staff booking route is proved to inherit the same past-slot and inactive-patient refusals from
 `IBookingService`. No booking rule lives in a controller — the patient and staff controllers only map `BookingFailure`
 to `ProblemDetails` — so no production change and no migration were needed.
+
+MP-51 closes the HTTP-edge controls (FR-PRV-07, NFR-SEC-01, NFR-SEC-06, NFR-SEC-07, NFR-SEC-08).
+`POST api/Auth/login` now carries the `Login` fixed-window policy: 5 attempts per 15 minutes per normalized email plus
+client address, configurable under `RateLimiting:Login` and validated at startup. The partition needs the email before
+the limiter runs, so `RateLimitEmailKeyMiddleware` reads the bodies of the three body-keyed policies (login,
+`forgot-password`, `reset-password`), bounded to 8 KiB, and rewinds them; a missing, oversized or unparseable body falls
+back to the client address alone, so a malformed request cannot escape the limiter. A repeated `email` property spends
+the budget of the last occurrence, because that is the value MVC binds, so a decoy cannot buy a fresh bucket. The
+password-reset policies are `PasswordResetRequest` (3 per 15 minutes starting the flow) and `PasswordResetSubmit`
+(5 per 15 minutes completing it), per normalized email plus client address. The email is folded into one of 16,384
+shards (`email:b1a2f:ip:…`) so the never-evicting limiter's key set cannot grow with invented addresses, and an address
+longer than 254 characters falls back to the client address. The per-account lockout stays authoritative (ADR-0007
+decision 1), which is why the shared integration host raises the limit to 100 while `LoginRateLimitTests` proves the
+real 429 on its own host. A rejection is `429` with `Retry-After` and the shared `ProblemDetails` envelope, carrying no
+account identifier or medical content. CORS is one named `Frontend` policy whose origins come from
+`Cors:AllowedOrigins` (the API's own `appsettings.json` names `http://localhost:4200`, but there is no code fallback, so
+a missing section fails startup) and are validated at startup, so a wildcard, a relative value or a path fails the
+process instead of widening the policy; `CorsStartupValidationTests` proves the host refusal, the preflight is answered
+before authentication and rate limiting, and `Retry-After` is an exposed response header so the Angular client can read
+it on a `429` (the F1/MP-56 handoff is recorded in `platform-hardening.md`).
+`SecurityHeadersMiddleware` adds `nosniff`, `DENY`, `no-referrer`, `camera=(self)` and a CSP from the response's
+`OnStarting` callback, so a `429` and a `500` keep them, and `'unsafe-inline'` stays until the Swagger UI and camera
+helper drop their inline blocks. The header values, the CSP and HSTS are code constants on purpose, not configuration —
+they are one policy for every deployment; only rate limits, CORS origins and forwarded-header trust are config-backed.
+HSTS is a one-year `includeSubDomains` policy enabled outside Development only, with
+`preload` off, and the framework's `localhost`/`127.0.0.1`/`[::1]` exclusion is kept deliberately; Kestrel's `Server`
+header is off. Forwarded headers are opt-in: enabling them requires a `KnownProxies` list or an explicit
+`TrustAllProxies`, because a spoofable address would defeat every IP-keyed limit. The committed development connection
+string is gone from `appsettings.Development.json`, and the onboarding page now prints only secret key names, never
+values. The controls are documented in `docs/operations/platform-hardening.md`. No package was added and no migration
+was needed; CI's `gitleaks` job from decision record 0013 is the secret-scan execution point.
 
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
@@ -317,6 +363,11 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   rate limiting is defence-in-depth (5 verifications / 15 min per doctor+appointment, 3 generations / 15 min per
   patient; the numbers are tunable). The **lockout duration itself is not settled**: the decision record treats
   15 minutes as an assumption, so do not present it as an approved value.
+- The HTTP edge is part of the security boundary: login is limited per normalized email + client address in front of
+  the lockout, the password-reset endpoints have their own per-email + client budgets in front of the mail/token flow,
+  CORS answers only `Cors:AllowedOrigins`, and every response carries the hardening headers. Forwarded
+  headers are trusted only from a configured proxy, because a spoofable client address defeats every IP-keyed limit.
+  The review checklist is `docs/operations/platform-hardening.md`.
 - A grant ends in three independent ways (FR-ACS-07):
   - completing the visit sets its end to **15 minutes after completion** (UC-18, US-25);
   - it is never valid for **more than 2 hours from creation**, even if the visit is never completed (UC-24, US-25);
@@ -346,10 +397,12 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
 - Exposure and security are covered by `ApiReferenceExposureTests` (Development + flag `false`, Production + flag
   `false`, Production + flag `true`; wherever Swagger is served, `/openapi/v1.json` still answers 404) and
   `SwaggerDocumentTests` (the UI configuration points at the document it serves, every operation has a summary and a
-  described response, `login` documents the validation `400` it can return, and every `[Authorize]` operation carries
-  `Bearer` while anonymous operations stay unmarked).
+  described response, `login` documents the validation `400` and the rate-limit `429` it can return, and every
+  `[Authorize]` operation carries `Bearer` while anonymous operations stay unmarked).
 - **Current state:** Swagger UI works and the Accounts endpoints (`register`, `login`, `refresh`, `logout`,
-  `forgot-password`, `reset-password`) exist. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
+  `forgot-password`, `reset-password`) exist. `login` stays anonymous but carries the `Login` policy, so an attempt over
+  the email+address budget answers `429` with `Retry-After`; every response, that `429` included, carries the hardening
+  headers, and CORS answers only the origins in `Cors:AllowedOrigins`. The `[Authorize]` operations are `POST api/Auth/create-admin` (Admin, and it requires an
   existing admin account), `POST api/appointments/{appointmentId}/start-visit` (Doctor),
   `POST api/appointments/{appointmentId}/access-code` (Patient),
   `POST api/appointments/{appointmentId}/verify-code` (Doctor),

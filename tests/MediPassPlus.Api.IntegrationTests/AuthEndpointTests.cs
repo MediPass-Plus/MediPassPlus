@@ -210,9 +210,12 @@ public sealed class AuthEndpointTests : IAsyncLifetime, IClassFixture<MediPassAp
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        var refusal = await response.Content.ReadFromJsonAsync<RegisterRefusal>();
-        Assert.NotNull(refusal);
-        Assert.Equal("This role cannot be self-assigned", refusal!.Message);
+        var problem = await ReadProblemAsync(response);
+        Assert.Equal((int)HttpStatusCode.BadRequest, problem.Status);
+        Assert.Equal("This role cannot be self-assigned.", problem.Title);
+        Assert.Equal(
+            "The Admin role is granted by an existing administrator, never by public registration.",
+            problem.Detail);
 
         using var scope = _factory.Services.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
@@ -307,9 +310,10 @@ public sealed class AuthEndpointTests : IAsyncLifetime, IClassFixture<MediPassAp
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        var refusal = await response.Content.ReadFromJsonAsync<RegisterRefusal>();
-        Assert.NotNull(refusal);
-        Assert.Equal("Role 'Wizard' does not exist", refusal!.Message);
+        var problem = await ReadProblemAsync(response);
+        Assert.Equal((int)HttpStatusCode.BadRequest, problem.Status);
+        Assert.Equal("The requested role does not exist.", problem.Title);
+        Assert.Equal("Role 'Wizard' does not exist.", problem.Detail);
     }
 
     /// <summary>
@@ -388,9 +392,6 @@ public sealed class AuthEndpointTests : IAsyncLifetime, IClassFixture<MediPassAp
 
     /// <summary>The fields every refusal must share. <c>traceId</c> is per request and is not compared.</summary>
     private readonly record struct AuthProblem(int? Status, string? Title, string? Detail);
-
-    /// <summary>The refusal body the register endpoint returns for an unknown or non-self-assignable role.</summary>
-    private sealed record RegisterRefusal(string? Message);
 
     private sealed record LoginResponse(string AccessToken, string[]? Roles);
 }

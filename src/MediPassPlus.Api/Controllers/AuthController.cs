@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using MediPassPlus.Api.RateLimiting;
 using MediPassPlus.Application.Auth;
 using MediPassPlus.Application.Dtos.Auth;
 using MediPassPlus.Application.Email;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Logging;
 
 namespace MediPassPlus.Api.Controllers;
@@ -53,15 +55,21 @@ public class AuthController : ControllerBase
     /// <response code="200">The account was created with the requested role.</response>
     /// <response code="400">
     /// The payload is invalid, the role does not exist or cannot be self-assigned, or Identity rejected the account.
+    /// The body is the shared <see cref="ProblemDetails"/> envelope (ADR-0010).
     /// </response>
     [HttpPost("register")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register(RegisterDto request)
     {
-        // Validate registration data
+        // The global validation filter normally answers first; this guard keeps a body that skipped it in the same
+        // envelope instead of a second error shape (ADR-0010, NFR-REL-04).
         if (!ModelState.IsValid)
-            return BadRequest("Invalid registration data.");
+        {
+            return AccountRefusal(
+                "Invalid registration data.",
+                "The registration payload does not match the contract.");
+        }
 
         // Identity resolves a role name case-insensitively through NormalizedName, so "admin", "Admin"
         // and "ADMIN" are the same role and must reach the same branch. Resolve the canonical role first
@@ -70,10 +78,11 @@ public class AuthController : ControllerBase
         var role = await _roleManager.FindByNameAsync(request.Role);
 
         if (role is null)
-            return BadRequest(new
-            {
-                message = $"Role '{request.Role}' does not exist"
-            });
+        {
+            return AccountRefusal(
+                "The requested role does not exist.",
+                $"Role '{request.Role}' does not exist.");
+        }
 
         var user = new ApplicationUser
         {
@@ -89,10 +98,9 @@ public class AuthController : ControllerBase
         switch (role.NormalizedName)
         {
             case "ADMIN":
-                return BadRequest(new
-                {
-                    message = "This role cannot be self-assigned"
-                });
+                return AccountRefusal(
+                    "This role cannot be self-assigned.",
+                    "The Admin role is granted by an existing administrator, never by public registration.");
 
             case "DOCTOR":
             case "STAFF":
@@ -118,8 +126,9 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(
-                    result.Errors.Select(e => e.Description));
+                return AccountRefusal(
+                    "The account could not be created.",
+                    Describe(result));
             }
 
             // Step 2: Assign the role in the UserRoles table
@@ -130,11 +139,10 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(new
-                {
-                    message = "Failed to assign role. Registration was cancelled.",
-                    errors = roleResult.Errors.Select(e => e.Description)
-                });
+                return AccountRefusal(
+                    "The account could not be created.",
+                    "Registration was cancelled because the role could not be assigned. "
+                        + Describe(roleResult));
             }
 
             await AddMedicalRecordIfPatientAsync(user);
@@ -175,10 +183,17 @@ public class AuthController : ControllerBase
     /// Every one of those answers with the same body on purpose, so the endpoint never confirms which
     /// addresses or accounts exist.
     /// </response>
+    /// <response code="429">
+    /// The email and client address exceeded the configured sign-in budget. The response is the shared
+    /// ProblemDetails envelope with a <c>Retry-After</c> header and carries no account identifier or medical
+    /// content (ADR-0007 decision 3).
+    /// </response>
     [HttpPost("login")]
+    [EnableRateLimiting(LoginRateLimitPolicy.Name)]
     [ProducesResponseType(typeof(AuthTokensResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ValidationProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> Login(LoginDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
@@ -263,15 +278,23 @@ public class AuthController : ControllerBase
 
     /// <summary>
     /// Starts the password-reset flow. The answer is the same whether the email exists, so the endpoint never
-    /// confirms which addresses are registered.
+    /// confirms which addresses are registered. The rate limit is per email and client address in front of the
+    /// mail-sending behaviour (FR-PRV-07, ADR-0007 decision 2).
     /// </summary>
     /// <param name="request">The account email.</param>
     /// <returns><c>202</c> whether or not an email was sent.</returns>
     /// <response code="202">The request was accepted; an email is sent only for an active account.</response>
     /// <response code="400">The payload is invalid.</response>
+    /// <response code="429">
+    /// The email and client address exceeded the configured reset-request budget. The response is the shared
+    /// ProblemDetails envelope with a <c>Retry-After</c> header and carries no account identifier (ADR-0007
+    /// decision 3).
+    /// </response>
     [HttpPost("forgot-password")]
+    [EnableRateLimiting(PasswordResetRateLimitPolicy.RequestName)]
     [ProducesResponseType(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> ForgotPassword(ForgotPasswordDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
@@ -301,7 +324,9 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Completes a password reset with the emailed token and revokes every live session.
+    /// Completes a password reset with the emailed token and revokes every live session. The rate limit is per
+    /// email and client address in front of the other anonymous paths, so a caller cannot spend another account's
+    /// budget and an enumeration probe still gets the shared refusal (FR-PRV-07, ADR-0007 decision 2).
     /// </summary>
     /// <param name="request">The email, the reset token and the new password.</param>
     /// <returns>A message confirming the reset.</returns>
@@ -312,9 +337,16 @@ public class AuthController : ControllerBase
     /// invalid, expired or already-used token and every Identity refusal share one identical body with no <c>errors</c>
     /// bag, so the endpoint cannot be used to discover which addresses are registered.
     /// </response>
+    /// <response code="429">
+    /// The email and client address exceeded the configured reset-submit budget. The response is the shared
+    /// ProblemDetails envelope with a <c>Retry-After</c> header and carries no token, no password, no account
+    /// identifier and no medical content (ADR-0007 decision 3, ADR-0010).
+    /// </response>
     [HttpPost("reset-password")]
+    [EnableRateLimiting(PasswordResetRateLimitPolicy.SubmitName)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status429TooManyRequests)]
     public async Task<IActionResult> ResetPassword(ResetPasswordDto request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
@@ -418,6 +450,36 @@ public class AuthController : ControllerBase
         return BadRequest(problem);
     }
 
+    /// <summary>
+    /// Builds the shared <c>400</c> envelope for a refused registration or admin creation (ADR-0010). The title is
+    /// stable for each branch and the detail never includes a submitted password, token or stored hash.
+    /// </summary>
+    /// <param name="title">A short description of the refused request.</param>
+    /// <param name="detail">The safe, caller-facing reason for the refusal.</param>
+    /// <returns>The <c>400</c> result.</returns>
+    private ObjectResult AccountRefusal(string title, string detail)
+    {
+        var problem = new ProblemDetails
+        {
+            Status = StatusCodes.Status400BadRequest,
+            Title = title,
+            Detail = detail
+        };
+
+        problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+        return BadRequest(problem);
+    }
+
+    /// <summary>
+    /// Joins Identity's refusal descriptions into one safe detail. Identity reports rule violations, never the
+    /// submitted password or token, and the caller's identifier is already in the correlation id (FR-PRV-08).
+    /// </summary>
+    /// <param name="result">The failed Identity operation.</param>
+    /// <returns>The descriptions separated by semicolons.</returns>
+    private static string Describe(IdentityResult result) =>
+        string.Join("; ", result.Errors.Select(error => error.Description));
+
     // Endpoint to create an admin user, accessible only by existing admins
 
     /// <summary>
@@ -427,28 +489,34 @@ public class AuthController : ControllerBase
     /// <returns>A message confirming the creation.</returns>
     /// <response code="200">The admin account was created.</response>
     /// <response code="400">
-    /// The payload is invalid, the Admin role does not exist, or Identity rejected the account.
+    /// The payload is invalid, the Admin role does not exist, or Identity rejected the account. The body is the shared
+    /// <see cref="ProblemDetails"/> envelope (ADR-0010).
     /// </response>
     /// <response code="401">Missing, invalid or expired token.</response>
     /// <response code="403">The caller is not an admin.</response>
     [Authorize(Roles = "Admin")]
     [HttpPost("create-admin")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<IActionResult> CreateAdmin(CreateAdminDto request)
     {
         // Validate request data
         if (!ModelState.IsValid)
-            return BadRequest("Invalid registration data.");
+        {
+            return AccountRefusal(
+                "Invalid registration data.",
+                "The account payload does not match the contract.");
+        }
 
         // Check if Admin role exists
         if (!await _roleManager.RoleExistsAsync("Admin"))
-            return BadRequest(new
-            {
-                message = "Admin role does not exist"
-            });
+        {
+            return AccountRefusal(
+                "The Admin role does not exist.",
+                "This environment has no Admin role, so an administrator cannot be created here.");
+        }
 
         var user = new ApplicationUser
         {
@@ -475,8 +543,9 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(
-                    result.Errors.Select(e => e.Description));
+                return AccountRefusal(
+                    "The admin account could not be created.",
+                    Describe(result));
             }
 
             // Step 2 Assign the Admin role in the UserRoles table
@@ -487,11 +556,10 @@ public class AuthController : ControllerBase
             {
                 await transaction.RollbackAsync();
 
-                return BadRequest(new
-                {
-                    message = "Failed to assign Admin role. Admin creation was cancelled.",
-                    errors = roleResult.Errors.Select(e => e.Description)
-                });
+                return AccountRefusal(
+                    "The admin account could not be created.",
+                    "Admin creation was cancelled because the role could not be assigned. "
+                        + Describe(roleResult));
             }
 
             // Both operations succeeded, commit the transaction
