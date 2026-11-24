@@ -42,7 +42,7 @@ public sealed class StaffAdminRefusalTests : IClassFixture<MediPassApiFactory>
         typeof(StaffScheduleController),
         typeof(StaffSlotsController),
         typeof(WeatherForecastController),
-            typeof(AdminDashboardController),
+        typeof(AdminDashboardController),
     ];
 
     // The only staff action that lives on a controller that also has medical actions. Every other staff action is

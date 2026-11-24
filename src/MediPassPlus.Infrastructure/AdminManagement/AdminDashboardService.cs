@@ -8,8 +8,9 @@ using Microsoft.EntityFrameworkCore;
 namespace MediPassPlus.Infrastructure.AdminManagement;
 
 /// <summary>
-/// Counts only. Every query groups by a role or a status and selects a number, so no patient row, name or medical
-/// column is ever read (FR-STF-08, FR-STF-09, FR-PRV-06).
+/// Counts only. Users are counted from Identity's UserRoles and Roles (canonical role names), appointments by
+/// status and clinics as a total, so no patient row, name or medical column is read (FR-STF-08, FR-STF-09,
+/// FR-PRV-06).
 /// </summary>
 public class AdminDashboardService : IAdminDashboardService
 {
@@ -22,11 +23,12 @@ public class AdminDashboardService : IAdminDashboardService
 
     public async Task<AdminDashboardDto> GetAsync(CancellationToken cancellationToken)
     {
-        var roleCounts = await _db.Users
-            .AsNoTracking()
-            .GroupBy(user => user.Role)
-            .Select(group => new { Role = group.Key, Count = group.Count() })
-            .ToDictionaryAsync(row => row.Role ?? string.Empty, row => row.Count, cancellationToken);
+        var roleCounts = await (
+                from userRole in _db.UserRoles.AsNoTracking()
+                join role in _db.Roles.AsNoTracking() on userRole.RoleId equals role.Id
+                group userRole by role.Name into grouped
+                select new { Role = grouped.Key, Count = grouped.Count() })
+            .ToDictionaryAsync(row => row.Role!, row => row.Count, cancellationToken);
 
         var statusCounts = await _db.Appointments
             .AsNoTracking()

@@ -156,6 +156,41 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
         Assert.True(root.GetProperty("clinics").GetInt32() >= 4);
     }
 
+        // ---------- Regression: self-registration with a lowercase role ----------
+
+    [Fact]
+    public async Task Dashboard_CountsAPatientWhoRegisteredWithALowercaseRole()
+    {
+        var admin = await _factory.CreateUserAsync(DefaultRoles.Admin);
+        using var adminClient = _factory.CreateAuthenticatedClient(admin);
+
+        var before = await ReadPatientsAsync(adminClient);
+
+        using var anonymous = _factory.CreateClient();
+        using var register = await anonymous.PostAsJsonAsync(
+            "/api/Auth/register",
+            new
+            {
+                fullName = "Lowercase Role Patient",
+                email = $"lowercase.{Guid.NewGuid():N}@integration.medipass.test",
+                password = "Reg@12345678",
+                role = "patient"
+            });
+        Assert.Equal(HttpStatusCode.OK, register.StatusCode);
+
+        var after = await ReadPatientsAsync(adminClient);
+
+        Assert.Equal(before + 1, after);
+    }
+
+    private static async Task<int> ReadPatientsAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync(Url);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        return doc.RootElement.GetProperty("users").GetProperty("patients").GetInt32();
+    }
+    
     private static void AssertProperties(JsonElement element, params string[] expected)
     {
         var actual = element.EnumerateObject().Select(p => p.Name).OrderBy(n => n).ToArray();

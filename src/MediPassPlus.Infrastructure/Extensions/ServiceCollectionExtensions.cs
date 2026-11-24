@@ -158,7 +158,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IClinicAdminService, ClinicAdminService>();
         services.AddScoped<IAccountAdminService, AccountAdminService>();
         services.AddScoped<IAccountStatusService, AccountStatusService>();
-                services.AddScoped<IAdminDashboardService, AdminDashboardService>();
+        services.AddScoped<IAdminDashboardService, AdminDashboardService>();
         services.AddScoped<IStaffScheduleService, StaffScheduleService>();
         services.AddScoped<IStaffSlotService, StaffSlotService>();
         services.AddScoped<IStaffBookingService, StaffBookingService>();
