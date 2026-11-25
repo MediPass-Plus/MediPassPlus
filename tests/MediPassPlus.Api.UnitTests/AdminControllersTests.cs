@@ -18,7 +18,8 @@ public class AdminControllersTests
     [
         typeof(AdminClinicsController),
         typeof(AdminAccountsController),
-        typeof(AdminUsersController)
+        typeof(AdminUsersController),
+        typeof(AdminDashboardController)
     ];
 
     // ---------- Authorization: only Admin ----------
@@ -27,6 +28,7 @@ public class AdminControllersTests
     [InlineData(typeof(AdminClinicsController))]
     [InlineData(typeof(AdminAccountsController))]
     [InlineData(typeof(AdminUsersController))]
+    [InlineData(typeof(AdminDashboardController))]
     public void EveryAdminController_RequiresTheAdminRole(Type controllerType)
     {
         var authorize = controllerType.GetCustomAttribute<AuthorizeAttribute>();
