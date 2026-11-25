@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MediPassPlus.Domain.Clinical;
+using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.EntityFrameworkCore;
 
@@ -29,20 +30,24 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
     // ---------- Roles ----------
 
     [Fact]
-    public async Task Dashboard_WithoutToken_ReturnsUnauthorized()
+    public async Task Dashboard_WithoutToken_ReturnsUnauthorizedProblem()
     {
         using var client = _factory.CreateClient();
 
         using var response = await client.GetAsync(Url);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains(
+            response.Headers.WwwAuthenticate,
+            header => header.Scheme == "Bearer");
+        await AssertProblemAsync(response, 401);
     }
 
     [Theory]
     [InlineData(DefaultRoles.Patient)]
     [InlineData(DefaultRoles.Doctor)]
     [InlineData(DefaultRoles.Staff)]
-    public async Task Dashboard_WithNonAdminRole_ReturnsForbidden(string role)
+    public async Task Dashboard_WithNonAdminRole_ReturnsForbiddenProblem(string role)
     {
         var user = await _factory.CreateUserAsync(role);
         using var client = _factory.CreateAuthenticatedClient(user);
@@ -50,6 +55,7 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
         using var response = await client.GetAsync(Url);
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        await AssertProblemAsync(response, 403);
     }
 
     [Fact]
@@ -116,18 +122,10 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
         await using var db = _factory.CreateDbContext();
 
         var users = root.GetProperty("users");
-        Assert.Equal(
-            await db.Users.CountAsync(u => u.Role == DefaultRoles.Patient),
-            users.GetProperty("patients").GetInt32());
-        Assert.Equal(
-            await db.Users.CountAsync(u => u.Role == DefaultRoles.Doctor),
-            users.GetProperty("doctors").GetInt32());
-        Assert.Equal(
-            await db.Users.CountAsync(u => u.Role == DefaultRoles.Staff),
-            users.GetProperty("staff").GetInt32());
-        Assert.Equal(
-            await db.Users.CountAsync(u => u.Role == DefaultRoles.Admin),
-            users.GetProperty("admins").GetInt32());
+        Assert.Equal(await CountActiveInRoleAsync(db, DefaultRoles.Patient), users.GetProperty("patients").GetInt32());
+        Assert.Equal(await CountActiveInRoleAsync(db, DefaultRoles.Doctor), users.GetProperty("doctors").GetInt32());
+        Assert.Equal(await CountActiveInRoleAsync(db, DefaultRoles.Staff), users.GetProperty("staff").GetInt32());
+        Assert.Equal(await CountActiveInRoleAsync(db, DefaultRoles.Admin), users.GetProperty("admins").GetInt32());
 
         Assert.Equal(await db.Clinics.CountAsync(), root.GetProperty("clinics").GetInt32());
 
@@ -156,7 +154,7 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
         Assert.True(root.GetProperty("clinics").GetInt32() >= 4);
     }
 
-        // ---------- Regression: self-registration with a lowercase role ----------
+    // ---------- Regression: self-registration with a lowercase role ----------
 
     [Fact]
     public async Task Dashboard_CountsAPatientWhoRegisteredWithALowercaseRole()
@@ -183,6 +181,50 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
         Assert.Equal(before + 1, after);
     }
 
+    [Fact]
+    public async Task Dashboard_DoesNotCountADeactivatedAccount()
+    {
+        var admin = await _factory.CreateUserAsync(DefaultRoles.Admin);
+        using var adminClient = _factory.CreateAuthenticatedClient(admin);
+        var patient = await _factory.CreateUserAsync(DefaultRoles.Patient);
+
+        var before = await ReadPatientsAsync(adminClient);
+
+        using var deactivate = await adminClient.PostAsync(
+            $"/api/admin/users/{patient.Id}/deactivate",
+            content: null);
+        Assert.Equal(HttpStatusCode.NoContent, deactivate.StatusCode);
+
+        var after = await ReadPatientsAsync(adminClient);
+
+        Assert.Equal(before - 1, after);
+    }
+
+    // ---------- Guard: a new role or status must be counted ----------
+
+    [Fact]
+    public void Dashboard_CoversEveryDefaultRoleAndEveryAppointmentStatus()
+    {
+        // The DTO exposes one property per role and per status. If a role or a status is added, this test fails
+        // until the dashboard counts it too.
+        var userProperties = typeof(MediPassPlus.Application.Dtos.AdminManagement.UserCountsDto)
+            .GetProperties().Length;
+        var statusProperties = typeof(MediPassPlus.Application.Dtos.AdminManagement.AppointmentCountsDto)
+            .GetProperties().Length;
+
+        Assert.Equal(DefaultRoles.All.Count, userProperties);
+        Assert.Equal(Enum.GetValues<AppointmentStatus>().Length, statusProperties);
+    }
+
+    // ---------- Helpers ----------
+
+    private static Task<int> CountActiveInRoleAsync(MediPassDbContext db, string roleName) =>
+        (from userRole in db.UserRoles
+         join role in db.Roles on userRole.RoleId equals role.Id
+         join user in db.Users on userRole.UserId equals user.Id
+         where role.Name == roleName && user.IsActive
+         select userRole).CountAsync();
+
     private static async Task<int> ReadPatientsAsync(HttpClient client)
     {
         using var response = await client.GetAsync(Url);
@@ -190,7 +232,16 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         return doc.RootElement.GetProperty("users").GetProperty("patients").GetInt32();
     }
-    
+
+    private static async Task AssertProblemAsync(HttpResponseMessage response, int status)
+    {
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(status, doc.RootElement.GetProperty("status").GetInt32());
+        Assert.False(string.IsNullOrWhiteSpace(doc.RootElement.GetProperty("title").GetString()));
+    }
+
     private static void AssertProperties(JsonElement element, params string[] expected)
     {
         var actual = element.EnumerateObject().Select(p => p.Name).OrderBy(n => n).ToArray();

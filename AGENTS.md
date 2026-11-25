@@ -303,9 +303,9 @@ was needed; CI's `gitleaks` job from decision record 0013 is the secret-scan exe
 MP-52 adds the admin counts dashboard (FR-STF-08, FR-STF-09, FR-PRV-06). `GET api/admin/dashboard` is Admin-only and
 returns numbers only: users per role (`patients`, `doctors`, `staff`, `admins`), the number of clinics, and
 appointments per status (`booked`, `checkedIn`, `inVisit`, `completed`, `cancelled`).
-`AdminDashboardService` counts users from Identity's `UserRoles` and `Roles` (the canonical `Role.Name`), not
+`AdminDashboardService` counts active users from Identity's `UserRoles` and `Roles` (the canonical `Role.Name`), not
 from the duplicate `ApplicationUser.Role` column, because registration stores that column as the caller typed it, so
-a lowercase `patient` would otherwise fall out of the count. Deactivated accounts are included. The service reads
+a lowercase `patient` would otherwise fall out of the count. Deactivated accounts are not counted. The service reads
 only the user-role, appointment and clinic tables, so no diagnosis, prescription, report or history row is touched, and
 the response carries no patient identifier. `AdminDashboardController` is listed under `NonMedicalControllers` in
 `StaffAdminRefusalTests`. No package was added and no migration was needed.

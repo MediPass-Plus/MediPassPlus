@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace MediPassPlus.Infrastructure.AdminManagement;
 
 /// <summary>
-/// Counts only. Users are counted from Identity's UserRoles and Roles (canonical role names), appointments by
+/// Counts only. Active users are counted from Identity's UserRoles and Roles (canonical role names), appointments by
 /// status and clinics as a total, so no patient row, name or medical column is read (FR-STF-08, FR-STF-09,
 /// FR-PRV-06).
 /// </summary>
@@ -26,6 +26,8 @@ public class AdminDashboardService : IAdminDashboardService
         var roleCounts = await (
                 from userRole in _db.UserRoles.AsNoTracking()
                 join role in _db.Roles.AsNoTracking() on userRole.RoleId equals role.Id
+                join user in _db.Users.AsNoTracking() on userRole.UserId equals user.Id
+                where user.IsActive
                 group userRole by role.Name into grouped
                 select new { Role = grouped.Key, Count = grouped.Count() })
             .ToDictionaryAsync(row => row.Role!, row => row.Count, cancellationToken);
