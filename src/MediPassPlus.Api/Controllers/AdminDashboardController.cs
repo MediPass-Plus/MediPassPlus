@@ -21,8 +21,8 @@ public class AdminDashboardController : ControllerBase
     }
 
     /// <summary>
-    /// Returns the number of users per role, the number of clinics and the number of appointments per status. The
-    /// response holds counts only: no patient identifier and no medical data (FR-STF-09, FR-PRV-06).
+    /// Returns the number of active users per role, the number of clinics and the number of appointments per
+    /// status. The response holds counts only: no patient identifier and no medical data (FR-STF-09, FR-PRV-06).
     /// </summary>
     /// <response code="200">The counts were returned.</response>
     /// <response code="401">Missing, invalid or expired token.</response>

@@ -309,6 +309,7 @@ a lowercase `patient` would otherwise fall out of the count. Deactivated account
 only the user-role, appointment and clinic tables, so no diagnosis, prescription, report or history row is touched, and
 the response carries no patient identifier. `AdminDashboardController` is listed under `NonMedicalControllers` in
 `StaffAdminRefusalTests`. No package was added and no migration was needed.
+
 Installed dependencies include Identity, JWT bearer, FluentValidation and the shared ProblemDetails pipeline;
 Swashbuckle generates the Swagger document and UI. MP-97 adds QRCoder, ZXing.Net,
 ZXing.Net.Bindings.ImageSharp.V3 and SixLabors.ImageSharp to Infrastructure. Serilog is not installed; the platform

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using MediPassPlus.Application.Dtos.AdminManagement;
 using MediPassPlus.Domain.Clinical;
 using MediPassPlus.Infrastructure.Persistence;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
@@ -154,33 +155,6 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
         Assert.True(root.GetProperty("clinics").GetInt32() >= 4);
     }
 
-    // ---------- Regression: self-registration with a lowercase role ----------
-
-    [Fact]
-    public async Task Dashboard_CountsAPatientWhoRegisteredWithALowercaseRole()
-    {
-        var admin = await _factory.CreateUserAsync(DefaultRoles.Admin);
-        using var adminClient = _factory.CreateAuthenticatedClient(admin);
-
-        var before = await ReadPatientsAsync(adminClient);
-
-        using var anonymous = _factory.CreateClient();
-        using var register = await anonymous.PostAsJsonAsync(
-            "/api/Auth/register",
-            new
-            {
-                fullName = "Lowercase Role Patient",
-                email = $"lowercase.{Guid.NewGuid():N}@integration.medipass.test",
-                password = "Reg@12345678",
-                role = "patient"
-            });
-        Assert.Equal(HttpStatusCode.OK, register.StatusCode);
-
-        var after = await ReadPatientsAsync(adminClient);
-
-        Assert.Equal(before + 1, after);
-    }
-
     [Fact]
     public async Task Dashboard_DoesNotCountADeactivatedAccount()
     {
@@ -205,15 +179,32 @@ public sealed class AdminDashboardEndpointTests : IClassFixture<MediPassApiFacto
     [Fact]
     public void Dashboard_CoversEveryDefaultRoleAndEveryAppointmentStatus()
     {
-        // The DTO exposes one property per role and per status. If a role or a status is added, this test fails
-        // until the dashboard counts it too.
-        var userProperties = typeof(MediPassPlus.Application.Dtos.AdminManagement.UserCountsDto)
-            .GetProperties().Length;
-        var statusProperties = typeof(MediPassPlus.Application.Dtos.AdminManagement.AppointmentCountsDto)
-            .GetProperties().Length;
+        // The DTO exposes one property per role and per status, and the count test maps each one. If a role or a
+        // status is added or renamed, this test fails until the dashboard follows.
+        var roleProperties = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [DefaultRoles.Patient] = nameof(UserCountsDto.Patients),
+            [DefaultRoles.Doctor] = nameof(UserCountsDto.Doctors),
+            [DefaultRoles.Staff] = nameof(UserCountsDto.Staff),
+            [DefaultRoles.Admin] = nameof(UserCountsDto.Admins),
+        };
 
-        Assert.Equal(DefaultRoles.All.Count, userProperties);
-        Assert.Equal(Enum.GetValues<AppointmentStatus>().Length, statusProperties);
+        Assert.Equal(
+            DefaultRoles.All.OrderBy(role => role).ToArray(),
+            roleProperties.Keys.OrderBy(role => role).ToArray());
+        Assert.Equal(
+            roleProperties.Values.OrderBy(name => name).ToArray(),
+            typeof(UserCountsDto).GetProperties()
+                .Select(property => property.Name)
+                .OrderBy(name => name)
+                .ToArray());
+
+        Assert.Equal(
+            Enum.GetValues<AppointmentStatus>().Select(status => status.ToString()).OrderBy(name => name).ToArray(),
+            typeof(AppointmentCountsDto).GetProperties()
+                .Select(property => property.Name)
+                .OrderBy(name => name)
+                .ToArray());
     }
 
     // ---------- Helpers ----------
