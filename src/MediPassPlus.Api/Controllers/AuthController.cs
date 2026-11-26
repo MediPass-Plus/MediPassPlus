@@ -283,7 +283,10 @@ public class AuthController : ControllerBase
     /// </summary>
     /// <param name="request">The account email.</param>
     /// <returns><c>202</c> whether or not an email was sent.</returns>
-    /// <response code="202">The request was accepted; an email is sent only for an active account.</response>
+    /// <response code="202">
+    /// The request was accepted. An email is sent only for an active account, and a failing mail transport still
+    /// answers this same 202, so the endpoint never reveals which addresses are registered (FR-PRV-08, NFR-SEC-06).
+    /// </response>
     /// <response code="400">The payload is invalid.</response>
     /// <response code="429">
     /// The email and client address exceeded the configured reset-request budget. The response is the shared
@@ -313,10 +316,20 @@ public class AuthController : ControllerBase
                 user.Email!,
                 token);
 
-            await _emailSender.SendAsync(
-                user.Email!,
-                "Reset your MediPass+ password",
-                PasswordResetMessage.BuildBody(link, token));
+            try
+            {
+                await _emailSender.SendAsync(
+                    user.Email!,
+                    "Reset your MediPass+ password",
+                    PasswordResetMessage.BuildBody(link, token));
+            }
+            catch (Exception exception)
+            {
+                // A dead transport must not turn a registered address into a different answer. The 202 below stays the
+                // only response, so an enumeration probe cannot tell a mail outage from an unknown address, and the
+                // line carries the correlation id alone: no address, no token, no message body (FR-PRV-08, NFR-SEC-06).
+                _logger.LogError(exception, "The password reset email could not be dispatched.");
+            }
         }
 
         // Same answer whether the account exists, is inactive, or does not exist at all.
