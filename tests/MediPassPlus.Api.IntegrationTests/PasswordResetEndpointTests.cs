@@ -205,6 +205,55 @@ public sealed class PasswordResetEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A dead mail transport must not turn a registered address into a different answer. The <c>202</c> and its body
+    /// stay identical to the unknown-address answer, nothing is captured, and the failure line repeats neither the
+    /// address nor the token (FR-PRV-08, NFR-SEC-06).
+    /// </summary>
+    [Fact]
+    public async Task ForgotPassword_WhenTheTransportFails_StillAnswersTheSame202()
+    {
+        var email = await RegisterAsync("smtp-down");
+
+        _logs.Clear();
+        _email.Clear();
+        _email.Failure = new InvalidOperationException("The SMTP host did not answer.");
+
+        try
+        {
+            using var failed = await _client.PostAsJsonAsync("/api/Auth/forgot-password", new { email });
+            using var unknown = await _client.PostAsJsonAsync(
+                "/api/Auth/forgot-password",
+                new { email = NewEmail("smtp-down-unknown") });
+
+            Assert.Equal(HttpStatusCode.Accepted, failed.StatusCode);
+            Assert.Equal(HttpStatusCode.Accepted, unknown.StatusCode);
+            Assert.Equal(
+                await failed.Content.ReadAsStringAsync(),
+                await unknown.Content.ReadAsStringAsync());
+
+            // The transport refused the message, so the mailbox received nothing.
+            Assert.Null(_email.Last);
+
+            var entries = _logs.Entries;
+
+            Assert.Contains(
+                entries,
+                entry => entry.Message.Contains(
+                    "The password reset email could not be dispatched.",
+                    StringComparison.Ordinal));
+
+            foreach (var entry in entries)
+            {
+                Assert.DoesNotContain(email, entry.Message, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        finally
+        {
+            _email.Failure = null;
+        }
+    }
+
+    /// <summary>
     /// The token reaches the mailbox and nowhere else: no line written while the request ran repeats it or the address
     /// it belongs to, and the only identifier is the synthetic correlation id (FR-PRV-08).
     /// </summary>

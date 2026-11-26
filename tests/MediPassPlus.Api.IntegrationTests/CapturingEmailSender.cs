@@ -18,6 +18,12 @@ internal sealed class CapturingEmailSender : IEmailSender
     /// <summary>The most recent message, or <c>null</c> when none was sent.</summary>
     public CapturedEmail? Last => _sent.LastOrDefault();
 
+    /// <summary>
+    /// When set, every send throws it instead of capturing, so a test can prove the endpoint survives a dead mail
+    /// transport. Reset it in a <c>finally</c> block; the instance is shared by the whole test class.
+    /// </summary>
+    public Exception? Failure { get; set; }
+
     /// <summary>Forgets every captured message so a test only reads what its own request produced.</summary>
     public void Clear()
     {
@@ -33,6 +39,11 @@ internal sealed class CapturingEmailSender : IEmailSender
         string body,
         CancellationToken cancellationToken = default)
     {
+        if (Failure is not null)
+        {
+            throw Failure;
+        }
+
         _sent.Enqueue(new CapturedEmail(to, subject, body));
         return Task.CompletedTask;
     }
