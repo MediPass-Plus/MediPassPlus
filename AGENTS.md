@@ -256,6 +256,15 @@ address reaches a log line and that the correlation id is the only identifier th
 runs the production host and proves the acknowledgement carries no token, no reset link and no address. No migration
 was needed.
 
+Password-reset mail delivery is configuration, not code. `SmtpEmailSender` sends through the provider named by
+`Smtp:Host`; an empty host keeps the no-op sender, so a clone without mail settings still starts and each reset mail is
+logged as not sent. `SmtpSettingsValidator` runs under `ValidateOnStart`, so a configured host with a missing
+`Smtp:UserName` or `Smtp:Password`, a `Smtp:Port` outside 1–65535 or a `Smtp:FromAddress` that is not one plain address
+fails startup instead of answering `500` on the first request. A transport failure at request time is caught and logged
+without the address or the token, and `forgot-password` still answers the same `202` as an unknown address
+(FR-PRV-08, NFR-SEC-06). The settings and their secret split are documented in `docs/operations/deployment-keys.md`; no
+migration was needed.
+
 MP-45 hardens booking with the HTTP edge-case matrix (FR-BKG-04..09, NFR-SEC-06, NFR-REL-03). The negative tests cover
 a past slot, an inactive doctor and an inactive patient, a slot of another doctor, a concurrent double booking,
 cancelling an unknown appointment (`404`) and cancelling as an inactive patient (`400`), while cancelling the

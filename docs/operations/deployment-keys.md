@@ -1,8 +1,8 @@
-# Deployment keys, the Data Protection ring and report storage
+# Deployment keys, the Data Protection ring, report storage and the mail transport
 
 This page is the deployment note for the three secrets MediPass+ separates, for the one infrastructure path that holds
-the Data Protection key ring, and for the report storage root (ADR-0007 decisions 5 and 6, ADR-0005, ADR-0015
-decision 6, FR-PRV-04, FR-PRV-05, NFR-SEC-05, NFR-SEC-09).
+the Data Protection key ring, for the report storage root, and for the password-reset mail credentials (ADR-0007
+decisions 5 and 6, ADR-0005, ADR-0015 decision 6, FR-PRV-04, FR-PRV-05, FR-ACC-11, NFR-SEC-05, NFR-SEC-09).
 
 Nothing on this page is ever committed. Locally the values live in `dotnet user-secrets` or environment variables;
 in a deployment they come from the platform secret store and the mounted key volume.
@@ -20,9 +20,15 @@ from another, and never log any of them — identifiers only (AGENTS.md §5).
 
 The database connection string is a fourth credential even when it carries no password: it names an instance and a
 database. It comes from user-secrets or `ConnectionStrings__DefaultConnection` and is never committed to
-`appsettings*.json` (MP-51). The four names above and the connection string are the whole list of values a deployment
-must supply from its secret store; nothing else in `appsettings.json` is sensitive, and every other setting there is a
-documented default rather than a secret.
+`appsettings*.json` (MP-51).
+
+The password-reset mail transport adds a fifth group. When `Smtp:Host` is set, `Smtp:UserName` and `Smtp:Password` are
+provider credentials and belong in the secret store beside the four above. `Smtp:Host`, `Smtp:Port`, `Smtp:UseStartTls`,
+`Smtp:FromAddress` and `Smtp:FromName` are ordinary configuration and stay in `appsettings*.json`; only the credentials
+move.
+
+With those five groups accounted for, nothing else in `appsettings.json` is sensitive, and every other setting there is
+a documented default rather than a secret.
 
 ## Data Protection key ring
 
@@ -65,6 +71,24 @@ and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SE
 - **The client's file name is never used as a path.** Files are stored as `{Guid:N}{ext}`, the stored name is never a
   URL, and no static-file mapping points at this directory.
 
+## Password-reset mail transport
+
+`POST api/Auth/forgot-password` sends the reset link over SMTP (FR-ACC-11). The transport is configured under `Smtp`
+and validated at startup, so a half-configured sender never reaches a request:
+
+- **An empty `Smtp:Host` is a supported state.** The API registers the no-op sender, which logs one warning per send
+  instead of failing. That is what keeps a fresh clone and CI runnable without mail credentials.
+- **A configured host must be complete.** A missing `Smtp:UserName` or `Smtp:Password`, a `Smtp:Port` outside 1–65535,
+  or a `Smtp:FromAddress` that is not one plain email address is an `OptionsValidationException` at startup, not a
+  `500` on the first reset request.
+- **A send failure never changes the answer.** The endpoint catches the transport exception, logs it without the
+  address or the token, and still answers the same `202` as an unknown address, so a mail outage is not an
+  enumeration oracle (NFR-SEC-06, FR-PRV-08).
+- **The credentials are provider secrets.** For Gmail, `Smtp:Password` is a 16-character App Password, not the account
+  password. It lives in user-secrets locally and in the platform secret store in a deployment, never in
+  `appsettings*.json`.
+- **`Smtp:FromAddress` should match `Smtp:UserName`.** Most providers reject a sender address they do not own.
+
 ## Failure behaviour
 
 | Situation | Result |
@@ -78,6 +102,10 @@ and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SE
 | `Jwt:SecretKey` missing or shorter than 32 characters | Startup fails |
 | `AccessCode:HmacKey` missing, not Base64 or shorter than 32 bytes | Startup fails |
 | Missing `ConnectionStrings:DefaultConnection` | The API fails at startup: the unconditional `SeedDefaultRolesAsync()` opens the database before the pipeline runs, so this is a startup failure, not a first-request failure |
+| `Smtp:Host` empty | Starts with the no-op sender; each reset mail is logged as not sent |
+| `Smtp:Host` set but `Smtp:UserName` or `Smtp:Password` empty | Startup fails (`OptionsValidationException`) |
+| `Smtp:Port` outside 1–65535, or `Smtp:FromAddress` not one plain address | Startup fails in every environment |
+| The SMTP server refuses a message at request time | The request still answers `202`; the failure is logged without the address or the token |
 
 ## Deployment checklist
 
@@ -88,6 +116,8 @@ and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SE
 - [ ] `Jwt:SecretKey` and `AccessCode:HmacKey` are set from the secret store, not from `appsettings*.json`.
 - [ ] `ConnectionStrings:DefaultConnection` is set from the secret store or user-secrets; `appsettings*.json` in the
       deployed image carries no connection string (MP-51).
+- [ ] `Smtp:Host` is either empty on purpose or set together with `Smtp:UserName`, `Smtp:Password` and one plain
+      `Smtp:FromAddress`, and the credentials come from the secret store rather than `appsettings*.json`.
 - [ ] No secret value appears in logs, images, build output or the repository, and the `gitleaks` CI job is green.
 
 The non-secret edge settings that sit next to these — login rate limits, allowed CORS origins, forwarded-header trust

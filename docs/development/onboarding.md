@@ -44,6 +44,22 @@ dotnet user-secrets set "AccessCode:HmacKey" $key --project src/MediPassPlus.Api
 dotnet user-secrets list --project src/MediPassPlus.Api | ForEach-Object { ($_ -split ' = ')[0] }
 ```
 
+The password-reset mail transport is optional. Leave `Smtp:Host` empty and the API registers a no-op sender, which logs
+one warning per reset mail instead of sending it:
+
+```powershell
+# Optional: real password-reset mail. `Smtp:Password` is a provider App Password, never the account password.
+dotnet user-secrets set "Smtp:Host" "smtp.gmail.com" --project src/MediPassPlus.Api
+dotnet user-secrets set "Smtp:Port" "587" --project src/MediPassPlus.Api
+dotnet user-secrets set "Smtp:UseStartTls" "true" --project src/MediPassPlus.Api
+dotnet user-secrets set "Smtp:UserName" "<the sending mailbox>" --project src/MediPassPlus.Api
+dotnet user-secrets set "Smtp:FromAddress" "<the sending mailbox>" --project src/MediPassPlus.Api
+dotnet user-secrets set "Smtp:Password" "<app password>" --project src/MediPassPlus.Api
+```
+
+A configured host must be complete: a missing `Smtp:UserName` or `Smtp:Password`, a `Smtp:Port` outside 1–65535, or a
+`Smtp:FromAddress` that is not one plain email address stops the API at startup with an `OptionsValidationException`.
+
 Secrets are local to each developer: user-secrets are not shared through Git, and one developer's store says nothing
 about another's. Check your own store for the keys your task needs with the key-name-only command above and add
 whatever is missing; do not assume it is empty, and do not assume it is complete. Printing the values is itself a leak
