@@ -28,7 +28,8 @@ the projects.
 ## 2. Repository status
 
 This is an early implementation, not a product. The Accounts slice has `ApplicationUser : IdentityUser<Guid>` with
-register, login and password-reset endpoints backed by JWT (ACC-01); the Booking slice has `Clinic`, `Doctor`,
+register, login and password-reset endpoints backed by JWT (ACC-01); public registration is patient-only, and Doctor,
+Staff and Admin accounts are created by an administrator (FR-ACC-03). The Booking slice has `Clinic`, `Doctor`,
 `DoctorSlot` and `Appointment` (CLB-01); B1 exposes read-only clinic search, clinic-doctor search and doctor-slot
 listing endpoints. MP-27 adds the patient booking rules, and MP-35 exposes them on the patient surface:
 `POST api/me/appointments` books a free future slot for the authenticated patient,
@@ -170,14 +171,13 @@ new action has no row, and each protected row gets a no-token `401` with its Bea
 wrong-role `403` and a positive case for the allowed role, while the six anonymous Auth endpoints are called with a
 token of every role and must not be challenged. The same class proves the five-attempt lockout for all four roles, a
 replayed refresh token ending every live session, logout ending only the presented session, and that a role supplied in
-a registration body buys nothing (Admin refused, Doctor and Staff created inactive and unable to sign in). Every
+a registration body buys nothing (Admin, Doctor and Staff are refused before an account is written). Every
 refusal is checked for the problem envelope and for a submitted password, a refresh token or a stored hash echoed back,
 and deactivation is proved to block login and refresh immediately while an already-issued access token keeps working
 until it expires (ADR-0003 decision 5). The same PR folds the remaining raw `400` bodies of public registration and
 admin creation into the shared `ProblemDetails` envelope (ADR-0010); validation failures keep the
 `ValidationProblemDetails` `errors` bag, and every controller-level refusal has a stable title and a safe detail.
-There is still no report download endpoint (MP-48), and the frontend is the
-untouched Angular welcome page.
+The frontend is the untouched Angular welcome page.
 Everything the README or the planning document describes
 as planned is a target, not a fact. Trust the code, the `.csproj` files and `package.json` over prose.
 
@@ -257,13 +257,18 @@ runs the production host and proves the acknowledgement carries no token, no res
 was needed.
 
 Password-reset mail delivery is configuration, not code. `SmtpEmailSender` sends through the provider named by
-`Smtp:Host`; an empty host keeps the no-op sender, so a clone without mail settings still starts and each reset mail is
-logged as not sent. `SmtpSettingsValidator` runs under `ValidateOnStart`, so a configured host with a missing
-`Smtp:UserName` or `Smtp:Password`, a `Smtp:Port` outside 1–65535 or a `Smtp:FromAddress` that is not one plain address
-fails startup instead of answering `500` on the first request. A transport failure at request time is caught and logged
-without the address or the token, and `forgot-password` still answers the same `202` as an unknown address
-(FR-PRV-08, NFR-SEC-06). The settings and their secret split are documented in `docs/operations/deployment-keys.md`; no
-migration was needed.
+`Smtp:Host`; an empty host keeps the no-op sender in Development and Testing, so a clone without mail settings still
+starts and each reset mail is logged as not sent, while every other environment refuses to start without a transport.
+`SmtpSettingsValidator` runs under `ValidateOnStart`, so a configured host with a missing `Smtp:UserName`,
+`Smtp:Password` or `Smtp:FromAddress` (which has no default), a username or sender that is not one plain email address,
+a `Smtp:Port` outside 1–65535 or a `Smtp:TimeoutSeconds` outside 1–120 fails startup instead of answering `500` on the
+first request. `Smtp:UseStartTls` maps to `SmtpClient.EnableSsl`, so STARTTLS on 587 is supported and implicit TLS on 465
+is not, and `Smtp:TimeoutSeconds` (default 10) bounds a dead host instead of the framework's 100-second default. A
+transport failure at request time is caught and logged with the exception type and SMTP status code only — never the
+address, the exception message or the token — and `forgot-password` still answers the same `202` as an unknown address
+(FR-PRV-08, NFR-SEC-06). `SmtpSettingsValidatorTests` covers the environment and settings matrix, and
+`SmtpEmailSenderTests` drives the real sender against a loopback SMTP listener, including the timeout. The settings and
+their secret split are documented in `docs/operations/deployment-keys.md`; no migration was needed.
 
 MP-45 hardens booking with the HTTP edge-case matrix (FR-BKG-04..09, NFR-SEC-06, NFR-REL-03). The negative tests cover
 a past slot, an inactive doctor and an inactive patient, a slot of another doctor, a concurrent double booking,
@@ -378,10 +383,10 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   protected server-side key** — a plain SHA-256 over a 6-digit keyspace is precomputable. Compare in fixed time.
   The key is `AccessCode:HmacKey` (Base64 of at least 32 random bytes), validated at startup and separate from the
   JWT signing key and the Data Protection ring.
-- Attempts: 5 wrong code entries lock that credential (FR-ACS-05). The per-credential lockout is authoritative and
-  rate limiting is defence-in-depth (5 verifications / 15 min per doctor+appointment, 3 generations / 15 min per
-  patient; the numbers are tunable). The **lockout duration itself is not settled**: the decision record treats
-  15 minutes as an assumption, so do not present it as an approved value.
+- Attempts: 5 wrong code entries lock that credential permanently (FR-ACS-05); the rate-limit windows (5
+  verifications / 15 min per doctor+appointment, 3 generations / 15 min per patient) are tunable defence-in-depth.
+  The login lockout is 5 failures for 15 minutes, confirmed by the Accounts module owner on 2026-11-13 and recorded
+  in ADR-0003 decision 2.
 - The HTTP edge is part of the security boundary: login is limited per normalized email + client address in front of
   the lockout, the password-reset endpoints have their own per-email + client budgets in front of the mail/token flow,
   CORS answers only `Cors:AllowedOrigins`, and every response carries the hardening headers. Forwarded
@@ -463,9 +468,10 @@ exists, the sentence that says it does not is a bug, and a reader who trusts it 
   patient owns or a doctor holds a live grant for, validates the type by declared media type and leading bytes and the
   size at 10 MB, stores the file under a random name outside the repository and `wwwroot`, and answers `400` for a
   missing or empty part, `413` for an oversized file or request body, `415` for a refused type or mismatched bytes, and
-  `404` for every record the caller may not use. Swagger UI adds a topbar link to
-  `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed; there is still no
-  report download endpoint (MP-48).
+  `404` for every record the caller may not use. `GET api/reports/{reportId}` streams a stored report to the patient who
+  owns it or to a doctor holding an active grant for its owner, answers `404` for every report the caller may not use,
+  marks the response `no-store`, and writes a `ReportDownloaded` audit row (MP-48, ADR-0015). Swagger UI adds a topbar
+  link to `/visit-access-tool.html`, the development-only camera helper, whenever the document is exposed.
 - **To call an authorized endpoint:** log in with `POST api/Auth/login`, copy the `accessToken` value, click
   **Authorize**, paste the raw token (no `Bearer ` prefix) and execute. The token lives in the browser tab only.
 - When you add an authorized endpoint, document its real auth contract: `[ProducesResponseType]` plus `<response>` for

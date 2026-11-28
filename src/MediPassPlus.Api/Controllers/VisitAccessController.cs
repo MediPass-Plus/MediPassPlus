@@ -64,7 +64,7 @@ public class VisitAccessController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The one-time QR token and its expiry.</returns>
     /// <response code="200">The visit was started and the QR token was issued.</response>
-    /// <response code="400">The appointment is not today, is not checked in, or is not in visit.</response>
+    /// <response code="400">The appointment is not today, or is neither checked in nor in visit.</response>
     /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
     /// <response code="403">The caller is not a doctor, has no doctor profile, or does not own the appointment.</response>
     /// <response code="404">No appointment has the requested identifier.</response>
@@ -152,7 +152,7 @@ public class VisitAccessController : ControllerBase
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The one-time code and its expiry.</returns>
     /// <response code="200">The code was generated and is returned exactly once.</response>
-    /// <response code="400">The appointment is not today, is not checked in, or is not in visit.</response>
+    /// <response code="400">The appointment is not today, or is neither checked in nor in visit.</response>
     /// <response code="401">The access token is missing, invalid, expired, or does not identify a user.</response>
     /// <response code="403">The caller is not the patient who owns the appointment.</response>
     /// <response code="404">No appointment has the requested identifier.</response>

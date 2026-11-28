@@ -44,21 +44,25 @@ dotnet user-secrets set "AccessCode:HmacKey" $key --project src/MediPassPlus.Api
 dotnet user-secrets list --project src/MediPassPlus.Api | ForEach-Object { ($_ -split ' = ')[0] }
 ```
 
-The password-reset mail transport is optional. Leave `Smtp:Host` empty and the API registers a no-op sender, which logs
-one warning per reset mail instead of sending it:
+The password-reset mail transport is optional in Development and Testing. Leave `Smtp:Host` empty and the API registers
+a no-op sender, which logs one warning per reset mail instead of sending it. Outside Development and Testing the API
+refuses to start without a configured transport:
 
 ```powershell
-# Optional: real password-reset mail. `Smtp:Password` is a provider App Password, never the account password.
+# Optional locally: real password-reset mail. `Smtp:Password` is a provider App Password, never the account password.
 dotnet user-secrets set "Smtp:Host" "smtp.gmail.com" --project src/MediPassPlus.Api
 dotnet user-secrets set "Smtp:Port" "587" --project src/MediPassPlus.Api
 dotnet user-secrets set "Smtp:UseStartTls" "true" --project src/MediPassPlus.Api
 dotnet user-secrets set "Smtp:UserName" "<the sending mailbox>" --project src/MediPassPlus.Api
 dotnet user-secrets set "Smtp:FromAddress" "<the sending mailbox>" --project src/MediPassPlus.Api
 dotnet user-secrets set "Smtp:Password" "<app password>" --project src/MediPassPlus.Api
+dotnet user-secrets set "Smtp:TimeoutSeconds" "10" --project src/MediPassPlus.Api
 ```
 
-A configured host must be complete: a missing `Smtp:UserName` or `Smtp:Password`, a `Smtp:Port` outside 1–65535, or a
-`Smtp:FromAddress` that is not one plain email address stops the API at startup with an `OptionsValidationException`.
+A configured host must be complete: `Smtp:UserName` must be one plain email address, `Smtp:Password` and
+`Smtp:FromAddress` are required (`FromAddress` has no default), `Smtp:Port` must be 1–65535 and `Smtp:TimeoutSeconds`
+must be 1–120; anything else stops the API at startup with an `OptionsValidationException`. `Smtp:UseStartTls` maps to
+`SmtpClient.EnableSsl`: STARTTLS on 587 is supported, implicit TLS on 465 is not.
 
 Secrets are local to each developer: user-secrets are not shared through Git, and one developer's store says nothing
 about another's. Check your own store for the keys your task needs with the key-name-only command above and add

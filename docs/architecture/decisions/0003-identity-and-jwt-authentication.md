@@ -1,8 +1,8 @@
 # ADR-0003: ASP.NET Core Identity with JWT authorization
 
 - **Status:** Proposed (blocked on the user-model shape only; see the open sub-decision at the end. The password
-  policy, the 15-minute lockout and the refresh-token design are settled — the last by MP-31 on 2026-11-16 and
-  recorded in decision 4.)
+  policy, the 15-minute lockout, the refresh-token design and patient-only registration are settled — the refresh
+  token by MP-31 on 2026-11-16 and registration by MP-21 on 2026-11-28, both recorded below.)
 - **Date:** 2026-10-29
 - **Affects:** Accounts module, every authorized endpoint, class diagram (D4), database baseline
 
@@ -105,9 +105,9 @@ Aligned:
   identical `401` `ProblemDetails`, and a successful password reset clears the lockout.
 - **JWT key name:** the code binds `Jwt:SecretKey`, the name decision 6 uses.
 - **Role names:** the seeder and the authorization checks use `Staff`, the name decision 3 uses.
-- **Role casing:** registration resolves the requested role through `RoleManager.FindByNameAsync` and branches on
-  `IdentityRole.NormalizedName`, so `admin`/`Admin`/`ADMIN` reach the same branch and the Admin role cannot be
-  self-assigned by casing. Covered by HTTP tests per casing variant.
+- **Role casing:** registration resolves the requested role through `RoleManager.FindByNameAsync` and compares the
+  canonical `Role.Name`, so `admin`/`Admin`/`ADMIN` reach the same refusal and the Admin role cannot be self-assigned
+  by casing. Covered by HTTP tests per casing variant.
 
 Gaps:
 
@@ -115,10 +115,9 @@ Gaps:
   FR-ACC-06 is not implemented. **Closed by MP-31 on 2026-11-16; see decision 4 and the confirmation below.**
 - **User model:** the code uses one `ApplicationUser` plus a `Doctor` profile table and a duplicate `Role` string. The
   TPH-vs-profile sub-decision and the single source of truth for roles remain unresolved.
-- **Role assignment:** registration still accepts `Patient`, `Doctor` and `Staff` from the request body. `Admin` is
-  refused, and a self-registered `Doctor` or `Staff` account is inactive until an admin activates it, so a role from
-  the body never grants access on its own. Restricting the public endpoint to `Patient` (FR-ACC-03) remains a product
-  decision.
+- **Role assignment:** registration accepts `Patient` only (closed by MP-21 on 2026-11-28; see the confirmation
+  below). `Admin`, `Doctor` and `Staff` are refused before any row is written, and those accounts are created by an
+  administrator through the admin endpoints (FR-ACC-03).
 
 ## Refresh-token design confirmed (2026-11-16)
 
@@ -131,6 +130,19 @@ live session of the account, logout idempotence and its `204`, the seven-day exp
 revocation on deactivation and on password reset, and `no-store` on both token responses.
 `RefreshTokenTests` (Domain) and `RefreshTokenPersistenceTests` (SQLite) cover the entity rules and the stored
 columns. Nothing in this design contradicts FR-ACC-04, FR-ACC-06 or NFR-SEC-03.
+
+## Patient-only registration confirmed (2026-11-28)
+
+MP-21 closed the remaining product decision in FR-ACC-03: "Patients register themselves; the other accounts are
+created by an admin." `POST api/Auth/register` resolves the requested role and answers the shared `400`
+`ProblemDetails` for `Admin`, `Doctor` and `Staff` before writing a user row; `Patient` in any casing still creates
+the active account and its medical record in one unit of work. Doctor and Staff accounts come from
+`POST api/admin/doctors` and `POST api/admin/staff`, which already create the profile and the Identity role. The
+duplicate `ApplicationUser.Role` column is no longer written from the request body; authorization, JWT claims and the
+admin dashboard already read Identity's roles, and dropping the column is a separate cleanup.
+
+`AuthEndpointTests`, `AccountAuthorizationMatrixTests` and `AuthRegistrationTests` cover the refusal for every casing,
+the absent account and the admin-created non-patient that owns no record.
 
 ## Open sub-decision (blocks the Accounts PR, not the ADR)
 

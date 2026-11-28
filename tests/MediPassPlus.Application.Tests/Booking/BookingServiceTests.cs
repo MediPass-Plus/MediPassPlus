@@ -394,6 +394,30 @@ public class BookingServiceTests
         Assert.Equal(0, store.SaveCount);
     }
 
+    [Theory]
+    [InlineData(AppointmentStatus.CheckedIn)]
+    [InlineData(AppointmentStatus.InVisit)]
+    [InlineData(AppointmentStatus.Completed)]
+    [InlineData(AppointmentStatus.Cancelled)]
+    public async Task CancelAsync_WhenANonBookedAppointmentIsInThePast_ReturnsAppointmentNotCancellable(
+        AppointmentStatus status)
+    {
+        var slot = CreateSlot(startUtc: Now.UtcDateTime.AddMinutes(-1));
+        var store = new FakeBookingStore
+        {
+            AppointmentContext = new BookingAppointmentContext(
+                CreateAppointment(slot, status),
+                CreateDoctor(),
+                NewUser(DoctorUserId, role: "Doctor"),
+                NewUser(PatientId))
+        };
+
+        var result = await CreateService(store).CancelAsync(42, PatientId);
+
+        Assert.Equal(BookingFailure.AppointmentNotCancellable, result.Failure);
+        Assert.Equal(0, store.SaveCount);
+    }
+
     [Fact]
     public async Task CancelAsync_WhenTheSlotHasStarted_ReturnsAppointmentAlreadyStarted()
     {

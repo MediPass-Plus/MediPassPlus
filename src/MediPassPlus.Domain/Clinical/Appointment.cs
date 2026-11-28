@@ -88,9 +88,11 @@ public class Appointment
 
     /// <summary>
     /// Moves a <see cref="AppointmentStatus.Booked"/> appointment to <see cref="AppointmentStatus.Cancelled"/>.
-    /// Any other state is refused and left untouched (FR-BKG-04, FR-BKG-08). "Before the visit starts" is interpreted
-    /// as before the appointment's scheduled start and while it is still Booked: once staff checks the patient in,
-    /// the patient has arrived and cancellation is refused.
+    /// Any other state is refused and left untouched (FR-BKG-04, FR-BKG-08). This method owns the state transition
+    /// only; the booking service enforces the time half of "before the visit starts" (the slot must not have started)
+    /// with the injected clock before it calls this method. Together they read the requirement as: cancellation is
+    /// allowed only while the appointment is still Booked and its slot has not started, so once staff checks the
+    /// patient in, cancellation is refused.
     /// </summary>
     /// <param name="utcNow">The current UTC time.</param>
     /// <returns>True when the transition happened.</returns>

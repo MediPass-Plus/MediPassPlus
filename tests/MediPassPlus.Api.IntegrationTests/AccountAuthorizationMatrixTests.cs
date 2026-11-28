@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using MediPassPlus.Api.Controllers;
+using MediPassPlus.Application.Auth;
 using MediPassPlus.Domain.Identity;
 using MediPassPlus.Infrastructure.Persistence.Seeding;
 using Microsoft.AspNetCore.Identity;
@@ -11,6 +12,7 @@ using Microsoft.AspNetCore.Mvc.ActionConstraints;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MediPassPlus.Api.IntegrationTests;
@@ -50,6 +52,16 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
     private static readonly Guid TargetUserId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly string[] AllRoles =
         [DefaultRoles.Patient, DefaultRoles.Doctor, DefaultRoles.Staff, DefaultRoles.Admin];
+    private static readonly HttpStatusCode[] AllowedBusinessStatuses =
+    [
+        HttpStatusCode.OK,
+        HttpStatusCode.Created,
+        HttpStatusCode.NoContent,
+        HttpStatusCode.BadRequest,
+        HttpStatusCode.NotFound,
+        HttpStatusCode.Conflict,
+        HttpStatusCode.TooManyRequests
+    ];
     private static readonly string EchoEmail = $"echo.{Guid.NewGuid():N}@integration.medipass.test";
 
     private static readonly Type[] AccountsControllers =
@@ -58,7 +70,8 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
         typeof(AdminClinicsController),
         typeof(AdminAccountsController),
         typeof(AdminUsersController),
-        typeof(MeProfileController)
+        typeof(MeProfileController),
+        typeof(MyAuditController)
     ];
 
     private readonly MediPassApiFactory _factory;
@@ -248,10 +261,11 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
 
         using var response = await SendAsync(client, method, path, body, token: null);
 
-        // Any business answer is acceptable here (200, 201, 204, 400, 404, 409, 429); only an authentication or
-        // authorization refusal would mean the matrix row and the endpoint metadata disagree.
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        // The row documents a business answer (200, 201, 204, 400, 404, 409, 429). A 5xx means the action ran and
+        // failed, so accepting it would let a broken endpoint pass the matrix (NFR-SEC-10).
+        Assert.True(
+            AllowedBusinessStatuses.Contains(response.StatusCode),
+            $"{method} {path} answered {(int)response.StatusCode}, which is not a documented business status.");
     }
 
     /// <summary>An anonymous endpoint stays anonymous whatever role is signed in.</summary>
@@ -343,10 +357,10 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
 
         using var refusedLogin = await PostAsync(
             anonymous, "/api/Auth/login", LoginBody(patient.Email, MediPassApiFactory.TestPassword));
-        await AssertProblemBodyAsync(refusedLogin, HttpStatusCode.Unauthorized, MediPassApiFactory.TestPassword);
+        await AssertControllerProblemBodyAsync(refusedLogin, HttpStatusCode.Unauthorized, MediPassApiFactory.TestPassword);
 
         using var refusedRefresh = await PostAsync(anonymous, "/api/Auth/refresh", RefreshBody(session.RefreshToken));
-        await AssertProblemBodyAsync(refusedRefresh, HttpStatusCode.Unauthorized, session.RefreshToken);
+        await AssertControllerProblemBodyAsync(refusedRefresh, HttpStatusCode.Unauthorized, session.RefreshToken);
 
         // ADR-0003 decision 5: the flag is not consulted by JWT bearer validation, so the token already issued keeps
         // its 15 minutes. This is the documented window, not a gap this test is meant to close.
@@ -386,12 +400,12 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
         for (var attempt = 1; attempt <= 5; attempt++)
         {
             using var failed = await PostAsync(client, "/api/Auth/login", LoginBody(account.Email, WrongPassword));
-            await AssertProblemBodyAsync(failed, HttpStatusCode.Unauthorized, WrongPassword);
+            await AssertControllerProblemBodyAsync(failed, HttpStatusCode.Unauthorized, WrongPassword);
         }
 
         using var correctPassword = await PostAsync(
             client, "/api/Auth/login", LoginBody(account.Email, MediPassApiFactory.TestPassword));
-        await AssertProblemBodyAsync(correctPassword, HttpStatusCode.Unauthorized);
+        await AssertControllerProblemBodyAsync(correctPassword, HttpStatusCode.Unauthorized);
 
         Assert.True(await IsLockedOutAsync(account.Id));
     }
@@ -413,11 +427,11 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
         Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
 
         using var replay = await PostAsync(client, "/api/Auth/refresh", RefreshBody(first.RefreshToken));
-        await AssertProblemBodyAsync(replay, HttpStatusCode.Unauthorized, first.RefreshToken);
+        await AssertControllerProblemBodyAsync(replay, HttpStatusCode.Unauthorized, first.RefreshToken);
 
         // Containment: the independent session died with the replay, so a thief gains nothing from it.
         using var otherSession = await PostAsync(client, "/api/Auth/refresh", RefreshBody(second.RefreshToken));
-        await AssertProblemBodyAsync(otherSession, HttpStatusCode.Unauthorized, second.RefreshToken);
+        await AssertControllerProblemBodyAsync(otherSession, HttpStatusCode.Unauthorized, second.RefreshToken);
     }
 
     /// <summary>
@@ -437,7 +451,7 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
 
         using var ended = await PostAsync(client, "/api/Auth/refresh", RefreshBody(first.RefreshToken));
-        await AssertProblemBodyAsync(ended, HttpStatusCode.Unauthorized, first.RefreshToken);
+        await AssertControllerProblemBodyAsync(ended, HttpStatusCode.Unauthorized, first.RefreshToken);
 
         // A logout-revoked row has no successor, so it is not treated as a leaked copy: the other session survives.
         using var survivor = await PostAsync(client, "/api/Auth/refresh", RefreshBody(second.RefreshToken));
@@ -448,42 +462,30 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
     }
 
     /// <summary>
-    /// A role supplied in the registration body cannot buy a privileged session: <c>Admin</c> is refused before any
-    /// row is written, and a self-registered <c>Doctor</c> or <c>Staff</c> account stays inactive, so it cannot log in
-    /// (FR-ACC-03, FR-ACC-09, ADR-0003 decision 5 and the 2026-11-13 review).
+    /// A role supplied in the registration body cannot buy a privileged session: <c>Admin</c>, <c>Doctor</c>
+    /// and <c>Staff</c> are refused before any row is written, because only patients register themselves
+    /// (FR-ACC-03, FR-ACC-09).
     /// </summary>
     /// <param name="role">The privileged role requested in the body.</param>
-    /// <param name="expectedStatus">The status the registration answers with for that role.</param>
     [Theory]
-    [InlineData(DefaultRoles.Admin, HttpStatusCode.BadRequest)]
-    [InlineData(DefaultRoles.Doctor, HttpStatusCode.OK)]
-    [InlineData(DefaultRoles.Staff, HttpStatusCode.OK)]
-    public async Task Register_WithAPrivilegedRoleInTheBody_NeverYieldsAPrivilegedSession(
-        string role, HttpStatusCode expectedStatus)
+    [InlineData(DefaultRoles.Admin)]
+    [InlineData(DefaultRoles.Doctor)]
+    [InlineData(DefaultRoles.Staff)]
+    public async Task Register_WithAPrivilegedRoleInTheBody_NeverYieldsAPrivilegedSession(string role)
     {
         var email = NewEmail($"register.{role}");
         using var client = _factory.CreateClient();
 
         using var registered = await PostAsync(
             client, "/api/Auth/register", RegisterBody(email, role));
-        Assert.Equal(expectedStatus, registered.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, registered.StatusCode);
         await AssertNoEchoAsync(registered, MediPassApiFactory.TestPassword);
 
-        var user = await FindUserAsync(email);
+        // The refusal happens before the user row, so there is no account to sign in with and no role to carry.
+        Assert.Null(await FindUserAsync(email));
 
-        if (expectedStatus == HttpStatusCode.BadRequest)
-        {
-            Assert.Null(user);
-            return;
-        }
-
-        Assert.NotNull(user);
-        Assert.False(user!.IsActive);
-        Assert.True(await IsInRoleAsync(user.Id, role));
-
-        // The account exists, so the proof that the body-supplied role grants nothing is the refusal to sign in.
         using var login = await PostAsync(client, "/api/Auth/login", LoginBody(email, MediPassApiFactory.TestPassword));
-        await AssertProblemBodyAsync(login, HttpStatusCode.Unauthorized);
+        await AssertControllerProblemBodyAsync(login, HttpStatusCode.Unauthorized);
     }
 
     /// <summary>
@@ -510,6 +512,37 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
     }
 
     /// <summary>
+    /// The server keeps only the SHA-256 hash of a refresh token and never returns it: the login response carries the
+    /// opaque token, the stored row carries the hash, and a later refusal repeats neither (NFR-SEC-06, NFR-PRI-03).
+    /// </summary>
+    [Fact]
+    public async Task StoredTokenHash_IsNeverReturnedOrEchoed()
+    {
+        var account = await _factory.CreateUserAsync(DefaultRoles.Patient);
+        using var client = _factory.CreateClient();
+
+        using var login = await PostAsync(
+            client, "/api/Auth/login", LoginBody(account.Email, MediPassApiFactory.TestPassword));
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        var loginBody = await login.Content.ReadAsStringAsync();
+        using var document = JsonDocument.Parse(loginBody);
+        var plaintext = document.RootElement.GetProperty("refreshToken").GetString();
+        Assert.False(string.IsNullOrWhiteSpace(plaintext));
+
+        await using var db = _factory.CreateDbContext();
+        var stored = await db.RefreshTokens.SingleAsync(row => row.UserId == account.Id);
+
+        Assert.Equal(RefreshTokenHasher.Hash(plaintext!), stored.TokenHash);
+        Assert.NotEqual(plaintext, stored.TokenHash);
+        Assert.DoesNotContain(stored.TokenHash, loginBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TokenHash", loginBody, StringComparison.OrdinalIgnoreCase);
+
+        using var refused = await PostAsync(client, "/api/Auth/refresh", RefreshBody(UnknownRefreshToken));
+        await AssertControllerProblemBodyAsync(refused, HttpStatusCode.Unauthorized, stored.TokenHash);
+    }
+
+    /// <summary>
     /// A wrong current password is a failure of the request body, not of the session: the answer is the shared 400 and
     /// neither password is echoed, so a stolen access token cannot be used to confirm the current password
     /// (FR-ACC-08, MP-32).
@@ -525,7 +558,7 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
             "/api/me/change-password",
             Json(new { currentPassword = "Curr3nt!Marker", newPassword = "N3w!Marker4" }));
 
-        await AssertProblemBodyAsync(
+        await AssertControllerProblemBodyAsync(
             response,
             HttpStatusCode.BadRequest,
             MediPassApiFactory.TestPassword,
@@ -675,16 +708,6 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
         return await users.IsLockedOutAsync(user!);
     }
 
-    private async Task<bool> IsInRoleAsync(Guid userId, string role)
-    {
-        using var scope = _factory.Services.CreateScope();
-        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-        var user = await users.FindByIdAsync(userId.ToString());
-
-        Assert.NotNull(user);
-        return await users.IsInRoleAsync(user!, role);
-    }
-
     private async Task<ApplicationUser?> FindUserAsync(string email)
     {
         using var scope = _factory.Services.CreateScope();
@@ -716,17 +739,29 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
             response.Headers.WwwAuthenticate,
             header => string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase));
 
+    private static Task AssertProblemBodyAsync(
+        HttpResponseMessage response,
+        HttpStatusCode expected,
+        params string[] forbiddenMarkers) =>
+        AssertProblemBodyAsync(response, expected, requireTraceId: false, forbiddenMarkers);
+
+    private static Task AssertControllerProblemBodyAsync(
+        HttpResponseMessage response,
+        HttpStatusCode expected,
+        params string[] forbiddenMarkers) =>
+        AssertProblemBodyAsync(response, expected, requireTraceId: true, forbiddenMarkers);
+
     private static async Task AssertProblemBodyAsync(
         HttpResponseMessage response,
         HttpStatusCode expected,
-        params string[] forbiddenMarkers)
+        bool requireTraceId,
+        string[] forbiddenMarkers)
     {
         Assert.Equal(expected, response.StatusCode);
 
-        var mediaType = response.Content.Headers.ContentType?.MediaType;
-        Assert.True(
-            mediaType is "application/problem+json" or "application/json",
-            $"The refusal must be a JSON problem document, but the media type was '{mediaType}'.");
+        // RFC 7807 has one media type. Accepting application/json would hide a refusal that bypassed the shared
+        // ProblemDetails envelope (ADR-0010).
+        Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
 
         var body = await response.Content.ReadAsStringAsync();
 
@@ -734,6 +769,12 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
         var root = document.RootElement;
         Assert.Equal((int)expected, root.GetProperty("status").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("title").GetString()));
+        Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("detail").GetString()));
+
+        if (requireTraceId)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("traceId").GetString()));
+        }
 
         AssertNoEcho(body, forbiddenMarkers);
     }
@@ -748,6 +789,7 @@ public sealed class AccountAuthorizationMatrixTests : IClassFixture<MediPassApiF
         // No credential and no stored hash is ever repeated to the caller (NFR-SEC-06, NFR-PRI-03).
         Assert.DoesNotContain(MediPassApiFactory.TestPassword, body, StringComparison.Ordinal);
         Assert.DoesNotContain("PasswordHash", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TokenHash", body, StringComparison.OrdinalIgnoreCase);
 
         foreach (var marker in markers.Where(marker => !string.IsNullOrEmpty(marker)))
         {

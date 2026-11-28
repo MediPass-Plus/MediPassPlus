@@ -152,17 +152,16 @@ public sealed class AuthEndpointTests : IAsyncLifetime, IClassFixture<MediPassAp
     [Fact]
     public async Task Login_InactiveAccount_ReturnsTheSameBodyAsAWrongPassword()
     {
-        var email = NewEmail("login.inactive");
-
-        // Registering as a Doctor leaves IsActive = false until an admin activates the account.
-        Assert.Equal(HttpStatusCode.OK, (await RegisterAsync(email, role: "Doctor")).StatusCode);
+        // A deactivated account must answer exactly like a wrong password, so the response cannot confirm
+        // that the address exists. Registration no longer creates Doctor accounts, so seed the inactive user.
+        var inactive = await _factory.CreateUserAsync(DefaultRoles.Doctor, isActive: false);
 
         var wrongPassword = await ReadProblemAsync(await LoginAsync(NewEmail("login.reference"), WrongPassword));
-        var response = await LoginAsync(email, CompliantPassword);
-        var inactive = await ReadProblemAsync(response);
+        var response = await LoginAsync(inactive.Email, MediPassApiFactory.TestPassword);
+        var inactiveProblem = await ReadProblemAsync(response);
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Equal(wrongPassword, inactive);
+        Assert.Equal(wrongPassword, inactiveProblem);
     }
 
     /// <summary>A password without a lowercase letter is rejected up front, not by Identity later.</summary>
@@ -223,60 +222,61 @@ public sealed class AuthEndpointTests : IAsyncLifetime, IClassFixture<MediPassAp
     }
 
     /// <summary>
-    /// A doctor self-registers in any casing and the account waits for an admin to activate it, so the
-    /// casing can never widen what the caller gets (FR-ACC-03).
+    /// A Doctor or Staff account cannot self-register in any casing: those accounts are created by an
+    /// administrator (FR-ACC-03), and the refusal writes no user row.
     /// </summary>
-    /// <param name="role">The requested role, in a casing that must be resolved to the Doctor role.</param>
+    /// <param name="role">The requested role, in a casing that must be resolved to Doctor or Staff.</param>
     [Theory]
     [InlineData("Doctor")]
     [InlineData("doctor")]
     [InlineData("DOCTOR")]
-    public async Task Register_WithDoctorRoleInAnyCasing_LeavesTheAccountInactive(string role)
-    {
-        var email = NewEmail("register.doctor");
-
-        var response = await RegisterAsync(email, role: role);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        using var scope = _factory.Services.CreateScope();
-        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-        var user = await userManager.FindByEmailAsync(email);
-
-        Assert.NotNull(user);
-        Assert.False(user!.IsActive);
-        Assert.True(await userManager.IsInRoleAsync(user, DefaultRoles.Doctor));
-    }
-
-    /// <summary>
-    /// A staff account self-registers in any casing and likewise waits for an admin to activate it
-    /// (FR-ACC-03).
-    /// </summary>
-    /// <param name="role">The requested role, in a casing that must be resolved to the Staff role.</param>
-    [Theory]
     [InlineData("Staff")]
     [InlineData("staff")]
     [InlineData("STAFF")]
-    public async Task Register_WithStaffRoleInAnyCasing_LeavesTheAccountInactive(string role)
+    public async Task Register_WithADoctorOrStaffRole_RefusesSelfRegistration(string role)
     {
-        var email = NewEmail("register.staff");
+        var email = NewEmail("register.privileged");
 
         var response = await RegisterAsync(email, role: role);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var problem = await ReadProblemAsync(response);
+        Assert.Equal((int)HttpStatusCode.BadRequest, problem.Status);
+        Assert.Equal("This role cannot be self-assigned.", problem.Title);
+        Assert.Equal(
+            "Only patients can register themselves. Doctor and Staff accounts are created by an administrator.",
+            problem.Detail);
 
         using var scope = _factory.Services.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
-        var user = await userManager.FindByEmailAsync(email);
-
-        Assert.NotNull(user);
-        Assert.False(user!.IsActive);
-        Assert.True(await userManager.IsInRoleAsync(user, DefaultRoles.Staff));
+        Assert.Null(await userManager.FindByEmailAsync(email));
     }
 
     /// <summary>
-    /// A patient stays the only role that is active on self-registration, in every casing, so the
-    /// casing fix does not change what a patient gets.
+    /// The removed development registration route is gone: the commented-out endpoint was deleted, so the old path
+    /// answers <c>404</c> instead of creating an account outside the patient-only contract.
+    /// </summary>
+    [Fact]
+    public async Task RegisterDevelopmentRoute_IsGone()
+    {
+        using var response = await _client.PostAsJsonAsync(
+            "/api/Auth/register-Development%20Version",
+            new
+            {
+                fullName = "Removed Development Endpoint",
+                email = NewEmail("register.development"),
+                password = CompliantPassword,
+                role = "Patient"
+            });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    /// <summary>
+    /// A patient is the only role that can self-register, in every casing, and the account is active and
+    /// owns the Patient role. The duplicate <c>ApplicationUser.Role</c> column is no longer written from
+    /// the request body (FR-ACC-03, FR-ACC-05).
     /// </summary>
     /// <param name="role">The requested role, in a casing that must be resolved to the Patient role.</param>
     [Theory]
@@ -297,6 +297,7 @@ public sealed class AuthEndpointTests : IAsyncLifetime, IClassFixture<MediPassAp
 
         Assert.NotNull(user);
         Assert.True(user!.IsActive);
+        Assert.Equal(string.Empty, user.Role);
         Assert.True(await userManager.IsInRoleAsync(user, DefaultRoles.Patient));
     }
 
