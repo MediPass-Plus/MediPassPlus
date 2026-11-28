@@ -24,8 +24,8 @@ database. It comes from user-secrets or `ConnectionStrings__DefaultConnection` a
 
 The password-reset mail transport adds a fifth group. When `Smtp:Host` is set, `Smtp:UserName` and `Smtp:Password` are
 provider credentials and belong in the secret store beside the four above. `Smtp:Host`, `Smtp:Port`, `Smtp:UseStartTls`,
-`Smtp:FromAddress` and `Smtp:FromName` are ordinary configuration and stay in `appsettings*.json`; only the credentials
-move.
+`Smtp:FromAddress`, `Smtp:FromName` and `Smtp:TimeoutSeconds` are ordinary configuration and stay in
+`appsettings*.json`; only the credentials move. `Smtp:FromAddress` has no default and is required whenever a host is set.
 
 With those five groups accounted for, nothing else in `appsettings.json` is sensitive, and every other setting there is
 a documented default rather than a secret.
@@ -76,18 +76,29 @@ and the same rules as the key ring apply (ADR-0015 decision 6, FR-PRV-05, NFR-SE
 `POST api/Auth/forgot-password` sends the reset link over SMTP (FR-ACC-11). The transport is configured under `Smtp`
 and validated at startup, so a half-configured sender never reaches a request:
 
-- **An empty `Smtp:Host` is a supported state.** The API registers the no-op sender, which logs one warning per send
-  instead of failing. That is what keeps a fresh clone and CI runnable without mail credentials.
-- **A configured host must be complete.** A missing `Smtp:UserName` or `Smtp:Password`, a `Smtp:Port` outside 1–65535,
-  or a `Smtp:FromAddress` that is not one plain email address is an `OptionsValidationException` at startup, not a
-  `500` on the first reset request.
-- **A send failure never changes the answer.** The endpoint catches the transport exception, logs it without the
-  address or the token, and still answers the same `202` as an unknown address, so a mail outage is not an
-  enumeration oracle (NFR-SEC-06, FR-PRV-08).
+- **A mail transport is required outside Development and Testing.** With an empty `Smtp:Host`, Development and Testing
+  register the no-op sender, which logs one warning per send instead of failing; that is what keeps a fresh clone and CI
+  runnable without mail credentials. Every other environment refuses to start with an `OptionsValidationException`: a
+  deployment that silently accepted reset requests and sent nothing is not a supported state.
+- **A configured host must be complete.** `Smtp:UserName`, `Smtp:Password` and `Smtp:FromAddress` are required,
+  `Smtp:Port` must be 1–65535, `Smtp:TimeoutSeconds` must be 1–120, and the username and sender must each be one plain
+  email address. A missing or malformed value is an `OptionsValidationException` at startup, not a `500` on the first
+  reset request.
+- **`Smtp:FromAddress` has no default.** The committed `appsettings.json` leaves it empty on purpose. A host-configured
+  deployment must name an address its provider accepts; keep it equal to `Smtp:UserName` unless the provider explicitly
+  allows an alias, because most providers reject a sender they do not own.
+- **`Smtp:UseStartTls` means STARTTLS, not implicit TLS.** It maps to `SmtpClient.EnableSsl`. The supported submission
+  mode is STARTTLS on port 587; implicit TLS on port 465 is not supported by `SmtpClient` and must not be configured.
+  Set it to `false` only for a trusted local relay that offers no TLS.
+- **The send is bounded.** `Smtp:TimeoutSeconds` (default 10) caps one send; the framework's 100-second default is never
+  used. A dead host can no longer hold a reset request for over a minute.
+- **A send failure never changes the answer.** The endpoint catches the transport exception, logs only the exception
+  type and, for an SMTP refusal, the protocol status code, and still answers the same `202` as an unknown address, so a
+  mail outage is not an enumeration oracle. The recipient address and the token never reach a log line, even when the
+  server response repeats the address (NFR-SEC-06, FR-PRV-08).
 - **The credentials are provider secrets.** For Gmail, `Smtp:Password` is a 16-character App Password, not the account
   password. It lives in user-secrets locally and in the platform secret store in a deployment, never in
   `appsettings*.json`.
-- **`Smtp:FromAddress` should match `Smtp:UserName`.** Most providers reject a sender address they do not own.
 
 ## Failure behaviour
 
@@ -102,10 +113,11 @@ and validated at startup, so a half-configured sender never reaches a request:
 | `Jwt:SecretKey` missing or shorter than 32 characters | Startup fails |
 | `AccessCode:HmacKey` missing, not Base64 or shorter than 32 bytes | Startup fails |
 | Missing `ConnectionStrings:DefaultConnection` | The API fails at startup: the unconditional `SeedDefaultRolesAsync()` opens the database before the pipeline runs, so this is a startup failure, not a first-request failure |
-| `Smtp:Host` empty | Starts with the no-op sender; each reset mail is logged as not sent |
-| `Smtp:Host` set but `Smtp:UserName` or `Smtp:Password` empty | Startup fails (`OptionsValidationException`) |
-| `Smtp:Port` outside 1–65535, or `Smtp:FromAddress` not one plain address | Startup fails in every environment |
-| The SMTP server refuses a message at request time | The request still answers `202`; the failure is logged without the address or the token |
+| `Smtp:Host` empty in `Development` or `Testing` | Starts with the no-op sender; each reset mail is logged as not sent |
+| `Smtp:Host` empty in `Staging` or `Production` | Startup fails (`OptionsValidationException`) |
+| `Smtp:Host` set but `Smtp:UserName`, `Smtp:Password` or `Smtp:FromAddress` empty, or the username/sender is not one plain address | Startup fails (`OptionsValidationException`) |
+| `Smtp:Port` outside 1–65535 or `Smtp:TimeoutSeconds` outside 1–120 | Startup fails in every environment |
+| The SMTP server refuses a message or does not answer within `Smtp:TimeoutSeconds` | The request still answers `202`; the failure line carries the exception type and the SMTP status code only |
 
 ## Deployment checklist
 
@@ -116,8 +128,10 @@ and validated at startup, so a half-configured sender never reaches a request:
 - [ ] `Jwt:SecretKey` and `AccessCode:HmacKey` are set from the secret store, not from `appsettings*.json`.
 - [ ] `ConnectionStrings:DefaultConnection` is set from the secret store or user-secrets; `appsettings*.json` in the
       deployed image carries no connection string (MP-51).
-- [ ] `Smtp:Host` is either empty on purpose or set together with `Smtp:UserName`, `Smtp:Password` and one plain
-      `Smtp:FromAddress`, and the credentials come from the secret store rather than `appsettings*.json`.
+- [ ] Outside `Development` and `Testing`, `Smtp:Host` is set together with `Smtp:UserName`, `Smtp:Password` and one
+      plain `Smtp:FromAddress`, and the credentials come from the secret store rather than `appsettings*.json`.
+- [ ] `Smtp:UseStartTls` matches the provider's submission mode (STARTTLS on 587; implicit TLS on 465 is not supported)
+      and `Smtp:TimeoutSeconds` bounds a dead host (default 10).
 - [ ] No secret value appears in logs, images, build output or the repository, and the `gitleaks` CI job is green.
 
 The non-secret edge settings that sit next to these — login rate limits, allowed CORS origins, forwarded-header trust

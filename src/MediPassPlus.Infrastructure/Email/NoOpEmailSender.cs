@@ -18,7 +18,8 @@ public sealed class NoOpEmailSender : IEmailSender
         string body,
         CancellationToken cancellationToken = default)
     {
-        _logger.LogWarning("Smtp:Host is not configured; the transactional email was not sent.");
+        _logger.LogWarning(
+            "Smtp:Host is not configured; the transactional email was not sent. The no-op sender is only registered in Development and Testing.");
         return Task.CompletedTask;
     }
 }

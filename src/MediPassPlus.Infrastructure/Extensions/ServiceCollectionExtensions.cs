@@ -162,9 +162,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IStaffScheduleService, StaffScheduleService>();
         services.AddScoped<IStaffSlotService, StaffSlotService>();
         services.AddScoped<IStaffBookingService, StaffBookingService>();
-        // Password-reset email: real SMTP when Smtp:Host is configured, otherwise a no-op sender so the API still
-        // starts on a machine without mail settings. A host with missing credentials or an unusable sender address is
-        // a startup failure instead of a 500 on the first reset request (FR-ACC-11, NFR-SEC-06).
+        // Password-reset email: real SMTP when Smtp:Host is configured. Development and Testing fall back to the
+        // no-op sender so a fresh clone starts without mail settings; every other environment refuses to start
+        // without a host (SmtpSettingsValidator). A host with missing credentials or an unusable account or sender
+        // address is a startup failure instead of a 500 on the first reset request (FR-ACC-11, NFR-SEC-06).
         services.AddOptions<SmtpSettings>()
             .Bind(configuration.GetSection(SmtpSettings.SectionName))
             .ValidateOnStart();

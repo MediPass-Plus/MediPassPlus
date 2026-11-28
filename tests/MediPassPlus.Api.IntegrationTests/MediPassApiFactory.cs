@@ -159,6 +159,16 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         // The same rule applies to uploaded report files: absolute, outside the repository and outside wwwroot
         // (ADR-0015 decision 6).
         SetEnvironmentVariable("Reports__Storage__RootPath", _reportStoragePath);
+        // A mail transport is required outside Development and Testing (SmtpSettingsValidator). The Production host
+        // tests set a synthetic configuration and replace IEmailSender where they need to read the message, so no test
+        // host depends on a real mailbox.
+        if (!IsDevelopmentOrTesting(environment))
+        {
+            SetEnvironmentVariable("Smtp__Host", "smtp.integration.medipass.test");
+            SetEnvironmentVariable("Smtp__UserName", "no-reply@integration.medipass.test");
+            SetEnvironmentVariable("Smtp__Password", "integration-test-only");
+            SetEnvironmentVariable("Smtp__FromAddress", "no-reply@integration.medipass.test");
+        }
         SetEnvironmentVariable("Logging__LogLevel__Microsoft.EntityFrameworkCore", "Warning");
         // Most tests sign in several times on purpose (the lockout matrix does six attempts on one account). The
         // production login budget is exercised by LoginRateLimitTests, which overrides this value for its own host.
@@ -254,8 +264,9 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
     /// patient, doctor or other actor without sharing rate-limit partitions.</summary>
     /// <param name="role">The application role to assign.</param>
     /// <param name="fullName">An optional display name; defaults to the role-based test name.</param>
+    /// <param name="isActive">Whether the account may sign in; defaults to active.</param>
     /// <returns>The new account and its signed token.</returns>
-    public async Task<TestUser> CreateUserAsync(string role, string? fullName = null)
+    public async Task<TestUser> CreateUserAsync(string role, string? fullName = null, bool isActive = true)
     {
         using var scope = Services.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
@@ -268,7 +279,7 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
             Email = email,
             FullName = fullName ?? $"{role} Integration Test",
             Role = role,
-            IsActive = true,
+            IsActive = isActive,
             EmailConfirmed = true
         };
 
@@ -947,6 +958,10 @@ public sealed class MediPassApiFactory : WebApplicationFactory<Program>, IAsyncL
         using var db = new MediPassDbContext(options);
         db.Database.Migrate();
     }
+
+    private static bool IsDevelopmentOrTesting(string environment) =>
+        string.Equals(environment, "Development", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(environment, "Testing", StringComparison.OrdinalIgnoreCase);
 
     private void SetEnvironmentVariable(string name, string value)
     {

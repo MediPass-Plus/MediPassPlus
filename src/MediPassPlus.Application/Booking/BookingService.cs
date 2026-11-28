@@ -134,6 +134,13 @@ public sealed class BookingService : IBookingService
         var slot = appointment.DoctorSlot
             ?? throw new InvalidOperationException("The appointment has no doctor slot.");
 
+        // Report the appointment's state before its slot time: a cancelled or completed appointment is refused
+        // because of its state, not because the slot has started.
+        if (appointment.Status != AppointmentStatus.Booked)
+        {
+            return BookingResult.Denied(BookingFailure.AppointmentNotCancellable);
+        }
+
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         if (slot.StartTimeUtc <= now)
         {

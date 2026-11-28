@@ -1,3 +1,4 @@
+using System.Net.Mail;
 using System.Security.Claims;
 using MediPassPlus.Api.RateLimiting;
 using MediPassPlus.Application.Auth;
@@ -48,13 +49,14 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
-    /// Registers a patient, doctor or staff account. Admin self-registration is refused.
+    /// Registers a patient account. Admin, Doctor and Staff self-registration is refused: those accounts are created
+    /// by an administrator (FR-ACC-03).
     /// </summary>
     /// <param name="request">The account details, including the requested role.</param>
     /// <returns>A message confirming the registration.</returns>
-    /// <response code="200">The account was created with the requested role.</response>
+    /// <response code="200">The patient account was created.</response>
     /// <response code="400">
-    /// The payload is invalid, the role does not exist or cannot be self-assigned, or Identity rejected the account.
+    /// The payload is invalid, the role does not exist, the role is not Patient, or Identity rejected the account.
     /// The body is the shared <see cref="ProblemDetails"/> envelope (ADR-0010).
     /// </response>
     [HttpPost("register")]
@@ -72,9 +74,9 @@ public class AuthController : ControllerBase
         }
 
         // Identity resolves a role name case-insensitively through NormalizedName, so "admin", "Admin"
-        // and "ADMIN" are the same role and must reach the same branch. Resolve the canonical role first
-        // and switch on that; switching on the raw request value let any casing that missed the literal
-        // fall into the default branch and create an active account with the Admin role (FR-ACC-09).
+        // and "ADMIN" are the same role and must reach the same refusal. Resolve the canonical role first
+        // and compare its canonical name; switching on the raw request value let any casing that missed the
+        // literal fall through and create an active account with the Admin role (FR-ACC-09).
         var role = await _roleManager.FindByNameAsync(request.Role);
 
         if (role is null)
@@ -84,33 +86,30 @@ public class AuthController : ControllerBase
                 $"Role '{request.Role}' does not exist.");
         }
 
+        // FR-ACC-03: patients register themselves; Doctor, Staff and Admin accounts are created by an admin.
+        if (role.Name == DefaultRoles.Admin)
+        {
+            return AccountRefusal(
+                "This role cannot be self-assigned.",
+                "The Admin role is granted by an existing administrator, never by public registration.");
+        }
+
+        if (role.Name != DefaultRoles.Patient)
+        {
+            return AccountRefusal(
+                "This role cannot be self-assigned.",
+                "Only patients can register themselves. Doctor and Staff accounts are created by an administrator.");
+        }
+
         var user = new ApplicationUser
         {
             UserName = request.Email,
             Email = request.Email,
             FullName = request.FullName,
-            Role = request.Role,
+            IsActive = true,
             // FR-ACC-05: Identity only counts failed attempts for accounts that allow lockout.
             LockoutEnabled = true
         };
-
-        // Restrict the user from self-assigning the Admin role
-        switch (role.NormalizedName)
-        {
-            case "ADMIN":
-                return AccountRefusal(
-                    "This role cannot be self-assigned.",
-                    "The Admin role is granted by an existing administrator, never by public registration.");
-
-            case "DOCTOR":
-            case "STAFF":
-                user.IsActive = false;
-                break;
-
-            default:
-                user.IsActive = true;
-                break;
-        }
 
         // Start a database transaction
         await using var transaction =
@@ -131,9 +130,10 @@ public class AuthController : ControllerBase
                     Describe(result));
             }
 
-            // Step 2: Assign the role in the UserRoles table
+            // Step 2: Assign the canonical role name in the UserRoles table. Identity is the single role store; the
+            // duplicate ApplicationUser.Role column is no longer written from the request body (FR-ACC-03).
             var roleResult = await _userManager.AddToRoleAsync(
-                user, request.Role);
+                user, role.Name!);
 
             if (!roleResult.Succeeded)
             {
@@ -326,9 +326,15 @@ public class AuthController : ControllerBase
             catch (Exception exception)
             {
                 // A dead transport must not turn a registered address into a different answer. The 202 below stays the
-                // only response, so an enumeration probe cannot tell a mail outage from an unknown address, and the
-                // line carries the correlation id alone: no address, no token, no message body (FR-PRV-08, NFR-SEC-06).
-                _logger.LogError(exception, "The password reset email could not be dispatched.");
+                // only response, so an enumeration probe cannot tell a mail outage from an unknown address. Log only
+                // the exception type and, for an SMTP refusal, the protocol status code: SmtpException.Message and
+                // SmtpFailedRecipientException.FailedRecipient can repeat the recipient address from the server
+                // response, and passing the exception object would leak it through its ToString() (FR-PRV-08,
+                // NFR-SEC-06).
+                _logger.LogError(
+                    "The password reset email could not be dispatched. FailureType={FailureType} SmtpStatus={SmtpStatus}",
+                    exception.GetType().Name,
+                    exception is SmtpException smtp ? smtp.StatusCode.ToString() : "None");
             }
         }
 
@@ -420,7 +426,7 @@ public class AuthController : ControllerBase
 
         problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
 
-        return Unauthorized(problem);
+        return ProblemDocument(problem);
     }
 
     /// <summary>
@@ -440,7 +446,7 @@ public class AuthController : ControllerBase
 
         problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
 
-        return Unauthorized(problem);
+        return ProblemDocument(problem);
     }
 
     /// <summary>
@@ -460,8 +466,22 @@ public class AuthController : ControllerBase
 
         problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
 
-        return BadRequest(problem);
+        return ProblemDocument(problem);
     }
+
+    /// <summary>
+    /// Wraps a hand-built problem document in the RFC 7807 media type. A plain <c>BadRequest</c> or
+    /// <c>Unauthorized</c> object result would answer <c>application/json</c> even though the body is a problem
+    /// document, and a strict client would not recognise it (ADR-0010).
+    /// </summary>
+    /// <param name="problem">The problem document, with its status already set.</param>
+    /// <returns>The result carrying <c>application/problem+json</c>.</returns>
+    private ObjectResult ProblemDocument(ProblemDetails problem) =>
+        new(problem)
+        {
+            StatusCode = problem.Status,
+            ContentTypes = { "application/problem+json" }
+        };
 
     /// <summary>
     /// Builds the shared <c>400</c> envelope for a refused registration or admin creation (ADR-0010). The title is
@@ -481,7 +501,7 @@ public class AuthController : ControllerBase
 
         problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
 
-        return BadRequest(problem);
+        return ProblemDocument(problem);
     }
 
     /// <summary>
@@ -519,7 +539,7 @@ public class AuthController : ControllerBase
         if (!ModelState.IsValid)
         {
             return AccountRefusal(
-                "Invalid registration data.",
+                "Invalid account data.",
                 "The account payload does not match the contract.");
         }
 
@@ -612,96 +632,5 @@ public class AuthController : ControllerBase
         _context.MedicalRecords.Add(MedicalRecord.Create(user.Id, DateTime.UtcNow));
         await _context.SaveChangesAsync();
     }
-
-
-
-
-
-
-    //[HttpPost("register-Development Version")]
-    //public async Task<IActionResult> RegisterDevelopment(RegisterDto request)
-    //{
-    //    // Validate registration data
-    //    if (!ModelState.IsValid)
-    //        return BadRequest("Invalid registration data.");
-
-    //    // Check if the requested role exists
-    //    if (!await _roleManager.RoleExistsAsync(request.Role))
-    //        return BadRequest(new
-    //        {
-    //            message = $"Role '{request.Role}' does not exist"
-    //        });
-
-    //    // Create the user
-    //    var user = new ApplicationUser
-    //    {
-    //        UserName = request.Email,
-    //        Email = request.Email,
-    //        FullName = request.FullName,
-    //        Role = request.Role,
-
-    //        // Enable all accounts during development
-    //        IsActive = true,
-
-    //        EmailConfirmed = true,
-
-    //        // FR-ACC-05: the failed-attempt counter needs lockout enabled on the account.
-    //        LockoutEnabled = true
-    //    };
-
-    //    // Start a database transaction
-    //    await using var transaction =
-    //        await _context.Database.BeginTransactionAsync();
-
-    //    try
-    //    {
-    //        // Step 1 Create the user in the Users table
-    //        var result = await _userManager.CreateAsync(
-    //            user, request.Password);
-
-    //        if (!result.Succeeded)
-    //        {
-    //            await transaction.RollbackAsync();
-
-    //            return BadRequest(
-    //                result.Errors.Select(e => e.Description));
-    //        }
-
-    //        // Step 2 Assign the requested role in the UserRoles table
-    //        var roleResult = await _userManager.AddToRoleAsync(
-    //            user, request.Role);
-
-    //        if (!roleResult.Succeeded)
-    //        {
-    //            await transaction.RollbackAsync();
-
-    //            return BadRequest(new
-    //            {
-    //                message = "Failed to assign role. Registration was cancelled.",
-    //                errors = roleResult.Errors.Select(e => e.Description)
-    //            });
-    //        }
-
-    //        await AddMedicalRecordIfPatientAsync(user);
-
-    //        // Both operations succeeded, commit the transaction
-    //        await transaction.CommitAsync();
-
-    //        return Ok(new
-    //        {
-    //            message = "Registered successfully",
-    //            userId = user.Id,
-    //            role = request.Role,
-    //            isActive = user.IsActive
-    //        });
-    //    }
-    //    catch
-    //    {
-    //        // Rollback if any unexpected exception occurs
-    //        await transaction.RollbackAsync();
-    //        throw;
-    //    }
-    //}
-
 
 }

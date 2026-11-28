@@ -207,7 +207,7 @@ public sealed class PasswordResetEndpointTests : IAsyncLifetime
     /// <summary>
     /// A dead mail transport must not turn a registered address into a different answer. The <c>202</c> and its body
     /// stay identical to the unknown-address answer, nothing is captured, and the failure line repeats neither the
-    /// address nor the token (FR-PRV-08, NFR-SEC-06).
+    /// address nor the token, even when the transport exception itself carries the address (FR-PRV-08, NFR-SEC-06).
     /// </summary>
     [Fact]
     public async Task ForgotPassword_WhenTheTransportFails_StillAnswersTheSame202()
@@ -216,7 +216,7 @@ public sealed class PasswordResetEndpointTests : IAsyncLifetime
 
         _logs.Clear();
         _email.Clear();
-        _email.Failure = new InvalidOperationException("The SMTP host did not answer.");
+        _email.Failure = new InvalidOperationException($"The SMTP host did not answer for {email}.");
 
         try
         {
@@ -236,11 +236,12 @@ public sealed class PasswordResetEndpointTests : IAsyncLifetime
 
             var entries = _logs.Entries;
 
+            // The line is still diagnosable: the exception type and the absence of an SMTP status are recorded, while
+            // the exception message (which carries the address) is not.
             Assert.Contains(
                 entries,
-                entry => entry.Message.Contains(
-                    "The password reset email could not be dispatched.",
-                    StringComparison.Ordinal));
+                entry => entry.Message.Contains("FailureType=InvalidOperationException", StringComparison.Ordinal)
+                    && entry.Message.Contains("SmtpStatus=None", StringComparison.Ordinal));
 
             foreach (var entry in entries)
             {

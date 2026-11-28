@@ -104,7 +104,10 @@ public sealed class StartVisitService : IStartVisitService
 
         // An approved request already produced the visit's grant. A second grant is impossible (one grant per
         // appointment, and an ended grant is never reused), so a restart must not hand out a QR that the patient
-        // could never approve (FR-ACS-11).
+        // could never approve (FR-ACS-11). A concurrent approval that lands after this read can still make the QR
+        // issued below dead: its token resolves to an already-answered request and the approve path answers 410.
+        // The one-grant constraint prevents a second grant, and the doctor's retry sees the approved request and
+        // answers 409.
         if (context.Requests.Any(request => request.Status == AccessRequestStatus.Approved))
         {
             return StartVisitResult.Denied(StartVisitFailure.AccessAlreadyGranted);

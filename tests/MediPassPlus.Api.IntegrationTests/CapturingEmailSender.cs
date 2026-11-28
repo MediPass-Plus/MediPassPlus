@@ -20,7 +20,8 @@ internal sealed class CapturingEmailSender : IEmailSender
 
     /// <summary>
     /// When set, every send throws it instead of capturing, so a test can prove the endpoint survives a dead mail
-    /// transport. Reset it in a <c>finally</c> block; the instance is shared by the whole test class.
+    /// transport. Reset it in a <c>finally</c> block: the same instance serves every request in that test, and xUnit
+    /// creates a fresh test-class instance for the next test.
     /// </summary>
     public Exception? Failure { get; set; }
 

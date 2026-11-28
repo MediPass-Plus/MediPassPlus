@@ -26,6 +26,9 @@ unchecked header would let a client inject newlines into the log stream.
 - The operation: HTTP method and route template, status code, the check or seeder name.
 - Configuration state that is not a secret, for example "Smtp:Host is not configured".
 - Counts, durations, and the outcome of a rule.
+- The exception type and, for an SMTP failure, the protocol status code. Never pass the exception object: its
+  `ToString()` carries the message, and `SmtpException`/`SmtpFailedRecipientException` can repeat the recipient address
+  from the server response.
 
 ## What must never be logged
 
